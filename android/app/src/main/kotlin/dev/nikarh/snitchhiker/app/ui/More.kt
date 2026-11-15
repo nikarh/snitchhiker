@@ -3,10 +3,12 @@ package dev.nikarh.snitchhiker.app.ui
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
@@ -25,6 +27,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.nikarh.snitchhiker.app.NodeSession
 import dev.nikarh.snitchhiker.app.SnitchhikerApp
@@ -48,8 +51,11 @@ import snitchhiker.v1.ProposalDuration
 import snitchhiker.v1.ProposalState
 import snitchhiker.v1.RemoveDevice
 import snitchhiker.v1.Request
+import snitchhiker.v1.Role
+import snitchhiker.v1.SetDeviceMuted
 import snitchhiker.v1.SetPolicy
 import snitchhiker.v1.SetSystemFirewall
+import snitchhiker.v1.StartPairing
 import snitchhiker.v1.Undo
 
 private val pages =
@@ -316,6 +322,17 @@ private fun ExplorerPage(
                 }
             }
         }
+        item {
+            val context = LocalContext.current
+            OutlinedButton(onClick = {
+                val table =
+                    listOf(listOf("key", "allowed", "blocked", "bytes_out", "bytes_in")) +
+                        rows.value.orEmpty().map {
+                            listOf(it.key, it.allowed.toString(), it.blocked.toString(), it.bytes_out.toString(), it.bytes_in.toString())
+                        }
+                share(context, "${session.info.name} explorer.csv", csv(table), "text/csv")
+            }) { Text("Share as CSV") }
+        }
         item { Problem(rows.error) }
         items(rows.value.orEmpty()) { row ->
             // A program's row drills into where it connected; any other's, into which programs reached it.
@@ -340,7 +357,46 @@ private fun ConnectionsPage(
     val scope = rememberCoroutineScope()
     val list = rememberRequest(session, Unit, { Request(list_connections = ListConnections()) }) { it.connections?.connections }
     Page(modifier) {
-        item { OutlinedButton(onClick = list.reload) { Text("Refresh") } }
+        item {
+            val context = LocalContext.current
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = list.reload) { Text("Refresh") }
+                OutlinedButton(onClick = {
+                    val table =
+                        listOf(
+                            listOf(
+                                "protocol",
+                                "local",
+                                "local_port",
+                                "remote",
+                                "remote_port",
+                                "host",
+                                "state",
+                                "uid",
+                                "exe",
+                                "bytes_out",
+                                "bytes_in",
+                            ),
+                        ) +
+                            list.value.orEmpty().map { c ->
+                                listOf(
+                                    protocol(c.protocol),
+                                    address(c.local),
+                                    c.local_port.toString(),
+                                    address(c.remote),
+                                    c.remote_port.toString(),
+                                    c.host,
+                                    c.state,
+                                    c.uid.toString(),
+                                    c.exe,
+                                    c.bytes_out.toString(),
+                                    c.bytes_in.toString(),
+                                )
+                            }
+                    share(context, "${session.info.name} connections.csv", csv(table), "text/csv")
+                }) { Text("Share as CSV") }
+            }
+        }
         item { Problem(list.error) }
         items(list.value.orEmpty()) { c ->
             Item {
@@ -406,7 +462,15 @@ private fun DevicesPage(
 ) {
     val scope = rememberCoroutineScope()
     val list = rememberRequest(session, Unit, { Request(list_devices = ListDevices()) }) { it.devices }
+    var pairing by remember { mutableStateOf(false) }
+    if (pairing) {
+        PairDeviceDialog(session) {
+            pairing = false
+            list.reload()
+        }
+    }
     Page(modifier) {
+        item { Button(onClick = { pairing = true }) { Text("Pair a device") } }
         item { Problem(list.error) }
         list.value?.let { item { Muted("This node: ${it.fingerprint}") } }
         items(list.value?.devices.orEmpty(), key = { it.id }) { device ->
@@ -414,14 +478,23 @@ private fun DevicesPage(
                 Text(device.name, style = MaterialTheme.typography.titleMedium)
                 Muted(
                     "${device.fingerprint} · ${if (device.connected) "connected" else "last seen ${time(device.last_seen_ms)}"}" +
-                        if (device.push) " · woken by push" else "",
+                        (if (device.push) " · woken by push" else "") +
+                        if (device.muted) " · muted" else "",
                 )
-                TextButton(onClick = {
-                    scope.launch {
-                        run(session, Request(remove_device = RemoveDevice(id = device.id)))
-                        list.reload()
-                    }
-                }) { Text("Unpair") }
+                Row {
+                    TextButton(onClick = {
+                        scope.launch {
+                            run(session, Request(set_device_muted = SetDeviceMuted(id = device.id, muted = !device.muted)))
+                            list.reload()
+                        }
+                    }) { Text(if (device.muted) "Unmute" else "Mute") }
+                    TextButton(onClick = {
+                        scope.launch {
+                            run(session, Request(remove_device = RemoveDevice(id = device.id)))
+                            list.reload()
+                        }
+                    }) { Text("Unpair") }
+                }
             }
         }
     }
@@ -447,4 +520,84 @@ private fun StatusPage(
             }
         }
     }
+}
+
+/**
+ * Pairing another device with this node, from the phone: a name and a role, then the node's one-time pairing as a code
+ * to type, a QR code to scan and a link to share (one use, ten minutes). Pairing is a dangerous action: the node waits
+ * for an approval on it.
+ */
+@Composable
+private fun PairDeviceDialog(
+    session: NodeSession,
+    done: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    var name by remember { mutableStateOf("") }
+    var viewer by remember { mutableStateOf(false) }
+    var pairing by remember { mutableStateOf<snitchhiker.v1.Pairing?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var waiting by remember { mutableStateOf(false) }
+    AlertDialog(
+        onDismissRequest = done,
+        title = { Text("Pair a device") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                val current = pairing
+                if (current == null) {
+                    OutlinedTextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        label = { Text("Its name") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Switch(checked = viewer, onCheckedChange = { viewer = it })
+                        Text("  Viewer only (it can't change anything)")
+                    }
+                    if (waiting) Muted("Waiting for an approval on the node…")
+                } else {
+                    Text("Code: ${current.code}", style = MaterialTheme.typography.titleMedium)
+                    qrBitmap(current.link)?.let {
+                        androidx.compose.foundation.Image(
+                            it,
+                            contentDescription = "The pairing QR code",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                    Muted("Node: ${current.fingerprint} · valid until ${time(current.expires_ms)}")
+                    TextButton(onClick = { share(context, "Pair with ${session.info.name}", current.link) }) { Text("Share the link") }
+                }
+                Problem(error)
+            }
+        },
+        confirmButton = {
+            if (pairing == null) {
+                TextButton(enabled = !waiting, onClick = {
+                    waiting = true
+                    scope.launch {
+                        runCatching {
+                            session
+                                .call(
+                                    Request(
+                                        start_pairing =
+                                            StartPairing(
+                                                name = name.trim(),
+                                                role = if (viewer) Role.ROLE_VIEWER else Role.ROLE_ADMIN,
+                                            ),
+                                    ),
+                                ).pairing
+                        }.onSuccess { pairing = it }
+                            .onFailure { error = it.message }
+                        waiting = false
+                    }
+                }) { Text("Pair") }
+            } else {
+                TextButton(onClick = done) { Text("Done") }
+            }
+        },
+        dismissButton = { if (pairing == null) TextButton(onClick = done) { Text("Cancel") } },
+    )
 }

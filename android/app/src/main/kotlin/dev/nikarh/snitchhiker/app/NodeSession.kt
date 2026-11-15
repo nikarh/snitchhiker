@@ -15,6 +15,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import snitchhiker.v1.GetStatus
+import snitchhiker.v1.ListAlerts
 import snitchhiker.v1.Request
 import snitchhiker.v1.Response
 import snitchhiker.v1.Topic
@@ -57,11 +58,16 @@ class NodeSession(
                         refreshStatus()
                         // Where this phone is woken, for when it isn't connected.
                         runCatching { Push.tell(this@NodeSession, Push.target(context)) }
+                        // Alerts raised while the phone wasn't connected.
+                        runCatching {
+                            call(Request(list_alerts = ListAlerts(limit = 20, open_only = true))).alerts?.alerts
+                        }.getOrNull()?.let { Notifications.alerts(context, info, it) }
                         connected.notices(TOPICS).collect { notice ->
                             val before = mutableState.value
                             val after = before.apply(notice)
                             mutableState.value = after
                             Notifications.onChange(context, info, before, after)
+                            notice.alert?.let { Notifications.alerts(context, info, listOf(it)) }
                         }
                     } catch (error: Exception) {
                         android.util.Log.w("snitchhiker", "${info.name}: ${error.message}")

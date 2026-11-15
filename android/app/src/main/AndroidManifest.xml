@@ -57,6 +57,12 @@
             </intent-filter>
         </service>
 
+        <!-- Kept up briefly after a push wake-up, while the app fetches what waits. -->
+        <service
+            android:name=".WakeService"
+            android:exported="false"
+            android:foregroundServiceType="shortService" />
+
         <service
             android:name=".LiveService"
             android:exported="false"

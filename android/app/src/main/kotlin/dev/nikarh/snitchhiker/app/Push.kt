@@ -89,7 +89,8 @@ object Push {
 
             PushKind.PUSH_KIND_ONLINE -> {
                 Notifications.online(context, session.info)
-                session.wake()
+                // Alerts it raised starting again (a crash) are fetched.
+                WakeService.wake(context, session.info.id)
             }
 
             else -> {}

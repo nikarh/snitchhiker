@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import dev.nikarh.snitchhiker.core.NodeState
 import snitchhiker.v1.Prompt
 
@@ -81,6 +82,48 @@ object Notifications {
                 .setTimeoutAfter(60_000)
                 .build()
         post(context, status(node), 0, notification)
+    }
+
+    /**
+     * The node's alerts not acknowledged that weren't shown yet (newest last), each as a notification: on connecting
+     * (they may have been raised while the phone slept) and as they come.
+     */
+    fun alerts(
+        context: Context,
+        node: NodeInfo,
+        alerts: List<snitchhiker.v1.Alert>,
+    ) {
+        val preferences = context.getSharedPreferences("alerts", Context.MODE_PRIVATE)
+        // A node just paired: what it raised before isn't news.
+        if (!preferences.contains(node.id)) {
+            preferences.edit { putLong(node.id, alerts.maxOfOrNull { it.id } ?: 0) }
+            return
+        }
+        val shown = preferences.getLong(node.id, 0)
+        val fresh = alerts.filter { !it.acknowledged && it.id > shown }.sortedBy { it.id }
+        if (fresh.isEmpty()) return
+        for (alert in fresh) {
+            val open =
+                PendingIntent.getActivity(
+                    context,
+                    alert.id.toInt(),
+                    Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_NODE, node.id),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                )
+            val notification =
+                NotificationCompat
+                    .Builder(context, ALERTS)
+                    .setSmallIcon(R.drawable.ic_notification)
+                    .setContentTitle("${node.name}: ${alert.title}")
+                    .setContentText(alert.body)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(alert.body))
+                    .setContentIntent(open)
+                    .setAutoCancel(true)
+                    .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                    .build()
+            post(context, "alert:${node.id}", alert.id.toInt(), notification)
+        }
+        preferences.edit { putLong(node.id, fresh.last().id) }
     }
 
     /** One notification per prompt, across nodes. */

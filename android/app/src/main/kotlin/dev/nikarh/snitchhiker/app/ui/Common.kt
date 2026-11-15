@@ -21,7 +21,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.core.graphics.set
 import dev.nikarh.snitchhiker.app.NodeSession
 import okio.ByteString
 import snitchhiker.v1.Action
@@ -132,3 +134,59 @@ fun Muted(text: String) {
 fun Problem(text: String?) {
     if (text != null) Text(text, color = MaterialTheme.colorScheme.error)
 }
+
+/** Hands `text` to the share sheet (another app, a file, a message), as `name`. */
+fun share(
+    context: android.content.Context,
+    name: String,
+    text: String,
+    mime: String = "text/plain",
+) {
+    val send =
+        android.content
+            .Intent(android.content.Intent.ACTION_SEND)
+            .setType(mime)
+            .putExtra(android.content.Intent.EXTRA_SUBJECT, name)
+            .putExtra(android.content.Intent.EXTRA_TITLE, name)
+            .putExtra(android.content.Intent.EXTRA_TEXT, text)
+    context.startActivity(
+        android.content.Intent
+            .createChooser(send, name)
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+    )
+}
+
+/** Rows as CSV (RFC 4180): fields with commas, quotes or line breaks are quoted. */
+fun csv(rows: List<List<String>>): String =
+    rows.joinToString("\r\n") { row ->
+        row.joinToString(",") { field ->
+            if (field.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) {
+                "\"" + field.replace("\"", "\"\"") + "\""
+            } else {
+                field
+            }
+        }
+    } + "\r\n"
+
+/** `text` as a QR code (black on white, with its quiet zone), or null if it doesn't fit one. */
+fun qrBitmap(text: String): androidx.compose.ui.graphics.ImageBitmap? =
+    runCatching {
+        val matrix =
+            com.google.zxing.qrcode.QRCodeWriter().encode(
+                text,
+                com.google.zxing.BarcodeFormat.QR_CODE,
+                0,
+                0,
+                mapOf(com.google.zxing.EncodeHintType.MARGIN to 2),
+            )
+        val scale = 8
+        val bitmap =
+            androidx.core.graphics.createBitmap(matrix.width * scale, matrix.height * scale, android.graphics.Bitmap.Config.RGB_565)
+        for (y in 0 until matrix.height) {
+            for (x in 0 until matrix.width) {
+                val color = if (matrix.get(x, y)) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+                for (dy in 0 until scale) for (dx in 0 until scale) bitmap[x * scale + dx, y * scale + dy] = color
+            }
+        }
+        bitmap.asImageBitmap()
+    }.getOrNull()
