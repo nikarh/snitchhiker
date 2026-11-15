@@ -78,6 +78,9 @@ for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchh
 # The VM'"'"'s own background traffic (NTP, the resolver) mustn'"'"'t be waiting too.
 snitchhiker rules add allow --exe "glob:/usr/lib/systemd/**" --name "systemd" >/dev/null
 systemctl restart snitchhikerd && sleep 6
+# Whatever is waiting already (the VM'"'"'s own traffic) is answered, once.
+for id in $(snitchhiker prompts | awk "/^prompt [0-9]+:/ {sub(\":\", \"\", \$2); print \$2}"); do snitchhiker prompts answer "$id" deny --duration once >/dev/null 2>&1 || true; done
+sleep 1
 bus=$(cat /run/user/$uid/bus-address)
 rm -f /tmp/tray.log && install -m 666 /dev/null /tmp/tray.log
 runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$bus /tmp/snitchhiker-e2e-ui --tray /tmp/tray.log </dev/null >/dev/null 2>&1 &
@@ -123,6 +126,8 @@ for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitc
 mkdir -p /etc/opensnitchd/rules && rm -f /etc/opensnitchd/rules/*.json
 printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"allow\", \"duration\": \"always\", \"operator\": {\"type\": \"simple\", \"operand\": \"process.path\", \"data\": \"/usr/bin/curl\"}}" > /etc/opensnitchd/rules/000-allow-curl.json
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
+# A system firewall too, which converts in part (the layout of the dialog depends on it).
+printf "%s" "{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"nat_output\", \"Family\": \"inet\", \"Type\": \"natdest\", \"Hook\": \"output\", \"Policy\": \"accept\", \"Rules\": [{\"Enabled\": true, \"Description\": \"redirect\", \"Target\": \"redirect\"}]}]}]}" > /etc/opensnitchd/system-fw.json
 click 66 355
 sleep 1
 click 941 48
@@ -155,6 +160,24 @@ if grep -q "Bin/curl" <<<"${out}" && grep -q "normal   wget" <<<"${out}"; then
   pass rule-dragged-onto-a-folder
 else
   fail rule-dragged-onto-a-folder "the rule dragged didn't move into the folder" "${out}"
+fi
+
+# 8. The app keeps the history it was sent, where only the app can reach it.
+scripts/ui-vm.sh "${shots}/cache" '
+for i in 1 2 3; do curl -s -m 1 http://198.51.100.20:$((8000 + i)) >/dev/null 2>&1 || true; done
+sleep 3
+db=$(ls /var/cache/snitchhiker-ui/$uid/*.db | head -1)
+kept=$(sqlite3 "$db" "select count(*) from events")
+covered=$(sqlite3 "$db" "select count(*) from coverage where query = '"''"'")
+modes=$(stat -c "%a %U:%G" /var/cache/snitchhiker-ui /var/cache/snitchhiker-ui/$uid "$db" | tr "\n" " ")
+if runuser -u mallory -- ls /var/cache/snitchhiker-ui/$uid >/dev/null 2>&1; then reach=yes; else reach=no; fi
+echo "kept $kept covered $covered modes $modes reach $reach" > /tmp/desktop-result.txt' >/dev/null 2>&1
+out=$(result)
+if grep -Eq "kept [1-9][0-9]* covered [1-9]" <<<"${out}" && grep -q "modes 770 root:snitchhiker-ui 700 mallory:" <<<"${out}" \
+  && grep -q "reach no" <<<"${out}"; then
+  pass history-is-kept-privately
+else
+  fail history-is-kept-privately "the cache didn't keep history, or the user's other processes can reach it" "${out}"
 fi
 
 echo "screenshots in ${shots}"

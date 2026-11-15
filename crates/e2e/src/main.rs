@@ -17,6 +17,7 @@ mod perf;
 mod pointer;
 mod prompts;
 mod queue;
+mod seed;
 mod stepup;
 mod subscriptions;
 mod tamper;
@@ -225,6 +226,10 @@ const SCENARIOS: &[Scenario] = &[
         escape::allowed_path_in_a_private_mount_namespace,
     ),
     (
+        "escape/sandboxed-service-is-the-host",
+        escape::sandboxed_service_is_the_host,
+    ),
+    (
         "names/host-rules-match-resolved-names",
         names::host_rules_match_resolved_names,
     ),
@@ -236,6 +241,43 @@ const SCENARIOS: &[Scenario] = &[
 
 /// The marker `e2e/vm.sh` leaves in every test VM.
 const VM_MARKER: &str = "/var/lib/snitchhiker-e2e-ready";
+
+/// What a helper's outcome exits with.
+fn exit(name: &str, outcome: Result<(), String>) -> ExitCode {
+    match outcome {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let _ = writeln!(io::stderr(), "{name}: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// The helpers the desktop scripts use in a session (`--seed`, `--drag`, `--tray`, `--click`).
+fn helper(args: &[String]) -> Option<ExitCode> {
+    let flag = args.get(1).map(String::as_str)?;
+    let number = |i: usize| args.get(i).and_then(|a| a.parse::<u32>().ok());
+    match flag {
+        "--seed" => {
+            let (path, count, days) = (
+                args.get(2)?,
+                args.get(3)?.parse().ok()?,
+                args.get(4)?.parse().ok()?,
+            );
+            Some(exit("seed", seed::seed(path, count, days)))
+        }
+        "--drag" => {
+            let (x1, y1, x2, y2) = (number(2)?, number(3)?, number(4)?, number(5)?);
+            Some(exit("drag", pointer::drag(x1, y1, x2, y2)))
+        }
+        "--tray" => Some(exit("tray", tray::serve(args.get(2)?))),
+        "--click" => {
+            let right = args.get(4).is_some_and(|b| b == "right");
+            Some(exit("click", pointer::click(number(2)?, number(3)?, right)))
+        }
+        _ => None,
+    }
+}
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -249,40 +291,8 @@ fn main() -> ExitCode {
     {
         return stepup::add_rule(socket, kind);
     }
-    if args.get(1).map(String::as_str) == Some("--drag") {
-        let coordinates: Vec<u32> = args.iter().skip(2).filter_map(|a| a.parse().ok()).collect();
-        if let [x1, y1, x2, y2] = coordinates.as_slice() {
-            return match pointer::drag(*x1, *y1, *x2, *y2) {
-                Ok(()) => std::process::ExitCode::SUCCESS,
-                Err(error) => {
-                    let _ = writeln!(io::stderr(), "drag: {error}");
-                    std::process::ExitCode::FAILURE
-                }
-            };
-        }
-    }
-    if let (Some("--tray"), Some(log)) = (args.get(1).map(String::as_str), args.get(2)) {
-        return match tray::serve(log) {
-            Ok(()) => std::process::ExitCode::SUCCESS,
-            Err(error) => {
-                let _ = writeln!(io::stderr(), "tray: {error}");
-                std::process::ExitCode::FAILURE
-            }
-        };
-    }
-    if let (Some("--click"), Some(x), Some(y)) = (
-        args.get(1).map(String::as_str),
-        args.get(2).and_then(|x| x.parse().ok()),
-        args.get(3).and_then(|y| y.parse().ok()),
-    ) {
-        let right = args.get(4).is_some_and(|b| b == "right");
-        return match pointer::click(x, y, right) {
-            Ok(()) => std::process::ExitCode::SUCCESS,
-            Err(error) => {
-                let _ = writeln!(io::stderr(), "click: {error}");
-                std::process::ExitCode::FAILURE
-            }
-        };
+    if let Some(code) = helper(&args) {
+        return code;
     }
     if let (Some("--hand-off"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
         return local_auth::hand_off(socket);

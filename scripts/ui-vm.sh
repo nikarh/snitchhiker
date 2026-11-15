@@ -11,6 +11,7 @@
 # `final.png` is taken after it.
 # daemon.toml: settings for the daemon meanwhile; the packaged file is put back afterwards.
 # SNITCHHIKER_UI_PREFS: the app's ui.toml (`appearance = "dark"`), written before it starts.
+# SNITCHHIKER_UI_BEFORE: a shell snippet run as root once the daemon is up, before the app starts.
 #
 # Nothing of this runs on the host but the build and the copies.
 set -euo pipefail
@@ -35,10 +36,13 @@ set -euo pipefail
 # The daemon of this tree too, over the packaged one (the rest of the package stays).
 install -m 755 /tmp/snitchhikerd-ui /usr/bin/snitchhikerd
 install -o root -g snitchhiker-ui -m 2755 /tmp/snitchhiker-ui /usr/bin/snitchhiker-ui
+install -d -o root -g snitchhiker-ui -m 0770 /var/cache/snitchhiker-ui
 snitchhikerd trust-client /usr/bin/snitchhiker-ui >/dev/null
 cp /etc/snitchhiker/daemon.toml /tmp/daemon.toml.packaged
 if [ -n '${config}' ]; then printf '%s\n' '${config}' > /etc/snitchhiker/daemon.toml; fi
 systemctl restart snitchhikerd
+# Before the app starts (SNITCHHIKER_UI_BEFORE): history seeded into the node, rules made, for the app to load.
+${SNITCHHIKER_UI_BEFORE:-}
 uid=\$(id -u mallory)
 # The app's own preferences (SNITCHHIKER_UI_PREFS, ui.toml's text): dark or light screenshots.
 install -d -o mallory /home/mallory/.config/snitchhiker

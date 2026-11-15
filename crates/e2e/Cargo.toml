@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 snitchhiker-client = { version = "0.1.0", path = "../client" }
+snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-daemon = { version = "0.1.0", path = "../daemon" }
 snitchhiker-ebpf = { version = "0.1.0", path = "../ebpf" }
 snitchhiker-netfilter = { version = "0.1.0", path = "../netfilter" }
