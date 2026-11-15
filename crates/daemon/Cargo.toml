@@ -18,6 +18,7 @@ path = "src/main.rs"
 workspace = true
 
 [dependencies]
+nix = { version = "0.32.0", features = ["socket", "poll", "user"] }
 pico-args = "0.5.0"
 thiserror = "2.0.21"
 tracing = "0.1.44"
