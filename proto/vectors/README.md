@@ -8,6 +8,8 @@ version 1:
   an encoder produces (they carry an unknown field, which a decoder must skip).
 - `NN-name.hex` is the frame as sent: the little-endian uint32 length, then the encoded message, in hex.
 - `00-preamble.hex` is the preamble a client sends first.
+- `blocks/<name>.hex` is a columnar event block, and `blocks/<name>.txt` its rows, one `field value` per line and rows
+  separated by blank lines: the block must parse to the rows, and the rows encode to the block.
 
 An implementation must decode each `.hex` frame to the message of its `.textproto`, and, unless the vector is
 decode-only, encode that message to exactly those bytes.

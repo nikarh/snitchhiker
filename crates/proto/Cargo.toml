@@ -14,9 +14,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+bytes = "1.12.1"
 prost = "0.14.6"
 snitchhiker-core = { version = "0.1.0", path = "../core" }
 thiserror = "2.0.21"
+zerocopy = { version = "0.8.63", features = ["derive"] }
 
 [build-dependencies]
 prost-build = "0.14.6"

@@ -1,6 +1,7 @@
 //! Snitchhiker's client protocol: the generated messages (`proto/snitchhiker/v1/*.proto` is the source of truth),
 //! framing, the local preamble, and conversions to and from the core model.
 
+pub mod columns;
 pub mod convert;
 pub mod frame;
 

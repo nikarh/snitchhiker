@@ -119,3 +119,76 @@ fn frames() {
         );
     }
 }
+
+/// `blocks/<name>.txt` as rows: `name value` lines, rows separated by blank lines.
+fn rows(text: &str) -> Vec<snitchhiker_proto::columns::EventRow> {
+    text.split("\n\n")
+        .map(|chunk| {
+            let mut row = snitchhiker_proto::columns::EventRow::default();
+            for line in chunk
+                .lines()
+                .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            {
+                let (name, value) = line.split_once(' ').unwrap();
+                let number = || value.parse::<u64>().unwrap();
+                match name {
+                    "seq" => row.seq = value.parse().unwrap(),
+                    "time_ms" => row.time_ms = number(),
+                    "exe" => row.exe = u32::try_from(number()).unwrap(),
+                    "host" => row.host = u32::try_from(number()).unwrap(),
+                    "uid" => row.uid = u32::try_from(number()).unwrap(),
+                    "pid" => row.pid = u32::try_from(number()).unwrap(),
+                    "address" => row.address = from_hex(value).try_into().unwrap(),
+                    "port" => row.port = u16::try_from(number()).unwrap(),
+                    "protocol" => row.protocol = u8::try_from(number()).unwrap(),
+                    "context" => row.context = u8::try_from(number()).unwrap(),
+                    "action" => row.action = u8::try_from(number()).unwrap(),
+                    "source" => row.source = u8::try_from(number()).unwrap(),
+                    "rule" => row.rule = number(),
+                    "bytes_out" => row.bytes_out = number(),
+                    "bytes_in" => row.bytes_in = number(),
+                    other => panic!("unknown field {other}"),
+                }
+            }
+            row
+        })
+        .collect()
+}
+
+#[test]
+fn event_blocks() {
+    let dir = root().join("vectors/v1/blocks");
+    let update = std::env::var_os("SNITCHHIKER_UPDATE_VECTORS").is_some();
+    for entry in fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_none_or(|e| e != "txt") {
+            continue;
+        }
+        let expected = rows(&fs::read_to_string(&path).unwrap());
+        let mut encoded = Vec::new();
+        snitchhiker_proto::columns::encode_events(&expected, &mut encoded).unwrap();
+        let hex_path = path.with_extension("hex");
+        if !hex_path.exists() {
+            assert!(
+                update,
+                "{}: no .hex (SNITCHHIKER_UPDATE_VECTORS=1 writes it)",
+                path.display()
+            );
+            fs::write(&hex_path, to_hex(&encoded)).unwrap();
+        }
+        let block = from_hex(&fs::read_to_string(&hex_path).unwrap());
+        assert_eq!(
+            to_hex(&encoded),
+            to_hex(&block),
+            "{}: the rows no longer encode to the block",
+            path.display()
+        );
+        let parsed = snitchhiker_proto::columns::EventBlock::parse(&block).unwrap();
+        assert_eq!(
+            parsed.rows().collect::<Vec<_>>(),
+            expected,
+            "{}",
+            path.display()
+        );
+    }
+}

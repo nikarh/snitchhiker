@@ -1,0 +1,33 @@
+# An event block of two rows: one field per line, `name value`, rows separated by a blank line. Addresses are hex.
+# The block (events-2-rows.hex) must parse to these rows, and these rows must encode to it.
+seq 1000
+time_ms 1763200000000
+exe 3
+host 7
+uid 1000
+pid 4242
+address 00000000000000000000ffffc000020a
+port 443
+protocol 6
+context 1
+action 1
+source 1
+rule 18
+bytes_out 517
+bytes_in 4096
+
+seq 1003
+time_ms 1763200001500
+exe 3
+host 0
+uid 0
+pid 1
+address 20010db8000000000000000000000001
+port 53
+protocol 17
+context 2
+action 3
+source 4
+rule 0
+bytes_out 0
+bytes_in 0

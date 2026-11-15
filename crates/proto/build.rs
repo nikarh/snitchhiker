@@ -3,6 +3,9 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo::rerun-if-changed=../../proto");
     let descriptors = protox::compile(["snitchhiker/v1/client.proto"], ["../../proto"])?;
-    prost_build::Config::new().compile_fds(descriptors)?;
+    prost_build::Config::new()
+        // Blocks are shared between subscribers and sliced in place: reference-counted, never copied.
+        .bytes([".snitchhiker.v1.EventBlock.columns"])
+        .compile_fds(descriptors)?;
     Ok(())
 }
