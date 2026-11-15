@@ -107,6 +107,28 @@ impl Selection {
     }
 }
 
+/// Rules being dragged onto a folder: their ids, and what the drag shows.
+#[derive(Debug, Clone)]
+pub struct DraggedRules {
+    ids: Vec<u64>,
+    label: String,
+}
+
+/// What follows the pointer while rules are dragged.
+struct DragPreview(String);
+
+impl Render for DragPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .bg(cx.theme().primary)
+            .text_color(cx.theme().primary_foreground)
+            .child(self.0.clone())
+    }
+}
+
 pub struct RulesTable {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
@@ -306,6 +328,34 @@ pub fn conditions(conditions: Option<&v1::Conditions>) -> String {
     parts.join(" ")
 }
 
+impl RulesTable {
+    /// A rule's folder and name, which drags it (with the selection, when it is selected) onto a folder.
+    fn name_cell(&self, rule: &v1::Rule, list: &v1::RuleList) -> gpui::AnyElement {
+        let id = rule.id;
+        // The selection moves together when the rule dragged is part of it.
+        let ids = if self.selection.contains(id) {
+            self.selection.ids()
+        } else {
+            vec![id]
+        };
+        let label = if ids.len() == 1 {
+            rule.name.clone()
+        } else {
+            format!("{} rules", ids.len())
+        };
+        div()
+            .id(SharedString::from(format!("drag-{id}")))
+            .cursor_grab()
+            .overflow_hidden()
+            .text_ellipsis()
+            .on_drag(DraggedRules { ids, label }, |dragged, _, _, cx| {
+                cx.new(|_| DragPreview(dragged.label.clone()))
+            })
+            .child(format!("{}{}", folder_path(list, rule.folder), rule.name))
+            .into_any_element()
+    }
+}
+
 impl TableDelegate for RulesTable {
     fn columns_count(&self, _: &App) -> usize {
         COLUMNS.len()
@@ -444,6 +494,7 @@ impl TableDelegate for RulesTable {
             2 => crate::views::events::action_tag(u8::try_from(rule.action).unwrap_or(0))
                 .into_any_element(),
             // The tier, when it isn't the usual one.
+            3 if !rule.locked => self.name_cell(rule, &list),
             3 => h_flex()
                 .gap_1()
                 .overflow_hidden()
@@ -687,6 +738,17 @@ impl RulesPage {
             .when(chosen, |row| row.bg(theme.accent))
             .hover(|row| row.bg(theme.muted))
             .on_click(cx.listener(move |page, _, _, cx| page.choose_folder(id, cx)))
+            // Rules dropped on a folder (or on All rules: the top level) move there; not into locked ones.
+            .when(!locked, |row| {
+                let requests = requests.clone();
+                row.drag_over::<DraggedRules>(|style, _, _, cx| style.bg(cx.theme().accent))
+                    .on_drop(move |dragged: &DraggedRules, _, _| {
+                        let _ = requests.send(Request::EditRules(v1::EditRules {
+                            ids: dragged.ids.clone(),
+                            edit: Some(v1::edit_rules::Edit::Move(v1::MoveRules { folder: id })),
+                        }));
+                    })
+            })
             .child(
                 div()
                     .flex_1()

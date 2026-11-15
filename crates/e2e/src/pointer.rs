@@ -74,6 +74,56 @@ fn millis() -> u32 {
     })
 }
 
+/// Moves the pointer to (`x`, `y`), and waits a little, as a hand moves.
+fn step(
+    pointer: &wayland_protocols_wlr::virtual_pointer::v1::client::zwlr_virtual_pointer_v1::ZwlrVirtualPointerV1,
+    queue: &mut wayland_client::EventQueue<State>,
+    state: &mut State,
+    x: u32,
+    y: u32,
+) -> Result<(), String> {
+    pointer.motion_absolute(millis(), x, y, WIDTH, HEIGHT);
+    pointer.frame();
+    queue.roundtrip(state).map_err(|e| e.to_string())?;
+    std::thread::sleep(std::time::Duration::from_millis(30));
+    Ok(())
+}
+
+/// Drags with the left button from (`x1`, `y1`) to (`x2`, `y2`), in steps, as a hand would.
+pub fn drag(x1: u32, y1: u32, x2: u32, y2: u32) -> Result<(), String> {
+    let connection =
+        Connection::connect_to_env().map_err(|e| format!("the Wayland session: {e}"))?;
+    let (globals, mut queue) =
+        registry_queue_init::<State>(&connection).map_err(|e| e.to_string())?;
+    let handle = queue.handle();
+    let seat: WlSeat = globals
+        .bind(&handle, 1..=7, ())
+        .map_err(|e| format!("wl_seat: {e}"))?;
+    let manager: ZwlrVirtualPointerManagerV1 = globals
+        .bind(&handle, 1..=2, ())
+        .map_err(|e| format!("the virtual pointer protocol: {e}"))?;
+    let pointer = manager.create_virtual_pointer(Some(&seat), &handle, ());
+    let mut state = State;
+    step(&pointer, &mut queue, &mut state, x1, y1)?;
+    pointer.button(millis(), BTN_LEFT, ButtonState::Pressed);
+    pointer.frame();
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    let steps = 20_i64;
+    for i in 1..=steps {
+        let at = |a: u32, b: u32| {
+            u32::try_from(i64::from(a) + (i64::from(b) - i64::from(a)) * i / steps).unwrap_or(b)
+        };
+        step(&pointer, &mut queue, &mut state, at(x1, x2), at(y1, y2))?;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    pointer.button(millis(), BTN_LEFT, ButtonState::Released);
+    pointer.frame();
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    pointer.destroy();
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// The right button (`linux/input-event-codes.h`).
 const BTN_RIGHT: u32 = 0x111;
 

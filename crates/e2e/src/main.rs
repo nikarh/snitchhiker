@@ -249,6 +249,18 @@ fn main() -> ExitCode {
     {
         return stepup::add_rule(socket, kind);
     }
+    if args.get(1).map(String::as_str) == Some("--drag") {
+        let coordinates: Vec<u32> = args.iter().skip(2).filter_map(|a| a.parse().ok()).collect();
+        if let [x1, y1, x2, y2] = coordinates.as_slice() {
+            return match pointer::drag(*x1, *y1, *x2, *y2) {
+                Ok(()) => std::process::ExitCode::SUCCESS,
+                Err(error) => {
+                    let _ = writeln!(io::stderr(), "drag: {error}");
+                    std::process::ExitCode::FAILURE
+                }
+            };
+        }
+    }
     if let (Some("--tray"), Some(log)) = (args.get(1).map(String::as_str), args.get(2)) {
         return match tray::serve(log) {
             Ok(()) => std::process::ExitCode::SUCCESS,

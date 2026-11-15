@@ -138,5 +138,24 @@ else
   fail opensnitch-imported-in-the-app "the preview's Import didn't add just the rules that convert" "${out}"
 fi
 
+# 7. A rule dragged onto a folder moves there.
+scripts/ui-vm.sh "${shots}/drag" '
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
+snitchhiker folders add Bin >/dev/null
+snitchhiker rules add allow --exe /usr/bin/curl --name "curl" >/dev/null
+snitchhiker rules add allow --exe /usr/bin/wget --name "wget" >/dev/null
+sleep 1
+click 66 355
+drag 760 121 300 113
+sleep 1
+snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
+out=$(result)
+if grep -q "Bin/curl" <<<"${out}" && grep -q "normal   wget" <<<"${out}"; then
+  pass rule-dragged-onto-a-folder
+else
+  fail rule-dragged-onto-a-folder "the rule dragged didn't move into the folder" "${out}"
+fi
+
 echo "screenshots in ${shots}"
 exit "${failed}"
