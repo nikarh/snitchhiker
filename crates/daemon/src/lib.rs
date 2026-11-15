@@ -2,3 +2,5 @@
 //! exercise them in the test VMs.
 
 pub mod peer;
+pub mod process;
+pub mod store;
