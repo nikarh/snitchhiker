@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ALIASES"],"enum":["HostPattern","Network"],"struct":["HostPatternError","NetworkError"]};

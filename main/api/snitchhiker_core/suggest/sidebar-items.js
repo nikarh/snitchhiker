@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["suggestions"],"struct":["Suggestion"]};

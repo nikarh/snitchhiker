@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["destination","engine","generalize","pattern","rule","spec","suggest"]};
