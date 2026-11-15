@@ -9,9 +9,12 @@ const base = process.env.DOCS_VERSION ? `/snitchhiker/${process.env.DOCS_VERSION
 const beside = /^\/(?:main\/|v\d+\.\d+\.\d+\/|versions\.json$)/;
 
 const pages = new Map();
+// rustdoc's pages (api/) are rustdoc's own: links into them are checked, links within them are not.
+const apiDir = join(dist, 'api');
 const walk = (dir) => {
 	for (const name of readdirSync(dir)) {
 		const path = join(dir, name);
+		if (path === apiDir) continue;
 		if (statSync(path).isDirectory()) walk(path);
 		else if (name.endsWith('.html')) pages.set(path, readFileSync(path, 'utf8'));
 	}

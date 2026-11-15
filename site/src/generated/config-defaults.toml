@@ -1,0 +1,17 @@
+# Every setting of daemon.toml with its default (generated from Config::default()).
+mode = "enforce"
+no_match = "deny"
+no_client = "deny"
+prompt_timeout_secs = 30
+on_timeout = "deny"
+client_group = "snitchhiker-ui"
+trusted_clients = []
+step_up = "polkit"
+fail = "closed"
+queues = 4
+queue = 0
+learn_dns = true
+database = "/var/lib/snitchhiker/state.db"
+default_rules = true
+rules_dir = "/etc/snitchhiker/rules.d"
+retention_days = 30

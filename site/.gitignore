@@ -19,3 +19,5 @@ pnpm-debug.log*
 
 # macOS-specific files
 .DS_Store
+# rustdoc, built by `mise run docs:api` (and the Docs workflow)
+/public/api/

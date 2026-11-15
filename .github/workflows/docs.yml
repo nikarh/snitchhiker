@@ -42,6 +42,13 @@ jobs:
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install_args: node
+      # The crates' API docs, published under api/: the eBPF crate compiles its programs with clang.
+      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+      - run: rustup toolchain install
+      - name: API docs
+        run: |
+          cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e
+          cp -r target/doc site/public/api
       - name: Build
         working-directory: site
         env:

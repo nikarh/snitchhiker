@@ -57,8 +57,17 @@ description = "Serve the docs site locally with live reload, at http://localhost
 dir = "site"
 run = ["npm install --no-audit --no-fund", "npm run dev"]
 
+[tasks."docs:api"]
+description = "The crates' API docs (rustdoc), into site/public/api, published with the site"
+run = [
+  "cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e",
+  "rm -rf site/public/api",
+  "cp -r target/doc site/public/api",
+]
+
 [tasks."docs:build"]
 description = "Build the docs site as CI does, into site/dist, and check its links"
+depends = ["docs:api"]
 dir = "site"
 env = { DOCS_VERSION = "main" }
 run = ["npm install --no-audit --no-fund", "npm run build"]

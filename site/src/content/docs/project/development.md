@@ -20,6 +20,8 @@ sidebar:
 
 ## Layout
 
+The crates' API documentation (rustdoc) is published with this site: [snitchhiker-core](/api/snitchhiker_core/), [snitchhiker-proto](/api/snitchhiker_proto/), [snitchhiker-client](/api/snitchhiker_client/), [snitchhiker-netfilter](/api/snitchhiker_netfilter/), [snitchhiker-ebpf](/api/snitchhiker_ebpf/), [snitchhiker-daemon](/api/snitchhiker_daemon/). `mise run docs:api` builds it locally.
+
 - `crates/core`: the rule model, patterns, the engine that decides, rule files, suggestions and path generalisation. Pure computation: no I/O, no privileges.
 - `crates/netfilter`: nf_tables and NFQUEUE over netlink, our own code (libnftables is GPL-2.0-only), packet parsing, and closing sockets through sock_diag.
 - `crates/ebpf`: the attribution programs (`bpf/attribution.bpf.c`, CO-RE C compiled by clang) and their loader (aya).

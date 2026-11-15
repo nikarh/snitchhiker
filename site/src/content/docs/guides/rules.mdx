@@ -5,6 +5,11 @@ sidebar:
   order: 1
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import Aliases from '../../../generated/aliases.mdx';
+import system from '../../../../../crates/daemon/defaults/system.toml?raw';
+
+
 A rule is an action and a set of conditions. When every condition holds for a connection, the rule matches it. Rules live in folders; a folder can add conditions to every rule inside it.
 
 ```bash
@@ -65,13 +70,7 @@ Connections are made to addresses, so a `host` condition holds when the address 
 
 A `net` value is an address, a CIDR range, or an alias:
 
-| Alias | Networks |
-| --- | --- |
-| `loopback` | `127.0.0.0/8`, `::1/128` |
-| `lan` | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `fc00::/7`, `fe80::/10` |
-| `multicast` | `224.0.0.0/4`, `ff00::/8` |
-| `imds` | `169.254.169.254/32`, `fd00:ec2::254/128` (cloud instance metadata) |
-| `cgnat` | `100.64.0.0/10` |
+<Aliases />
 
 ### Context
 
@@ -102,6 +101,8 @@ Rules made by answering a prompt can last until the daemon restarts, for an hour
 ## The System folder
 
 The daemon has one built-in folder, **System**, with a single rule: everything to `loopback` is allowed, in any context, in the fallback tier. Any other rule that matches decides instead. It can't be edited; `default_rules = false` in the [configuration](/reference/configuration/#default_rules) removes it.
+
+<Code code={system} lang="toml" title="The System folder (built into the daemon)" />
 
 ## Rule files root keeps
 

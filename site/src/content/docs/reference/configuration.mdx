@@ -5,6 +5,11 @@ sidebar:
   order: 1
 ---
 
+import { Code } from '@astrojs/starlight/components';
+import defaults from '../../../generated/config-defaults.toml?raw';
+import packaged from '../../../../../dist/daemon.toml?raw';
+
+
 The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `snitchhikerd --config <path>`). Only root can change it: clients can see the mode and the policy, not change them. After a change, `sudo systemctl restart snitchhikerd`.
 
 Every key is optional; an empty or missing file means the defaults. Unknown keys are errors, so a typo doesn't go unnoticed. The packaged file sets `mode = "monitor"` and documents the rest.
@@ -17,6 +22,16 @@ prompt_timeout_secs = 30
 on_timeout = "deny"
 fail = "closed"
 ```
+
+## Defaults
+
+Every setting with its default, from the daemon's code:
+
+<Code code={defaults} lang="toml" title="Defaults" />
+
+The packages install this file, which starts in monitor mode and describes each setting:
+
+<Code code={packaged} lang="toml" title="/etc/snitchhiker/daemon.toml" />
 
 ## Deciding
 

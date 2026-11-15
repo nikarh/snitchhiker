@@ -2038,8 +2038,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
 - [ ] **Docs site** ([§10.7](#107-documentation-site))
   - [x] `site/` scaffold, `docs.yml` and `docs-publish.sh` from barbican, versions, link checking. Served from
         nikarh.github.io/snitchhiker/, no custom domain.
-  - [ ] Generators and their CI drift check: protocol, command line, configuration, matchers and query keys, defaults;
-        rustdoc publishing. The protocol schema is read from `proto/` at build time; the rest are left.
+  - [x] Generators and their CI drift check: protocol, command line, configuration, matchers and query keys, defaults;
+        rustdoc publishing. Query keys come with the query language (M3).
   - [x] Pages for what exists so far: introduction, both quick starts, install, configuration, CLI, the security
         model, how it works, writing the docs. (One quick start: the remote one waits for M5.)
 - [ ] **First release**
