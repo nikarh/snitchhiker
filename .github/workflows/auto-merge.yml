@@ -16,6 +16,8 @@ permissions:
   pull-requests: write
   # GITHUB_TOKEN cannot merge PRs that touch .github/workflows/ without this.
   actions: write
+  # Reading a PR's check runs (implicit on public repositories, not on private ones).
+  checks: read
 
 concurrency:
   group: auto-merge

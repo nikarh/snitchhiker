@@ -22,6 +22,10 @@ jobs:
     if: github.repository_owner == 'nikarh'
     runs-on: ubuntu-24.04
     environment: release
+    permissions:
+      contents: read
+      # git-cliff looks up the pull requests of the commits (implicit on public repositories, not on private ones).
+      pull-requests: read
     outputs:
       version-suffix: ${{ steps.version.outputs.suffix }}
     steps:
