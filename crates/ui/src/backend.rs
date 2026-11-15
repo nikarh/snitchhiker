@@ -43,6 +43,10 @@ pub enum Request {
     Explore(v1::Explore),
     Connections,
     Kill(v1::KillConnection),
+    /// Why event `seq` is decided as it is.
+    Explain {
+        seq: i64,
+    },
 }
 
 /// What the node tells the app.
@@ -70,6 +74,8 @@ pub enum Update {
     Explored(Vec<v1::ExploreRow>),
     /// The live connections.
     Connections(Vec<v1::LiveConnection>),
+    /// Why an event is decided as it is.
+    Explanation(Box<v1::Explanation>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -209,6 +215,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         Request::Explore(explore) => client.call(Method::Explore(explore.clone()))?,
         Request::Connections => client.call(Method::ListConnections(v1::ListConnections {}))?,
         Request::Kill(kill) => client.call(Method::KillConnection(kill.clone()))?,
+        Request::Explain { seq } => client.call(Method::Explain(v1::Explain { seq: *seq }))?,
     };
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
@@ -216,6 +223,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Changes(page) => Some(Update::Changes(page.changes)),
         R::Explored(page) => Some(Update::Explored(page.rows)),
         R::Connections(list) => Some(Update::Connections(list.connections)),
+        R::Explanation(explanation) => Some(Update::Explanation(explanation)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

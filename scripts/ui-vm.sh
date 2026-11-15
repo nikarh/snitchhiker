@@ -17,6 +17,13 @@ setup=${2:-}
 config=${3:-}
 cargo build -q --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-e2e
 e2e/vm.sh node up >/dev/null
+# The package, as users get it, when the VM doesn't have it yet (one not kept from e2e/run.sh).
+if ! e2e/vm.sh node ssh 'getent group snitchhiker-ui' >/dev/null; then
+  mise x nfpm -- scripts/package.sh x86_64 target/release/snitchhikerd target/ui-vm-packages >/dev/null
+  e2e/vm.sh node put target/ui-vm-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
+  e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
+    sudo pacman -U --noconfirm --overwrite /usr/bin/snitchhikerd /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+fi
 e2e/vm.sh node put target/release/snitchhiker-ui /tmp/snitchhiker-ui
 e2e/vm.sh node put target/release/snitchhiker-e2e /tmp/snitchhiker-e2e-ui
 e2e/vm.sh node put target/release/snitchhikerd /tmp/snitchhikerd-ui

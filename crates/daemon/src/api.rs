@@ -320,6 +320,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListChanges(_)
             | Method::Explore(_)
             | Method::ListConnections(_)
+            | Method::Explain(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -366,6 +367,11 @@ fn handle(
             Err(e) => internal(e),
         },
         Method::KillConnection(kill) => kill_connection(daemon, &kill),
+        Method::Explain(explain) => match daemon.explain(explain.seq) {
+            Ok(Some(explanation)) => R::Explanation(Box::new(explanation)),
+            Ok(None) => error(v1::ErrorCode::NotFound, format!("no event {}", explain.seq)),
+            Err(e) => internal(e),
+        },
         Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
         Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),

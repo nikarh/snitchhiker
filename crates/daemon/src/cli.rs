@@ -73,6 +73,7 @@ Commands:
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections
+  explain <seq>                   Which rules match a recorded connection now, the deciding one first
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
                                   rule file to review and import
@@ -151,6 +152,16 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("history") => history(args, version),
         Some("connections") => connections(args, version),
         Some("kill") => kill_connection(args, version),
+        Some("explain") => {
+            let seq: i64 = args.free_from_str()?;
+            reject_rest(args)?;
+            match connect(version)?.call(Method::Explain(v1::Explain { seq }))? {
+                v1::response::Result::Explanation(explanation) => {
+                    out(&format_explanation(&explanation))
+                }
+                _ => Err(unexpected()),
+            }
+        }
         Some("undo") => {
             let change: u64 = args.free_from_str()?;
             reject_rest(args)?;
@@ -762,6 +773,31 @@ fn format_events(events: &[v1::ConnectionEvent]) -> String {
             event
                 .rule
                 .map_or_else(String::new, |r| format!(" (rule {r})")),
+        );
+    }
+    text
+}
+
+fn format_explanation(explanation: &v1::Explanation) -> String {
+    let mut text = format_events(explanation.event.as_slice());
+    if explanation.rules.is_empty() {
+        text.push_str("  no rule matches it now: it would be prompted for (or decided by the default action)\n");
+    }
+    for (i, rule) in explanation.rules.iter().enumerate() {
+        let _ = writeln!(
+            text,
+            "  {} rule {} {:?}: {} ({:?}, specificity {})",
+            if i == 0 { "decides" } else { "        " },
+            rule.id,
+            rule.name,
+            format!("{:?}", rule.action()).to_lowercase(),
+            rule.tier(),
+            rule.specificity,
+        );
+    }
+    if explanation.partial {
+        text.push_str(
+            "  rules on command lines or parent processes aren't checked: the history doesn't keep them\n",
         );
     }
     text

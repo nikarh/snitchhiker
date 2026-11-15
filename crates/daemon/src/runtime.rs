@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwap;
 use snitchhiker_core::engine::{Facts, RuleSet};
-use snitchhiker_core::rule::{Action, ContextKind};
+use snitchhiker_core::rule::{Action, Condition, ContextKind};
 use snitchhiker_ebpf::{Attribution, FlowKey};
 use snitchhiker_netfilter::netlink::{Socket, Writer};
 use snitchhiker_netfilter::nftables::{Table, encode_install, encode_remove};
@@ -282,6 +282,71 @@ impl Daemon {
                 }
             })
             .collect())
+    }
+
+    /// Why the recorded connection `seq` is decided as it is, by today's rules; `None` if there is no such event.
+    pub fn explain(&self, seq: i64) -> Result<Option<v1::Explanation>, Error> {
+        let Some(stored) = self.store().event(seq)? else {
+            return Ok(None);
+        };
+        let rules = self.shared.rules.load();
+        let hosts: Vec<Arc<str>> = stored.host.iter().map(|h| Arc::from(h.as_str())).collect();
+        let home = crate::process::home_of(stored.uid);
+        let facts = Facts {
+            exe: &stored.exe,
+            apps: &[],
+            cmdline: "",
+            ancestors: &[],
+            uid: stored.uid,
+            home: home.as_deref(),
+            hosts: &hosts,
+            address: stored.address,
+            port: stored.port,
+            protocol: stored.protocol,
+            context: match stored.context {
+                1 => ContextKind::Container,
+                2 => ContextKind::Vm,
+                3 => ContextKind::Netns,
+                _ => ContextKind::Host,
+            },
+            now_ms: now_ms(),
+        };
+        let matches = rules.explain(&facts);
+        // Names and whether a match depends on what the history doesn't keep.
+        let store = self.store();
+        let managed = crate::managed::Managed::load(
+            self.shared.config.default_rules,
+            &self.shared.config.rules_dir,
+        )
+        .map_err(Error::from)?;
+        // Rules on command lines or parents can't be checked against the history: their absence from the matches says
+        // nothing.
+        let needs_more = |r: &Rule| {
+            r.enabled
+                && r.conditions
+                    .iter()
+                    .any(|c| matches!(c, Condition::Cmdline(_) | Condition::Parent(_)))
+        };
+        let partial = store.rules()?.iter().any(needs_more) || managed.rules.iter().any(needs_more);
+        let mut explained = Vec::new();
+        for m in &matches {
+            let rule = match store.rule(m.rule)? {
+                Some(rule) => Some(rule),
+                None => managed.rules.iter().find(|r| r.id == m.rule).cloned(),
+            };
+            explained.push(v1::ExplainedRule {
+                id: m.rule,
+                name: rule.map_or_else(String::new, |r| r.name),
+                action: convert::action(m.action).into(),
+                tier: convert::tier(m.tier).into(),
+                specificity: m.specificity,
+            });
+        }
+        Ok(Some(v1::Explanation {
+            event: Some(crate::api::event(&stored)),
+            rules: explained,
+            partial,
+        }))
     }
 
     /// Closes a live socket (as `reject` does): its program's next call fails with `ECONNABORTED`.

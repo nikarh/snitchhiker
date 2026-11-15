@@ -99,6 +99,8 @@ pub struct Model {
     pub explored: Vec<v1::ExploreRow>,
     /// The live connections, as last listed.
     pub connections: Vec<v1::LiveConnection>,
+    /// The last explanation the node sent.
+    pub explanation: Option<v1::Explanation>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -175,6 +177,10 @@ impl Model {
             Update::Connections(connections) => {
                 self.connections = connections;
                 Changed::Connections
+            }
+            Update::Explanation(explanation) => {
+                self.explanation = Some(*explanation);
+                Changed::Status
             }
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::Failed(error) => {

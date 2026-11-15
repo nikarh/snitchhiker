@@ -3,6 +3,7 @@
 pub mod connections;
 pub mod editor;
 pub mod events;
+pub mod explain;
 pub mod explorer;
 pub mod history;
 pub mod prompts;

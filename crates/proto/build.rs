@@ -6,6 +6,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     prost_build::Config::new()
         // Blocks are shared between subscribers and sliced in place: reference-counted, never copied.
         .bytes([".snitchhiker.v1.EventBlock.columns"])
+        // An explanation carries a whole event: boxed, so every response isn't the size of one.
+        .boxed(".snitchhiker.v1.Response.result.explanation")
         .compile_fds(descriptors)?;
     Ok(())
 }

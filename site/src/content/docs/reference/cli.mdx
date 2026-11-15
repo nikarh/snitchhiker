@@ -96,6 +96,14 @@ snitchhiker events [--limit <n>]
 
 The newest connections (50 by default): sequence number, action, user, program, destination (the name the program looked up, or the address), port, protocol, and the bytes sent and received so far.
 
+## `explain`
+
+```text
+snitchhiker explain <seq>
+```
+
+Why a recorded connection (by its sequence number, from `events`) is decided as it is: every rule that matches it under the rules in effect now, in precedence order, the deciding one first, with each rule's action, tier and specificity. With none, the connection would be prompted for, or decided by `no_match`. Rules on command lines or parent processes can't be checked, since the history doesn't keep those; the answer says so when such rules exist. The desktop app's Events page has the same as the info button on each row (or a double-click on it).
+
 ## `learn`
 
 ```text

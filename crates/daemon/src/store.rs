@@ -294,6 +294,13 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.seq < ?1 ORDER BY e.seq DESC LIMIT ?2",
     ),
+    (
+        "events.one",
+        "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
+         FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+         WHERE e.seq = ?1",
+    ),
     // A subscriber catching up after a reconnect: the events after the last one it saw, oldest first.
     (
         "events.after",
@@ -1336,6 +1343,15 @@ impl Store {
         let mut statement = self.connection.prepare_cached(sql("events.page")?)?;
         let rows = statement.query_map(params![before, limit], stored_event)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The event recorded as `seq`.
+    pub fn event(&self, seq: i64) -> Result<Option<StoredEvent>, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("events.one")?)?
+            .query_row(params![seq], stored_event)
+            .optional()?)
     }
 
     /// The oldest events after `after` (a sequence number), at most `limit`.

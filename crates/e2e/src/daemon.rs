@@ -175,8 +175,34 @@ pub fn enforces_rules() -> Result<(), String> {
     let other_ok = mallory_connects(other)?;
     thread::sleep(Duration::from_millis(500));
     let events = daemon.cli(&["events", "--limit", "20"])?;
+    // Explained with the rules as they are now: a broader rule added since matches too, but is outranked.
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "glob:/usr/bin/python3*",
+        "--name",
+        "python anywhere",
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let explained = match events
+        .lines()
+        .find(|l| l.contains("allow") && l.contains(&format!(":{allowed}")))
+        .and_then(|l| l.split_whitespace().next())
+    {
+        Some(seq) => daemon.cli(&["explain", seq])?,
+        None => String::new(),
+    };
     daemon.stop()?;
     check(allowed_ok, "the allowed connection was blocked", &events)?;
+    let decides = explained.lines().find(|l| l.contains("decides"));
+    check(
+        decides.is_some_and(|l| l.contains("python to the test port") && l.contains("allow"))
+            && explained.contains("\"python anywhere\": allow"),
+        "explain doesn't put the specific rule first with the broader one after it",
+        &format!("{events}{explained}"),
+    )?;
     check(
         !other_ok,
         "a connection no rule allows went through",

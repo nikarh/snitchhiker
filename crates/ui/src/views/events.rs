@@ -7,18 +7,21 @@ use chrono::{Local, TimeZone as _};
 use gpui::{
     App, Context, Entity, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::table::{Column, TableDelegate, TableState};
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex};
 use snitchhiker_proto::columns::EventRow;
 use snitchhiker_proto::v1;
 
 use crate::backend::Request;
 use crate::model::{Model, address};
+use crate::views::explain;
 
-const COLUMNS: [(&str, &str, f32); 8] = [
+const COLUMNS: [(&str, &str, f32); 9] = [
     ("time", "Time", 165.),
     ("action", "Action", 76.),
+    ("why", "", 44.),
     ("program", "Program", 240.),
     ("destination", "Destination", 210.),
     ("port", "Port", 84.),
@@ -123,7 +126,7 @@ impl TableDelegate for EventsTable {
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
         let column = Column::new(key, name).width(width);
-        if col_ix >= 6 {
+        if col_ix >= 7 {
             column.text_right()
         } else {
             column
@@ -144,6 +147,20 @@ impl TableDelegate for EventsTable {
         if col_ix == 1 {
             return action_tag(row.action).into_any_element();
         }
+        if col_ix == 2 {
+            let (model, requests, seq) = (self.model.clone(), self.requests.clone(), row.seq);
+            return Button::new(SharedString::from(format!("why-{seq}")))
+                .small()
+                .ghost()
+                .icon(IconName::Info)
+                .tooltip("Why was it decided so?")
+                .on_click(move |_, window, cx| {
+                    explain::open(model.clone(), requests.clone(), seq, window, cx);
+                })
+                .into_any_element();
+        }
+        // The columns of `cell`, which doesn't have the info button's.
+        let col_ix = if col_ix > 2 { col_ix - 1 } else { col_ix };
         let text = cell(row, col_ix, model);
         let line = h_flex().w_full().overflow_hidden().text_ellipsis();
         // The byte counts line up on the right, as their headers do.

@@ -36,6 +36,7 @@ Commands:
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections
+  explain <seq>                   Which rules match a recorded connection now, the deciding one first
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
                                   rule file to review and import

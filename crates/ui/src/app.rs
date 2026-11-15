@@ -9,7 +9,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
-use gpui_component::table::{DataTable, TableState};
+use gpui_component::table::{DataTable, TableEvent, TableState};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
 use crate::backend::{Request, Update};
@@ -18,6 +18,7 @@ use crate::notify::{self, Notice};
 use crate::views::connections::ConnectionsTable;
 use crate::views::editor;
 use crate::views::events::EventsTable;
+use crate::views::explain;
 use crate::views::explorer::Explorer;
 use crate::views::history::History;
 use crate::views::prompts::Prompts;
@@ -78,6 +79,7 @@ impl App {
                 cx,
             )
         });
+        Self::explain_on_double_click(&events, window, cx);
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
         for request in [
@@ -152,6 +154,22 @@ impl App {
             status,
             requests: own_requests,
         }
+    }
+
+    /// A double-click on an event says why it was decided so, as its info button does.
+    fn explain_on_double_click(
+        events: &Entity<TableState<EventsTable>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.subscribe_in(events, window, |app, _, event, window, cx| {
+            if let TableEvent::DoubleClickedRow(row) = event
+                && let Some(seq) = app.model.read(cx).events.get(*row).map(|r| r.seq)
+            {
+                explain::open(app.model.clone(), app.requests.clone(), seq, window, cx);
+            }
+        })
+        .detach();
     }
 
     fn item(

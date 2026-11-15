@@ -100,6 +100,7 @@ message Request {
     Explore explore = 30;
     ListConnections list_connections = 31;
     KillConnection kill_connection = 32;
+    Explain explain = 33;
   }
 }
 
@@ -121,6 +122,7 @@ message Response {
     ChangePage changes = 26;
     ExplorePage explored = 27;
     ConnectionList connections = 28;
+    Explanation explanation = 29;
   }
 }
 
@@ -650,4 +652,31 @@ message KillConnection {
   uint32 local_port = 3;
   bytes remote = 4;
   uint32 remote_port = 5;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Explain: why a recorded connection is decided as it is, by today's rules.
+
+message Explain {
+  // The event's seq.
+  int64 seq = 1;
+}
+
+message ExplainedRule {
+  uint64 id = 1;
+  string name = 2;
+  Action action = 3;
+  Tier tier = 4;
+  // Higher is narrower: among the rules of one tier and kind, the narrowest is reported.
+  uint32 specificity = 5;
+}
+
+message Explanation {
+  ConnectionEvent event = 1;
+  // Every rule that matches it today, in precedence order: the first decides. Empty: no rule matches, and the policy
+  // decides.
+  repeated ExplainedRule rules = 2;
+  // The history keeps no command lines and parent programs: rules with those conditions are checked as if they
+  // didn't hold.
+  bool partial = 3;
 }
