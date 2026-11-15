@@ -169,12 +169,13 @@ fn spake(code: &Code) -> (Password, Identity, Identity) {
 }
 
 /// The node's side: one attempt at the meeting point; its outcome (`true`: the device knew the code and was sent the
-/// link).
-async fn serve_one(endpoint: &Endpoint, code: &Code, link: &str) -> io::Result<bool> {
-    let incoming = endpoint
-        .accept()
-        .await
-        .ok_or_else(|| other("the meeting point closed"))?;
+/// link), or none when the meeting point closed before anyone came.
+async fn serve_one(endpoint: &Endpoint, code: &Code, link: &str) -> Option<bool> {
+    let incoming = endpoint.accept().await?;
+    Some(attempt(incoming, code, link).await.unwrap_or(false))
+}
+
+async fn attempt(incoming: iroh::endpoint::Incoming, code: &Code, link: &str) -> io::Result<bool> {
     let connection = incoming.await.map_err(other)?;
     let (mut send, mut receive) = connection.accept_bi().await.map_err(other)?;
     let (password, device, node) = spake(code);
@@ -206,7 +207,8 @@ pub struct Offer {
 
 impl Offer {
     /// Opens the meeting point of `code`, on the LAN and on `options`' relays; `link` is what a device that knows the
-    /// code is sent. `attempted` is called once, with the attempt's outcome.
+    /// code is sent. `attempted` is called once if a device makes the attempt, with its outcome (not when the offer
+    /// is dropped unused).
     pub fn open(
         code: &Code,
         options: &Options,
@@ -227,8 +229,9 @@ impl Offer {
         let serving = endpoint.clone();
         let code = code.clone();
         runtime.spawn(async move {
-            let outcome = serve_one(&serving, &code, &link).await.unwrap_or(false);
-            attempted(outcome);
+            if let Some(outcome) = serve_one(&serving, &code, &link).await {
+                attempted(outcome);
+            }
             serving.close().await;
         });
         Ok(Self { endpoint, runtime })

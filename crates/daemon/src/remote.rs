@@ -155,11 +155,14 @@ fn pair(daemon: &Daemon, peer: &str, stream: &UnixStream) {
         pairings.retain(|_, p| p.expires_ms > now);
         let secret = pairings.keys().find(|s| same(s, &request.secret)).cloned();
         // Single use: taken whatever happens next.
-        secret.and_then(|s| {
-            lock(&daemon.remote.offers).remove(&s);
-            pairings.remove(&s)
-        })
+        secret.and_then(|s| pairings.remove(&s).map(|p| (s, p)))
     };
+    // The same pairing's code goes too (dropped here, with no lock held: closing it waits for its task).
+    let found = found.map(|(secret, pairing)| {
+        let offer = lock(&daemon.remote.offers).remove(&secret);
+        drop(offer);
+        pairing
+    });
     let response = match found {
         None => {
             warn!(%peer, "a pairing attempt with a wrong or used secret");
@@ -259,7 +262,8 @@ fn offer_code(daemon: &Arc<Daemon>, secret: &str, link: &PairLink) -> Option<Cod
                 .spawn(move || {
                     thread::sleep(std::time::Duration::from_millis(PAIRING_MS));
                     if let Some(daemon) = weak.upgrade() {
-                        lock(&daemon.remote.offers).remove(&secret);
+                        let offer = lock(&daemon.remote.offers).remove(&secret);
+                        drop(offer);
                         lock(&daemon.remote.pairings).remove(&secret);
                     }
                 });
