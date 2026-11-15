@@ -4,4 +4,4 @@ allow-expect-in-consts = true
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
-doc-valid-idents = ["OpenSnitch", "FlatBuffers", ".."]
+doc-valid-idents = ["OpenSnitch", "FlatBuffers", "WireGuard", "ICMPv6", ".."]

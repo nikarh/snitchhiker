@@ -330,6 +330,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::LintRules(_)
             | Method::GetPolicy(_)
             | Method::ListTrustedClients(_)
+            | Method::GetSystemFirewall(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -386,6 +387,20 @@ fn handle(
         },
         Method::SetPolicy(set) => set_policy(daemon, caller, app, &set),
         Method::ListTrustedClients(_) => trusted_clients(&daemon.shared.config),
+        Method::GetSystemFirewall(_) => match daemon.store().system_firewall() {
+            Ok(firewall) => {
+                R::SystemFirewall(crate::system::wire(&firewall, daemon.system_reverts_at()))
+            }
+            Err(e) => internal(e),
+        },
+        Method::SetSystemFirewall(set) => set_system_firewall(daemon, caller, app, &set),
+        Method::ConfirmSystemFirewall(_) => {
+            if daemon.confirm_system() {
+                R::Done(v1::Done {})
+            } else {
+                error(v1::ErrorCode::NotFound, "no change waits to be confirmed")
+            }
+        }
         Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
             Ok(Some(explanation)) => R::Explanation(Box::new(explanation)),
@@ -670,6 +685,55 @@ fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::r
 
 /// Deleting more rules than this at once is a dangerous action.
 const DANGEROUS_DELETE: usize = 20;
+
+/// A trial lasts at least this long (time to confirm) and at most this long.
+const SYSTEM_TRIAL_SECS: std::ops::RangeInclusive<u32> = 10..=600;
+
+fn set_system_firewall(
+    daemon: &Arc<Daemon>,
+    caller: &Caller,
+    app: &str,
+    set: &v1::SetSystemFirewall,
+) -> v1::response::Result {
+    let Some(wire) = &set.firewall else {
+        return error(v1::ErrorCode::Invalid, "no firewall");
+    };
+    let firewall = match crate::system::from_wire(wire) {
+        Ok(firewall) => firewall,
+        Err(e) => return error(v1::ErrorCode::Invalid, e),
+    };
+    if set.revert_after_secs != 0 && !SYSTEM_TRIAL_SECS.contains(&set.revert_after_secs) {
+        return error(v1::ErrorCode::Invalid, "a trial lasts 10 to 600 seconds");
+    }
+    let before = match daemon.store().system_firewall() {
+        Ok(before) => before,
+        Err(e) => return internal(e),
+    };
+    if crate::system::loosened(&before, &firewall)
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "change the system firewall so that it lets in what it kept out ({})",
+                crate::system::describe(&before, &firewall)
+            ),
+        )
+    {
+        return refused;
+    }
+    let trial = (set.revert_after_secs != 0)
+        .then(|| std::time::Duration::from_secs(u64::from(set.revert_after_secs)));
+    match daemon.set_system(&firewall, app, trial) {
+        Ok(reverts_at_ms) => {
+            v1::response::Result::SystemFirewall(crate::system::wire(&firewall, reverts_at_ms))
+        }
+        Err(e) => error(
+            v1::ErrorCode::Invalid,
+            format!("the kernel refused it: {e}"),
+        ),
+    }
+}
 
 fn trusted_clients(config: &Config) -> v1::response::Result {
     let registered = match crate::trust::load(&crate::trust::registry_path(config)) {
@@ -1133,8 +1197,11 @@ fn rule_file(file: &snitchhiker_core::spec::RuleFile) -> v1::response::Result {
 }
 
 fn reload(daemon: &Daemon) -> v1::response::Result {
-    // An undo may have put a policy back as well as rules.
+    // An undo may have put a policy or the system firewall back as well as rules.
     if let Err(e) = daemon.reload_policy() {
+        return internal(e);
+    }
+    if let Err(e) = daemon.apply_system() {
         return internal(e);
     }
     match daemon.reload_rules() {

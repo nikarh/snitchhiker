@@ -106,6 +106,9 @@ message Request {
     GetPolicy get_policy = 36;
     SetPolicy set_policy = 37;
     ListTrustedClients list_trusted_clients = 38;
+    GetSystemFirewall get_system_firewall = 39;
+    SetSystemFirewall set_system_firewall = 40;
+    ConfirmSystemFirewall confirm_system_firewall = 41;
   }
 }
 
@@ -131,6 +134,7 @@ message Response {
     LintReport lint_report = 30;
     NodePolicy policy = 31;
     TrustedClients trusted_clients = 32;
+    SystemFirewall system_firewall = 33;
   }
 }
 
@@ -706,6 +710,78 @@ message SetPolicy {
   optional uint32 retention_days = 6;
   repeated string reset = 7;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The system firewall: the base packet filter beside the application rules (table `inet snitchhiker_system`), a form
+// over a fixed set of statements. Changes are recorded in the history and undone like rule changes.
+
+enum ChainPolicy {
+  CHAIN_POLICY_UNSPECIFIED = 0;
+  CHAIN_POLICY_ACCEPT = 1;
+  CHAIN_POLICY_DROP = 2;
+}
+
+enum SystemChain {
+  SYSTEM_CHAIN_UNSPECIFIED = 0;
+  SYSTEM_CHAIN_INPUT = 1;
+  SYSTEM_CHAIN_FORWARD = 2;
+  SYSTEM_CHAIN_OUTPUT = 3;
+}
+
+enum SystemTarget {
+  SYSTEM_TARGET_UNSPECIFIED = 0;
+  SYSTEM_TARGET_ACCEPT = 1;
+  SYSTEM_TARGET_DROP = 2;
+  // ICMP port unreachable (TCP: a reset).
+  SYSTEM_TARGET_REJECT = 3;
+  // To the kernel log, then on to the next rule.
+  SYSTEM_TARGET_LOG = 4;
+  // Decided by the daemon as an application connection (forward chain only).
+  SYSTEM_TARGET_QUEUE = 5;
+}
+
+message SystemRule {
+  bool enabled = 1;
+  string description = 2;
+  SystemChain chain = 3;
+  // tcp, udp, icmp, icmpv6, a number, or empty for any.
+  string protocol = 4;
+  // Addresses or networks (CIDR); empty for any. Each source is paired with each destination of its family.
+  repeated string source = 5;
+  repeated string destination = 6;
+  // A port or a range (`8000-8999`); empty for any. TCP and UDP only.
+  string source_ports = 7;
+  string destination_ports = 8;
+  // An interface name, or a prefix ending in `*`; empty for any.
+  string in_interface = 9;
+  string out_interface = 10;
+  // new, established, related, invalid: any of them.
+  repeated string ct_state = 11;
+  // echo-request, echo-reply, destination-unreachable, time-exceeded. ICMP and ICMPv6 only.
+  repeated string icmp_types = 12;
+  SystemTarget target = 13;
+}
+
+message SystemFirewall {
+  bool enabled = 1;
+  ChainPolicy input = 2;
+  ChainPolicy forward = 3;
+  repeated SystemRule rules = 4;
+  // A change waiting to be confirmed, reverted when this time (Unix ms) comes; 0: none.
+  uint64 reverts_at_ms = 5;
+}
+
+message GetSystemFirewall {}
+
+// Replaces the system firewall. With `revert_after_secs`, the change is undone then unless ConfirmSystemFirewall comes
+// first: for a change made over the network that could cut the client off. Turning the firewall off, or the input
+// policy from drop to accept, is a dangerous action.
+message SetSystemFirewall {
+  SystemFirewall firewall = 1;
+  uint32 revert_after_secs = 2;
+}
+
+message ConfirmSystemFirewall {}
 
 // The client binaries allowed on the client socket: those the packages registered (pinned to their digest), and those
 // daemon.toml allows by path.

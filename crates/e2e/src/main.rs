@@ -163,6 +163,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::changes_are_recorded_and_undone,
     ),
     (
+        "daemon/system-firewall-filters-inbound",
+        daemon::system_firewall_filters_inbound,
+    ),
+    (
         "daemon/policy-changes-apply-at-once-and-undo",
         daemon::policy_changes_apply_at_once_and_undo,
     ),

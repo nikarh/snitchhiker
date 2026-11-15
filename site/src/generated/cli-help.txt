@@ -34,6 +34,15 @@ Commands:
                                     no_client=allow|deny|reject  on_timeout=allow|deny|reject
                                     prompt_timeout_secs=<5-3600>  retention_days=<1-3650>
   policy reset [<setting>...]     Return settings (all by default) to daemon.toml's
+  system                          The system firewall: whether it is on, its policies and rules
+  system on, system off           Turn it on or off
+  system input <accept|drop>, system forward <accept|drop>
+                                  The policy for packets to this machine, or routed through it
+  system export                   Print it as TOML
+  system import <file> [--trial <secs>]
+                                  Replace it with a file's; with --trial, it reverts after that many seconds
+                                  unless `system confirm` comes first
+  system confirm                  Keep a change made with --trial
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it

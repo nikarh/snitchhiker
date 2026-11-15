@@ -804,3 +804,121 @@ pub fn policy_changes_apply_at_once_and_undo() -> Result<(), String> {
     )?;
     check(invalid, "an out-of-range timeout was accepted", &found)
 }
+
+/// A network namespace joined to this one by a veth pair: another host, as far as the input chain can tell.
+struct Neighbour;
+
+impl Neighbour {
+    const NETNS: &'static str = "shfw";
+
+    fn create() -> Result<Self, String> {
+        let _ = run("ip", &["netns", "del", Self::NETNS]);
+        let _ = run("ip", &["link", "del", "shv0"]);
+        for args in [
+            &["netns", "add", Self::NETNS][..],
+            &[
+                "link", "add", "shv0", "type", "veth", "peer", "name", "shv1",
+            ],
+            &["link", "set", "shv1", "netns", Self::NETNS],
+            &["addr", "add", "10.213.0.1/24", "dev", "shv0"],
+            &["link", "set", "shv0", "up"],
+            &[
+                "-n",
+                Self::NETNS,
+                "addr",
+                "add",
+                "10.213.0.2/24",
+                "dev",
+                "shv1",
+            ],
+            &["-n", Self::NETNS, "link", "set", "shv1", "up"],
+            &["-n", Self::NETNS, "link", "set", "lo", "up"],
+        ] {
+            run("ip", args)?;
+        }
+        Ok(Self)
+    }
+
+    /// Whether the neighbour can connect to 10.213.0.1:`port` within 2 seconds.
+    fn connects(port: u16) -> Result<bool, String> {
+        let script = format!(
+            "import socket\ntry:\n    socket.create_connection(('10.213.0.1', {port}), timeout=2)\n    print('connected')\nexcept OSError as e:\n    print('failed', e)"
+        );
+        let output = Command::new("ip")
+            .args(["netns", "exec", Self::NETNS, "python3", "-c", &script])
+            .output()
+            .map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&output.stdout).contains("connected"))
+    }
+}
+
+impl Drop for Neighbour {
+    fn drop(&mut self) {
+        let _ = run("ip", &["netns", "del", Self::NETNS]);
+        let _ = run("ip", &["link", "del", "shv0"]);
+    }
+}
+
+/// The system firewall filters what comes in: a drop policy keeps a neighbour out, a rule lets it in, and a change on
+/// trial that isn't confirmed reverts by itself. SSH stays allowed throughout (the harness's way in).
+pub fn system_firewall_filters_inbound() -> Result<(), String> {
+    let _neighbour = Neighbour::create()?;
+    let listener = TcpListener::bind("10.213.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let mut daemon = Running::start("system", "mode = \"enforce\"\nno_match = \"allow\"\n")?;
+    let ssh = "[[rules]]\nenabled = true\nchain = \"input\"\nprotocol = 6\ndestination_ports = [22, 22]\ntarget = \"accept\"\n";
+    let closed = format!("enabled = true\ninput = \"drop\"\nforward = \"accept\"\n{ssh}");
+    let open = format!(
+        "{closed}\n[[rules]]\nenabled = true\nchain = \"input\"\nprotocol = 6\nsource = [\"10.213.0.0/24\"]\ndestination_ports = [{port}, {port}]\ntarget = \"accept\"\n"
+    );
+    let write = |name: &str, text: &str| -> Result<String, String> {
+        let path = format!("/tmp/snitchhiker-system-{name}.toml");
+        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        Ok(path)
+    };
+    let before = Neighbour::connects(port)?;
+    daemon.cli(&["system", "import", &write("closed", &closed)?])?;
+    let dropped = Neighbour::connects(port)?;
+    let shown = daemon.cli(&["system"])?;
+    daemon.cli(&["system", "import", &write("open", &open)?])?;
+    let allowed = Neighbour::connects(port)?;
+    // On trial and never confirmed: back to `open` after 10 s.
+    let trial = daemon.cli(&[
+        "system",
+        "import",
+        "--trial",
+        "10",
+        &write("closed", &closed)?,
+    ])?;
+    let during = Neighbour::connects(port)?;
+    thread::sleep(Duration::from_secs(12));
+    let reverted = Neighbour::connects(port)?;
+    let history = daemon.cli(&["history", "--limit", "3"])?;
+    let refused = daemon
+        .cli(&["system", "import", &write("bad", "enabled = true\ninput = \"drop\"\nforward = \"accept\"\n[[rules]]\nenabled = true\nchain = \"input\"\ndestination_ports = [1, 2]\ntarget = \"accept\"\n")?])
+        .is_err();
+    daemon.cli(&["system", "off"])?;
+    let off = Neighbour::connects(port)?;
+    let table_gone = !run("nft", &["list", "tables"])?.contains("snitchhiker_system");
+    daemon.stop()?;
+    drop(listener);
+    let found = format!(
+        "{shown}{trial}{history}before {before}, dropped {dropped}, allowed {allowed}, during trial {during}, reverted {reverted}, invalid refused {refused}, off {off}, table gone {table_gone}"
+    );
+    check(
+        before && !dropped && allowed,
+        "the drop policy and the rule didn't filter the neighbour",
+        &found,
+    )?;
+    check(
+        trial.contains("reverts in") && !during && reverted && history.contains("not confirmed"),
+        "the change on trial didn't revert by itself",
+        &found,
+    )?;
+    check(refused, "ports without a protocol were accepted", &found)?;
+    check(
+        off && table_gone,
+        "turning it off didn't remove the table",
+        &found,
+    )
+}

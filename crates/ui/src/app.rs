@@ -24,6 +24,7 @@ use crate::views::prompts::Prompts;
 use crate::views::rules::{RulesPage, RulesTable};
 use crate::views::settings::Settings;
 use crate::views::status::Status;
+use crate::views::system::SystemPage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
@@ -34,6 +35,7 @@ pub enum Page {
     Rules,
     History,
     Status,
+    Firewall,
     Settings,
 }
 
@@ -50,6 +52,7 @@ pub struct App {
     connections: Entity<TableState<ConnectionsTable>>,
     status: Entity<Status>,
     settings: Entity<Settings>,
+    system: Entity<SystemPage>,
     requests: mpsc::Sender<Request>,
 }
 
@@ -75,6 +78,7 @@ impl App {
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let settings = cx.new(|cx| Settings::new(model.clone(), requests.clone(), cx));
+        let system = cx.new(|cx| SystemPage::new(model.clone(), requests.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
         let connections = cx.new(|cx| {
@@ -109,6 +113,7 @@ impl App {
             connections,
             status,
             settings,
+            system,
             requests: own_requests,
         }
     }
@@ -145,6 +150,7 @@ impl App {
                             let _ = requests.send(Request::Status);
                             let _ = requests.send(Request::Changes);
                             let _ = requests.send(Request::Policy);
+                            let _ = requests.send(Request::SystemFirewall);
                         }
                         Changed::Events => {
                             app.events.update(cx, TableState::refresh);
@@ -201,7 +207,7 @@ impl App {
         &self,
         page: Page,
         label: SharedString,
-        icon: IconName,
+        icon: impl Into<gpui_component::Icon>,
         cx: &mut Context<Self>,
     ) -> SidebarMenuItem {
         SidebarMenuItem::new(label)
@@ -217,6 +223,9 @@ impl App {
                 }
                 if page == Page::Settings {
                     app.settings.read(cx).refresh();
+                }
+                if page == Page::Firewall {
+                    app.system.read(cx).refresh();
                 }
                 cx.notify();
             }))
@@ -260,6 +269,12 @@ impl Render for App {
                         .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
                         .child(self.item(Page::Status, "Status".into(), IconName::Info, cx))
                         .child(self.item(
+                            Page::Firewall,
+                            "Firewall".into(),
+                            gpui_kit_assets::IconName::Shield,
+                            cx,
+                        ))
+                        .child(self.item(
                             Page::Settings,
                             "Settings".into(),
                             IconName::Settings,
@@ -292,6 +307,7 @@ impl Render for App {
             }
             Page::Status => self.status.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
+            Page::Firewall => self.system.clone().into_any_element(),
         };
         h_flex()
             .size_full()

@@ -107,6 +107,16 @@ pub struct Daemon {
     pub shared: Arc<Shared>,
     store: Arc<Mutex<Store>>,
     table: Table,
+    /// A change of the system firewall waiting to be confirmed.
+    trial: Mutex<Trial>,
+}
+
+/// A system firewall change on trial: reverted to `previous` at `reverts_at_ms` unless confirmed first.
+#[derive(Default)]
+struct Trial {
+    /// Counts trials, so a timer only reverts its own.
+    generation: u64,
+    pending: Option<(u64, snitchhiker_core::system::Firewall)>,
 }
 
 impl Daemon {
@@ -195,25 +205,38 @@ impl Daemon {
                 .name("writer".to_owned())
                 .spawn(move || write_loop(&shared, &store, &receiver))?;
         }
+        // The system firewall as last set: a rule the kernel refuses mustn't keep the daemon from deciding.
+        let firewall = store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .system_firewall()?;
+        if let Err(error) = crate::system::apply(&firewall, &shared.config) {
+            error!(%error, "installing the system firewall");
+        }
         let daemon = Arc::new(Self {
             shared,
             store,
             table,
+            trial: Mutex::new(Trial::default()),
         });
-        {
-            let daemon = Arc::clone(&daemon);
-            thread::Builder::new()
-                .name("prompt-timeouts".to_owned())
-                .spawn(move || {
-                    loop {
-                        for pending in daemon.shared.broker.wait_expired() {
-                            let action = daemon.shared.policy.load().on_timeout;
-                            daemon.resolve(&pending, action, Source::Timeout, None, "", true);
-                        }
-                    }
-                })?;
-        }
+        daemon.spawn_prompt_timeouts()?;
         Ok(daemon)
+    }
+
+    /// Prompts nobody answered in time are decided by the policy's `on_timeout`.
+    fn spawn_prompt_timeouts(self: &Arc<Self>) -> std::io::Result<()> {
+        let daemon = Arc::clone(self);
+        thread::Builder::new()
+            .name("prompt-timeouts".to_owned())
+            .spawn(move || {
+                loop {
+                    for pending in daemon.shared.broker.wait_expired() {
+                        let action = daemon.shared.policy.load().on_timeout;
+                        daemon.resolve(&pending, action, Source::Timeout, None, "", true);
+                    }
+                }
+            })?;
+        Ok(())
     }
 
     /// The daemon's version, with the suffix of development builds.
@@ -504,6 +527,89 @@ impl Daemon {
     }
 
     /// Reads the rules again and swaps them in.
+    /// Makes the kernel's system table what the store says.
+    pub fn apply_system(&self) -> Result<(), Error> {
+        let firewall = self.store().system_firewall()?;
+        crate::system::apply(&firewall, &self.shared.config)?;
+        Ok(())
+    }
+
+    /// Replaces the system firewall with `firewall` (checked), recording it as `app`'s change. With `revert_after`,
+    /// the previous one comes back then unless [`Daemon::confirm_system`] is called first.
+    pub fn set_system(
+        self: &Arc<Self>,
+        firewall: &snitchhiker_core::system::Firewall,
+        app: &str,
+        revert_after: Option<Duration>,
+    ) -> Result<u64, Error> {
+        let before = self.store().system_firewall()?;
+        // The kernel first: a table it refuses is never recorded.
+        crate::system::apply(firewall, &self.shared.config)?;
+        let what = crate::system::describe(&before, firewall);
+        let recorded = {
+            let mut store = self.store();
+            store.batch(app, now_ms()).and_then(|batch| {
+                store.atomically(|s| s.put_system_firewall(firewall, &what, &batch))
+            })
+        };
+        if let Err(error) = recorded {
+            let _ = crate::system::apply(&before, &self.shared.config);
+            return Err(error.into());
+        }
+        let mut trial = self.trial.lock().unwrap_or_else(PoisonError::into_inner);
+        trial.generation += 1;
+        trial.pending = None;
+        let Some(after) = revert_after else {
+            return Ok(0);
+        };
+        let reverts_at_ms = now_ms() + u64::try_from(after.as_millis()).unwrap_or(u64::MAX);
+        trial.pending = Some((reverts_at_ms, before));
+        let generation = trial.generation;
+        drop(trial);
+        let daemon = Arc::clone(self);
+        thread::Builder::new()
+            .name("system-trial".to_owned())
+            .spawn(move || {
+                thread::sleep(after);
+                daemon.revert_system(generation);
+            })?;
+        Ok(reverts_at_ms)
+    }
+
+    /// Reverts trial `generation` if it is still waiting.
+    fn revert_system(self: &Arc<Self>, generation: u64) {
+        let previous = {
+            let mut trial = self.trial.lock().unwrap_or_else(PoisonError::into_inner);
+            if trial.generation != generation {
+                return;
+            }
+            trial.pending.take()
+        };
+        if let Some((_, previous)) = previous {
+            warn!("the system firewall change wasn't confirmed in time: reverting it");
+            if let Err(error) = self.set_system(&previous, "daemon (not confirmed)", None) {
+                error!(%error, "reverting the system firewall");
+            }
+        }
+    }
+
+    /// Confirms the change on trial; false when none waits.
+    pub fn confirm_system(&self) -> bool {
+        let mut trial = self.trial.lock().unwrap_or_else(PoisonError::into_inner);
+        trial.generation += 1;
+        trial.pending.take().is_some()
+    }
+
+    /// When the change on trial reverts (Unix ms); 0 for none.
+    pub fn system_reverts_at(&self) -> u64 {
+        self.trial
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending
+            .as_ref()
+            .map_or(0, |(at, _)| *at)
+    }
+
     /// Applies the policy as the store has it (after a client changed it, or an undo).
     pub fn reload_policy(&self) -> Result<Effective, Error> {
         let overrides = self
@@ -536,10 +642,13 @@ impl Daemon {
     /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
     /// nothing new gets out until the daemon is back.
     pub fn stop(&self) {
-        if self.shared.config.fail == Fail::Open
-            && let Err(error) = remove(&self.table.name)
-        {
-            warn!(%error, "removing the table");
+        if self.shared.config.fail == Fail::Open {
+            if let Err(error) = remove(&self.table.name) {
+                warn!(%error, "removing the table");
+            }
+            if let Err(error) = crate::system::remove() {
+                warn!(%error, "removing the system firewall");
+            }
         }
         info!(
             decided = self.shared.decided.load(Ordering::Relaxed),

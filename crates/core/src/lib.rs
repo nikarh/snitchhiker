@@ -11,3 +11,4 @@ pub mod query;
 pub mod rule;
 pub mod spec;
 pub mod suggest;
+pub mod system;

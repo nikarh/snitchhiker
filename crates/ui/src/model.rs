@@ -196,6 +196,7 @@ pub struct Model {
     /// The last lint report.
     pub lint: Option<v1::LintReport>,
     pub policy: Option<v1::NodePolicy>,
+    pub system: Option<v1::SystemFirewall>,
     pub trusted: Vec<v1::TrustedClient>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
@@ -283,6 +284,10 @@ impl Model {
             Update::Connections(connections) => {
                 self.connections = connections;
                 Changed::Connections
+            }
+            Update::SystemFirewall(firewall) => {
+                self.system = Some(firewall);
+                Changed::Status
             }
             Update::Policy(policy) => {
                 self.policy = Some(policy);

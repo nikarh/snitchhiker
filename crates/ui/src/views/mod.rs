@@ -11,3 +11,4 @@ pub mod prompts;
 pub mod rules;
 pub mod settings;
 pub mod status;
+pub mod system;

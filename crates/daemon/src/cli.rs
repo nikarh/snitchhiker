@@ -71,6 +71,15 @@ Commands:
                                     no_client=allow|deny|reject  on_timeout=allow|deny|reject
                                     prompt_timeout_secs=<5-3600>  retention_days=<1-3650>
   policy reset [<setting>...]     Return settings (all by default) to daemon.toml's
+  system                          The system firewall: whether it is on, its policies and rules
+  system on, system off           Turn it on or off
+  system input <accept|drop>, system forward <accept|drop>
+                                  The policy for packets to this machine, or routed through it
+  system export                   Print it as TOML
+  system import <file> [--trial <secs>]
+                                  Replace it with a file's; with --trial, it reverts after that many seconds
+                                  unless `system confirm` comes first
+  system confirm                  Keep a change made with --trial
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
@@ -160,6 +169,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         Some("rules") => rules(args, version),
         Some("policy") => policy(args, version),
+        Some("system") => system(args, version),
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
         Some("history") => history(args, version),
@@ -296,6 +306,140 @@ fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
         ids,
         edit: Some(edit),
     })
+}
+
+/// `system` and its subcommands.
+fn system(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let mut client = connect(version)?;
+    let current = |client: &mut Client| -> Result<v1::SystemFirewall, Error> {
+        match client.call(Method::GetSystemFirewall(v1::GetSystemFirewall {}))? {
+            v1::response::Result::SystemFirewall(firewall) => Ok(firewall),
+            _ => Err(unexpected()),
+        }
+    };
+    let set = |client: &mut Client, firewall, revert_after_secs| -> Result<(), Error> {
+        match client.call(Method::SetSystemFirewall(v1::SetSystemFirewall {
+            firewall: Some(firewall),
+            revert_after_secs,
+        }))? {
+            v1::response::Result::SystemFirewall(firewall) => out(&format_system(&firewall)),
+            _ => Err(unexpected()),
+        }
+    };
+    match command.as_deref() {
+        None | Some("show") => {
+            reject_rest(args)?;
+            out(&format_system(&current(&mut client)?))
+        }
+        Some(which @ ("on" | "off")) => {
+            reject_rest(args)?;
+            let firewall = v1::SystemFirewall {
+                enabled: which == "on",
+                ..current(&mut client)?
+            };
+            set(&mut client, firewall, 0)
+        }
+        Some(chain @ ("input" | "forward")) => {
+            let policy: String = args.free_from_str()?;
+            reject_rest(args)?;
+            let policy = match policy.as_str() {
+                "accept" => v1::ChainPolicy::Accept,
+                "drop" => v1::ChainPolicy::Drop,
+                other => return Err(Error::Usage(format!("unknown policy `{other}`"))),
+            };
+            let mut firewall = current(&mut client)?;
+            if chain == "input" {
+                firewall.input = policy.into();
+            } else {
+                firewall.forward = policy.into();
+            }
+            set(&mut client, firewall, 0)
+        }
+        Some("export") => {
+            reject_rest(args)?;
+            let firewall =
+                crate::system::from_wire(&current(&mut client)?).map_err(Error::Usage)?;
+            out(&toml::to_string(&firewall).map_err(|e| Error::Usage(e.to_string()))?)
+        }
+        Some("import") => {
+            let trial: u32 = args.opt_value_from_str("--trial")?.unwrap_or(0);
+            let path: std::path::PathBuf = args.free_from_str()?;
+            reject_rest(args)?;
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| Error::Usage(format!("{}: {e}", path.display())))?;
+            let firewall: snitchhiker_core::system::Firewall = toml::from_str(&text)
+                .map_err(|e| Error::Usage(format!("{}: {e}", path.display())))?;
+            set(&mut client, crate::system::wire(&firewall, 0), trial)
+        }
+        Some("confirm") => {
+            reject_rest(args)?;
+            client.call(Method::ConfirmSystemFirewall(v1::ConfirmSystemFirewall {}))?;
+            out("kept\n")
+        }
+        Some(other) => Err(Error::Usage(format!("unknown command `system {other}`"))),
+    }
+}
+
+fn format_system(firewall: &v1::SystemFirewall) -> String {
+    let policy = |p: v1::ChainPolicy| {
+        p.as_str_name()
+            .trim_start_matches("CHAIN_POLICY_")
+            .to_lowercase()
+    };
+    let mut text = format!(
+        "system firewall {}, input {}, forward {}\n",
+        if firewall.enabled { "on" } else { "off" },
+        policy(firewall.input()),
+        policy(firewall.forward()),
+    );
+    if firewall.reverts_at_ms != 0 {
+        let _ = writeln!(
+            text,
+            "a change reverts in {} s unless confirmed (snitchhiker system confirm)",
+            firewall
+                .reverts_at_ms
+                .saturating_sub(crate::runtime::now_ms())
+                / 1000
+        );
+    }
+    for (i, rule) in firewall.rules.iter().enumerate() {
+        let mut parts = vec![
+            rule.chain()
+                .as_str_name()
+                .trim_start_matches("SYSTEM_CHAIN_")
+                .to_lowercase(),
+        ];
+        for (key, value) in [
+            ("proto", rule.protocol.clone()),
+            ("from", rule.source.join(",")),
+            ("to", rule.destination.join(",")),
+            ("sport", rule.source_ports.clone()),
+            ("dport", rule.destination_ports.clone()),
+            ("in", rule.in_interface.clone()),
+            ("out", rule.out_interface.clone()),
+            ("ct", rule.ct_state.join(",")),
+            ("icmp", rule.icmp_types.join(",")),
+        ] {
+            if !value.is_empty() {
+                parts.push(format!("{key} {value}"));
+            }
+        }
+        let _ = writeln!(
+            text,
+            "{:>3} {} {:<7} {}  {}",
+            i + 1,
+            if rule.enabled { "on " } else { "off" },
+            rule.target()
+                .as_str_name()
+                .trim_start_matches("SYSTEM_TARGET_")
+                .to_lowercase(),
+            parts.join(" "),
+            rule.description,
+        );
+    }
+    text
 }
 
 /// `policy`, `policy set`, `policy reset`.

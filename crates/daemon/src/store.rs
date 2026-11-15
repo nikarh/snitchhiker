@@ -12,6 +12,7 @@ use snitchhiker_core::query::{self, EventFilter, SqlValue};
 
 use crate::policy::Overrides;
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
+use snitchhiker_core::system::Firewall;
 use snitchhiker_proto::columns::EventRow;
 
 /// The schema, applied in order; the index of the last one applied is kept in `PRAGMA user_version`.
@@ -152,6 +153,13 @@ CREATE TABLE policy (
     overrides TEXT NOT NULL
 );
 ",
+    // The system firewall (one row: the core model as JSON); none until it is first changed.
+    r"
+CREATE TABLE system_firewall (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    firewall TEXT NOT NULL
+);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -226,6 +234,12 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
     ("policy.get", "SELECT overrides FROM policy WHERE id = 1"),
+    ("system.get", "SELECT firewall FROM system_firewall WHERE id = 1"),
+    (
+        "system.put",
+        "INSERT INTO system_firewall (id, firewall) VALUES (1, ?1)
+         ON CONFLICT (id) DO UPDATE SET firewall = excluded.firewall",
+    ),
     (
         "policy.put",
         "INSERT INTO policy (id, overrides) VALUES (1, ?1)
@@ -465,6 +479,7 @@ pub enum UndoError {
 const RULE: &str = "rule";
 const FOLDER: &str = "folder";
 const POLICY: &str = "policy";
+const SYSTEM: &str = "system";
 
 /// What changed between two versions of a rule, for people.
 fn describe_rule(before: Option<&Rule>, after: Option<&Rule>) -> String {
@@ -872,6 +887,7 @@ impl Store {
             let now = match change.kind.as_str() {
                 RULE => self.rule(change.target)?.map(|r| json(&r)),
                 POLICY => Some(json(&self.policy()?)),
+                SYSTEM => Some(json(&self.system_firewall()?)),
                 _ => self.folder(change.target)?.map(|f| json(&f)),
             };
             if now != change.after {
@@ -892,21 +908,42 @@ impl Store {
         Ok(changes.len())
     }
 
+    /// Puts back a policy or system firewall change; `None` for other kinds.
+    fn restore_document(&self, change: &Change, batch: &Batch) -> Option<Result<(), Error>> {
+        fn before<T: serde::de::DeserializeOwned>(change: &Change) -> Result<Option<T>, Error> {
+            change
+                .before
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(|e| Error::Corrupt {
+                    what: "a recorded change",
+                    error: e.to_string(),
+                })
+        }
+        match change.kind.as_str() {
+            POLICY => Some(before::<Overrides>(change).and_then(|before| {
+                self.put_policy(&before.unwrap_or_default(), "undid: the policy", batch)
+            })),
+            SYSTEM => Some(before::<Firewall>(change).and_then(|before| {
+                self.put_system_firewall(
+                    &before.unwrap_or_else(snitchhiker_core::system::defaults),
+                    "undid: the system firewall",
+                    batch,
+                )
+            })),
+            _ => None,
+        }
+    }
+
     /// Puts back what `change` found, recording that as a change of `batch`.
     fn restore(&self, change: &Change, batch: &Batch) -> Result<(), Error> {
         let corrupt = |e: serde_json::Error| Error::Corrupt {
             what: "a recorded change",
             error: e.to_string(),
         };
-        if change.kind == POLICY {
-            let before: Overrides = change
-                .before
-                .as_deref()
-                .map(serde_json::from_str)
-                .transpose()
-                .map_err(corrupt)?
-                .unwrap_or_default();
-            return self.put_policy(&before, "undid: the policy", batch);
+        if let Some(restored) = self.restore_document(change, batch) {
+            return restored;
         }
         if change.kind == RULE {
             let before: Option<Rule> = change
@@ -1428,6 +1465,39 @@ impl Store {
             .prepare_cached(sql("policy.put")?)?
             .execute(params![after])?;
         self.record_change(batch, POLICY, 0, Some(&before), Some(&after), what)
+    }
+
+    /// The system firewall: as last set, or the defaults.
+    pub fn system_firewall(&self) -> Result<Firewall, Error> {
+        let text: Option<String> = self
+            .connection
+            .prepare_cached(sql("system.get")?)?
+            .query_row([], |row| row.get(0))
+            .optional()?;
+        text.map_or_else(
+            || Ok(snitchhiker_core::system::defaults()),
+            |text| {
+                serde_json::from_str(&text).map_err(|e| Error::Corrupt {
+                    what: "the system firewall",
+                    error: e.to_string(),
+                })
+            },
+        )
+    }
+
+    /// Keeps `firewall` as the system firewall, recording the change (`what`) in `batch`.
+    pub fn put_system_firewall(
+        &self,
+        firewall: &Firewall,
+        what: &str,
+        batch: &Batch,
+    ) -> Result<(), Error> {
+        let before = json(&self.system_firewall()?);
+        let after = json(firewall);
+        self.connection
+            .prepare_cached(sql("system.put")?)?
+            .execute(params![after])?;
+        self.record_change(batch, SYSTEM, 0, Some(&before), Some(&after), what)
     }
 
     /// For each rule: when it was last changed, and when it last decided a connection.

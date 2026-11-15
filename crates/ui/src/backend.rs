@@ -56,6 +56,8 @@ pub enum Request {
     },
     Policy,
     SetPolicy(v1::SetPolicy),
+    SystemFirewall,
+    SetSystemFirewall(v1::SetSystemFirewall),
     TrustedClients,
     /// The lint report, with rules unused for `days`.
     Lint {
@@ -94,6 +96,7 @@ pub enum Update {
     Explanation(Box<v1::Explanation>),
     Lint(v1::LintReport),
     Policy(v1::NodePolicy),
+    SystemFirewall(v1::SystemFirewall),
     TrustedClients(Vec<v1::TrustedClient>),
     /// A request failed; for the user.
     Failed(String),
@@ -187,74 +190,71 @@ fn serve_requests(
     }
 }
 
-fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, ClientError> {
+/// The node's method for a request.
+fn method(request: &Request) -> v1::request::Method {
     use v1::request::Method;
-    use v1::response::Result as R;
-    let result = match request {
-        Request::Status => client.call(Method::GetStatus(v1::GetStatus {}))?,
-        Request::Rules => client.call(Method::ListRules(v1::ListRules {}))?,
-        Request::Events { before, query } => client.call(Method::ListEvents(v1::ListEvents {
+    match request {
+        Request::Status => Method::GetStatus(v1::GetStatus {}),
+        Request::Rules => Method::ListRules(v1::ListRules {}),
+        Request::Events { before, query } => Method::ListEvents(v1::ListEvents {
             before: *before,
             limit: PAGE,
             columnar: true,
             query: query.clone(),
-        }))?,
+        }),
         Request::Answer {
             id,
             action,
             duration,
             suggestion,
-        } => client.call(Method::AnswerPrompt(v1::AnswerPrompt {
+        } => Method::AnswerPrompt(v1::AnswerPrompt {
             id: *id,
             action: (*action).into(),
             duration: (*duration).into(),
             suggestion: *suggestion,
             conditions: None,
             folder: None,
-        }))?,
-        Request::SetRuleEnabled { id, enabled } => {
-            client.call(Method::SetRuleEnabled(v1::SetRuleEnabled {
-                id: *id,
-                enabled: *enabled,
-            }))?
-        }
-        Request::DeleteRule { id } => {
-            client.call(Method::DeleteRule(v1::DeleteRule { id: *id }))?
-        }
-        Request::AddRule(rule) => client.call(Method::AddRule(v1::AddRule {
+        }),
+        Request::SetRuleEnabled { id, enabled } => Method::SetRuleEnabled(v1::SetRuleEnabled {
+            id: *id,
+            enabled: *enabled,
+        }),
+        Request::DeleteRule { id } => Method::DeleteRule(v1::DeleteRule { id: *id }),
+        Request::AddRule(rule) => Method::AddRule(v1::AddRule {
             rule: Some(rule.clone()),
-        }))?,
-        Request::UpdateRule(rule) => client.call(Method::UpdateRule(v1::UpdateRule {
+        }),
+        Request::UpdateRule(rule) => Method::UpdateRule(v1::UpdateRule {
             rule: Some(rule.clone()),
-        }))?,
-        Request::Changes => client.call(Method::ListChanges(v1::ListChanges {
+        }),
+        Request::Changes => Method::ListChanges(v1::ListChanges {
             before: 0,
             limit: 500,
-        }))?,
-        Request::Undo { change } => client.call(Method::Undo(v1::Undo { change: *change }))?,
-        Request::Explore(explore) => client.call(Method::Explore(explore.clone()))?,
-        Request::Connections => client.call(Method::ListConnections(v1::ListConnections {}))?,
-        Request::Kill(kill) => client.call(Method::KillConnection(kill.clone()))?,
-        Request::Explain { seq } => client.call(Method::Explain(v1::Explain { seq: *seq }))?,
-        Request::EditRules(edit) => client.call(Method::EditRules(edit.clone()))?,
-        Request::AddFolder(folder) => client.call(Method::AddFolder(v1::AddFolder {
+        }),
+        Request::Undo { change } => Method::Undo(v1::Undo { change: *change }),
+        Request::Explore(explore) => Method::Explore(explore.clone()),
+        Request::Connections => Method::ListConnections(v1::ListConnections {}),
+        Request::Kill(kill) => Method::KillConnection(kill.clone()),
+        Request::Explain { seq } => Method::Explain(v1::Explain { seq: *seq }),
+        Request::EditRules(edit) => Method::EditRules(edit.clone()),
+        Request::AddFolder(folder) => Method::AddFolder(v1::AddFolder {
             folder: Some(folder.clone()),
-        }))?,
-        Request::UpdateFolder(folder) => client.call(Method::UpdateFolder(v1::UpdateFolder {
+        }),
+        Request::UpdateFolder(folder) => Method::UpdateFolder(v1::UpdateFolder {
             folder: Some(folder.clone()),
-        }))?,
-        Request::DeleteFolder { id } => {
-            client.call(Method::DeleteFolder(v1::DeleteFolder { id: *id }))?
-        }
-        Request::Policy => client.call(Method::GetPolicy(v1::GetPolicy {}))?,
-        Request::SetPolicy(set) => client.call(Method::SetPolicy(set.clone()))?,
-        Request::TrustedClients => {
-            client.call(Method::ListTrustedClients(v1::ListTrustedClients {}))?
-        }
-        Request::Lint { days } => {
-            client.call(Method::LintRules(v1::LintRules { unused_days: *days }))?
-        }
-    };
+        }),
+        Request::DeleteFolder { id } => Method::DeleteFolder(v1::DeleteFolder { id: *id }),
+        Request::Policy => Method::GetPolicy(v1::GetPolicy {}),
+        Request::SystemFirewall => Method::GetSystemFirewall(v1::GetSystemFirewall {}),
+        Request::SetSystemFirewall(set) => Method::SetSystemFirewall(set.clone()),
+        Request::SetPolicy(set) => Method::SetPolicy(set.clone()),
+        Request::TrustedClients => Method::ListTrustedClients(v1::ListTrustedClients {}),
+        Request::Lint { days } => Method::LintRules(v1::LintRules { unused_days: *days }),
+    }
+}
+
+fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, ClientError> {
+    use v1::response::Result as R;
+    let result = client.call(method(request))?;
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
         R::Rules(rules) => Some(Update::Rules(rules)),
@@ -264,6 +264,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Explanation(explanation) => Some(Update::Explanation(explanation)),
         R::LintReport(report) => Some(Update::Lint(report)),
         R::Policy(policy) => Some(Update::Policy(policy)),
+        R::SystemFirewall(firewall) => Some(Update::SystemFirewall(firewall)),
         R::TrustedClients(list) => Some(Update::TrustedClients(list.clients)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
