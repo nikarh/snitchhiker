@@ -2009,8 +2009,9 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Every M1 capability exposed as RPC.
   - [ ] Subscriptions with sequence numbers and resume.
 - [ ] **Local auth**
-  - [ ] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
-        Items 1–3 done; 4 (the client checks the daemon's socket and credentials) is left.
+  - [x] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
+        For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
+        executable isn't checked, since only root runs as uid 0 and root is out of scope.
   - [ ] Trusted-client registry and the `trust-client` command.
   - [ ] Session lifecycle bound to the pidfd and logind session.
 - [ ] **Step-up**
