@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["agents","alerts","api","approvals","cli","config","dns","hub","learn","lint","locked","logind","managed","mcp","notify","peer","placement","policy","process","prompts","remote","router","runtime","stepup","store","system","trust"]};
+window.SIDEBAR_ITEMS = {"mod":["agents","alerts","api","approvals","cli","config","dns","hub","learn","lint","locked","logind","managed","mcp","notify","peer","placement","policy","process","prompts","push","remote","router","runtime","stepup","store","system","trust"]};
