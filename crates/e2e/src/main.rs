@@ -18,6 +18,7 @@ mod perf;
 mod pointer;
 mod prompts;
 mod queue;
+mod remote;
 mod seed;
 mod stepup;
 mod subscriptions;
@@ -140,6 +141,10 @@ const SCENARIOS: &[Scenario] = &[
     (
         "agents/a-broad-proposal-needs-step-up",
         agents::a_broad_proposal_needs_step_up,
+    ),
+    (
+        "remote/a-paired-device-connects-and-is-unpaired",
+        remote::a_paired_device_connects_and_is_unpaired,
     ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (

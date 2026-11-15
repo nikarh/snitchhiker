@@ -122,6 +122,9 @@ message Request {
     AnnotatePending annotate_pending = 52;
     ListProposals list_proposals = 53;
     DecideProposal decide_proposal = 54;
+    StartPairing start_pairing = 55;
+    ListDevices list_devices = 56;
+    RemoveDevice remove_device = 57;
   }
 }
 
@@ -154,6 +157,8 @@ message Response {
     BlockedList blocked = 37;
     Proposal proposal = 38;
     ProposalList proposals = 39;
+    Pairing pairing = 40;
+    DeviceList devices = 41;
   }
 }
 
@@ -1185,4 +1190,66 @@ message DecideProposal {
   ProposalDuration duration = 4;
   // Approving: the rules to make, edited. Empty: every rule as proposed (but those already allowed).
   repeated EditedRule rules = 5;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Remote devices (plan §8.3): clients on other machines (phones, the desktop app elsewhere), connecting over iroh with
+// keys of their own. A node accepts only paired devices.
+
+// Starts pairing a device: a one-time secret, valid for one pairing within 10 minutes. A dangerous action.
+message StartPairing {
+  // What the device is called on the node (it may say its own name when it pairs).
+  string name = 1;
+  // ROLE_ADMIN or ROLE_VIEWER.
+  Role role = 2;
+}
+
+message Pairing {
+  // snitchhiker://pair?… : the node's address, the secret and the role. Shown as a link or a QR code.
+  string link = 1;
+  uint64 expires_ms = 2;
+  // The node's id and its fingerprint, for people to compare.
+  string node_id = 3;
+  string fingerprint = 4;
+}
+
+message ListDevices {}
+
+message Device {
+  // Its key: the iroh endpoint id.
+  string id = 1;
+  string name = 2;
+  Role role = 3;
+  uint64 paired_ms = 4;
+  // When it last connected (0: never).
+  uint64 last_seen_ms = 5;
+  // It is connected now.
+  bool connected = 6;
+  string fingerprint = 7;
+}
+
+message DeviceList {
+  repeated Device devices = 1;
+  // The node's own id and fingerprint, and whether its remote endpoint is on.
+  string node_id = 2;
+  string fingerprint = 3;
+  bool remote = 4;
+}
+
+// Unpairs a device: its connections close at once.
+message RemoveDevice {
+  string id = 1;
+}
+
+// On the pairing ALPN (snitchhiker-pair/1), the device's one frame, and the node's answer.
+message PairRequest {
+  string secret = 1;
+  string device_name = 2;
+}
+
+message PairResponse {
+  // Empty when paired.
+  string error = 1;
+  string node_name = 2;
+  Role role = 3;
 }

@@ -202,6 +202,16 @@ CREATE INDEX proposals_state ON proposals(state, id);
 CREATE INDEX proposals_agent ON proposals(agent, state);
 CREATE INDEX proposals_time ON proposals(created_ms);
 ",
+    // Paired remote devices, by key (the iroh endpoint id).
+    r"
+CREATE TABLE devices (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    role INTEGER NOT NULL,
+    paired_ms INTEGER NOT NULL,
+    last_seen_ms INTEGER NOT NULL DEFAULT 0
+);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -306,6 +316,21 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("alerts.prune", "DELETE FROM alerts WHERE time_ms < ?1"),
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
+    (
+        "devices.all",
+        "SELECT id, name, role, paired_ms, last_seen_ms FROM devices ORDER BY rowid",
+    ),
+    (
+        "devices.get",
+        "SELECT id, name, role, paired_ms, last_seen_ms FROM devices WHERE id = ?1",
+    ),
+    (
+        "devices.put",
+        "INSERT INTO devices (id, name, role, paired_ms) VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT (id) DO UPDATE SET name = excluded.name, role = excluded.role, paired_ms = excluded.paired_ms",
+    ),
+    ("devices.seen", "UPDATE devices SET last_seen_ms = ?2 WHERE id = ?1"),
+    ("devices.delete", "DELETE FROM devices WHERE id = ?1"),
     (
         "proposals.insert",
         "INSERT INTO proposals (created_ms, state, agent, body) VALUES (?1, ?2, ?3, ?4)",
@@ -1121,7 +1146,7 @@ impl Store {
 
 /// Tables small enough that scanning them is fine (and SQLite may choose to).
 #[cfg(test)]
-const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules"];
+const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules", "devices"];
 
 /// Statements that group what an index range yields, and so sort it: the Explorer's, over the rollups of a range of
 /// hours. Their cost is the rollup rows of those hours (the variety of the traffic), not the size of the history; the
@@ -1260,6 +1285,18 @@ pub struct Undecided {
     pub protocol: u8,
     pub address: std::net::IpAddr,
     pub port: u16,
+}
+
+/// A paired remote device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Device {
+    /// Its key (the iroh endpoint id).
+    pub id: String,
+    pub name: String,
+    /// The protocol's role.
+    pub role: i32,
+    pub paired_ms: u64,
+    pub last_seen_ms: u64,
 }
 
 pub struct Store {
@@ -1692,6 +1729,65 @@ impl Store {
             .connection
             .prepare_cached(sql("alerts.prune")?)?
             .execute(params![db_id(before_ms)])?)
+    }
+
+    fn device_rows(
+        &self,
+        name: &'static str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<Device>, Error> {
+        let mut statement = self.connection.prepare_cached(sql(name)?)?;
+        let rows = statement.query_map(params, |row| {
+            Ok(Device {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                role: row.get(2)?,
+                paired_ms: id_of(row.get(3)?),
+                last_seen_ms: id_of(row.get(4)?),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The paired devices, oldest first.
+    pub fn devices(&self) -> Result<Vec<Device>, Error> {
+        self.device_rows("devices.all", [])
+    }
+
+    pub fn device(&self, id: &str) -> Result<Option<Device>, Error> {
+        Ok(self
+            .device_rows("devices.get", params![id])?
+            .into_iter()
+            .next())
+    }
+
+    /// Pairs a device (again: a new pairing replaces its name and role).
+    pub fn put_device(&self, device: &Device) -> Result<(), Error> {
+        self.connection
+            .prepare_cached(sql("devices.put")?)?
+            .execute(params![
+                device.id,
+                device.name,
+                device.role,
+                db_id(device.paired_ms)
+            ])?;
+        Ok(())
+    }
+
+    pub fn device_seen(&self, id: &str, now_ms: u64) -> Result<(), Error> {
+        self.connection
+            .prepare_cached(sql("devices.seen")?)?
+            .execute(params![id, db_id(now_ms)])?;
+        Ok(())
+    }
+
+    /// Unpairs a device; whether it was paired.
+    pub fn delete_device(&self, id: &str) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("devices.delete")?)?
+            .execute(params![id])?
+            > 0)
     }
 
     /// Stores a new proposal (its id is ignored) from `agent` (`pid@start`); returns its id.

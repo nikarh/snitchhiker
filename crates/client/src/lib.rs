@@ -7,6 +7,8 @@
 
 #[cfg(feature = "cache")]
 pub mod cache;
+#[cfg(feature = "remote")]
+pub mod remote;
 
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufReader, BufWriter, Write as _};
@@ -78,6 +80,8 @@ pub struct Client {
     welcome: v1::Welcome,
     /// The node's strings this connection was sent with columnar blocks, by id.
     strings: HashMap<u32, String>,
+    /// What keeps a remote connection open (its endpoint), dropped with the client.
+    _keep: Option<Box<dyn Send>>,
 }
 
 impl Client {
@@ -94,6 +98,17 @@ impl Client {
                 peer.uid()
             )));
         }
+        Self::handshake(stream, None, app, version)
+    }
+
+    /// The protocol's handshake on a connected stream (a remote connection's local end); `keep` is dropped with the
+    /// client.
+    pub fn handshake(
+        stream: UnixStream,
+        keep: Option<Box<dyn Send>>,
+        app: &str,
+        version: &str,
+    ) -> Result<Self, Error> {
         let mut writer = BufWriter::new(stream.try_clone()?);
         let mut reader = BufReader::new(stream);
         let mut buffer = Vec::new();
@@ -118,6 +133,7 @@ impl Client {
                 notices: VecDeque::new(),
                 strings: HashMap::new(),
                 welcome,
+                _keep: keep,
             }),
             Some(v1::server_frame::Body::Refusal(refusal)) => Err(Error::Refused(refusal.reason)),
             _ => Err(Error::Protocol("no welcome")),

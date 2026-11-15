@@ -19,6 +19,7 @@ pub mod placement;
 pub mod policy;
 pub mod process;
 pub mod prompts;
+pub mod remote;
 pub mod runtime;
 pub mod stepup;
 pub mod store;

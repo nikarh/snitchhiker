@@ -119,6 +119,11 @@ Commands:
                                   Make its rules (for the agent's session by default), in Agents/<agent>/<project>
   proposals deny <id> [--reason <text>]
                                   Deny it; the agent is told the reason
+  pair [--name <name>] [--role <admin|viewer>]
+                                  Pair a device (a phone, the desktop app elsewhere): prints a one-time link and its
+                                  QR code, valid for one pairing within 10 minutes (needs remote = true)
+  devices                         The paired devices, and this node's id
+  devices rm <id>                 Unpair a device; its connections close at once
   mcp                             An MCP server on stdin and stdout, for coding agents (run as the user, by the
                                   agent: `claude mcp add snitchhiker -- snitchhiker mcp`)
   audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
@@ -189,6 +194,8 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("policy") => policy(args, version),
         Some("system") => system(args, version),
         Some("proposals") => proposals(args, version),
+        Some("pair") => pair(args, version),
+        Some("devices") => devices(args, version),
         Some("mcp") => {
             reject_rest(args)?;
             crate::mcp::serve(version).map_err(Error::Stdout)
@@ -1577,6 +1584,90 @@ fn format_proposal(p: &v1::Proposal) -> String {
         let _ = writeln!(text, "  rules {:?} in {}", p.rule_ids, p.folder);
     }
     text
+}
+
+fn pair(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let name: String = args.opt_value_from_str("--name")?.unwrap_or_default();
+    let role = match args.opt_value_from_str::<_, String>("--role")?.as_deref() {
+        None | Some("admin") => v1::Role::Admin,
+        Some("viewer") => v1::Role::Viewer,
+        Some(other) => {
+            return Err(Error::Usage(format!(
+                "unknown role `{other}`: admin or viewer"
+            )));
+        }
+    };
+    reject_rest(args)?;
+    match connect(version)?.call(Method::StartPairing(v1::StartPairing {
+        name,
+        role: role.into(),
+    }))? {
+        v1::response::Result::Pairing(pairing) => {
+            let qr = qrcode::QrCode::new(pairing.link.as_bytes()).map_or_else(
+                |_| String::new(),
+                |code| {
+                    code.render::<qrcode::render::unicode::Dense1x2>()
+                        .quiet_zone(true)
+                        .build()
+                },
+            );
+            out(&format!(
+                "{qr}\n{}\n\nOpen the link on the device, scan the code, or paste the link into the app's Add node.\n\
+                 It pairs one device, within 10 minutes.\nThis node: {}\n",
+                pairing.link, pairing.fingerprint
+            ))
+        }
+        _ => Err(unexpected()),
+    }
+}
+
+fn devices(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let mut client = connect(version)?;
+    match command.as_deref() {
+        None => {
+            reject_rest(args)?;
+            match client.call(Method::ListDevices(v1::ListDevices {}))? {
+                v1::response::Result::Devices(list) => {
+                    let mut text = if list.remote {
+                        format!("this node: {} ({})\n", list.node_id, list.fingerprint)
+                    } else {
+                        "remote devices are off (remote = true in daemon.toml)\n".to_owned()
+                    };
+                    for d in &list.devices {
+                        let _ = writeln!(
+                            text,
+                            "{}  {:<20} {:<6} {}{}",
+                            d.id,
+                            d.name,
+                            if d.role() == v1::Role::Viewer {
+                                "viewer"
+                            } else {
+                                "admin"
+                            },
+                            if d.connected { "connected" } else { "" },
+                            if d.last_seen_ms == 0 {
+                                "  never connected"
+                            } else {
+                                ""
+                            }
+                        );
+                    }
+                    out(&text)
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some("rm") => {
+            let id: String = args.free_from_str()?;
+            reject_rest(args)?;
+            client.call(Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }))?;
+            out(&format!("unpaired {id}\n"))
+        }
+        Some(other) => Err(Error::Usage(format!("unknown devices command `{other}`"))),
+    }
 }
 
 #[cfg(test)]

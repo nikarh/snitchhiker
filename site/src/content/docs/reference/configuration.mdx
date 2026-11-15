@@ -111,6 +111,20 @@ Clients are better registered with [`snitchhikerd trust-client`](/reference/cli/
 
 What confirms a dangerous action a client asks for, such as a rule that allows every program to connect anywhere ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
 
+## Remote devices
+
+### `remote`
+
+Accept paired devices over the network: phones, and the desktop app on other machines ([Phones and remote nodes](/guides/remote/)). Default `false`. The node's key is `node.key` next to the [database](#database), made the first time.
+
+### `relays`
+
+The relays the node keeps a connection to, so devices reach it behind NAT: the URLs of your own [`snitchhiker-relay`](/install/relay/) deployments. Default none: devices connect directly, which works on the same network or when the node's port is reachable.
+
+### `remote_port`
+
+The UDP port of the remote endpoint. Default `0`: any free port (fine with a relay). Set one to open it in a firewall or forward it from a router for direct connections from outside.
+
 ## Agents
 
 ### `agent_programs`

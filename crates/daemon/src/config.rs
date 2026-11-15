@@ -88,6 +88,13 @@ pub struct Config {
     /// Programs that may propose rules on the agent socket (patterns as rules write them). Empty: any program, its
     /// proposals marked as not from a known agent.
     pub agent_programs: Vec<String>,
+    /// Accept paired devices over the network (iroh): phones, the desktop app on other machines.
+    pub remote: bool,
+    /// The relays (the user's own `snitchhiker-relay`) the node keeps a connection to, so devices reach it behind NAT.
+    /// None: direct connections only.
+    pub relays: Vec<String>,
+    /// The UDP port of the remote endpoint (0: any free port).
+    pub remote_port: u16,
 }
 
 impl Default for Config {
@@ -110,6 +117,9 @@ impl Default for Config {
             rules_dir: PathBuf::from("/etc/snitchhiker/rules.d"),
             retention_days: 30,
             agent_programs: Vec::new(),
+            remote: false,
+            relays: Vec::new(),
+            remote_port: 0,
         }
     }
 }

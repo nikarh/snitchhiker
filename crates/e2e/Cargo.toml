@@ -16,12 +16,13 @@ workspace = true
 [dependencies]
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
 serde_json = "1.0.154"
-snitchhiker-client = { version = "0.1.0", path = "../client" }
+snitchhiker-client = { version = "0.1.0", path = "../client", features = ["remote"] }
 snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-daemon = { version = "0.1.0", path = "../daemon" }
 snitchhiker-ebpf = { version = "0.1.0", path = "../ebpf" }
 snitchhiker-netfilter = { version = "0.1.0", path = "../netfilter" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
+snitchhiker-remote = { version = "0.1.0", path = "../remote" }
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
 zbus = "6.3.0"

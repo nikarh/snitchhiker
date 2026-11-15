@@ -71,10 +71,15 @@ pub fn spawn(daemon: &Arc<Daemon>) -> std::io::Result<()> {
     }
     // Anyone may open it: the agent role changes nothing (decision 0008).
     let agent = bind(AGENT_SOCKET, 0o666, Some(0))?;
-    let daemon = Arc::clone(daemon);
-    thread::Builder::new()
-        .name("api-agent".to_owned())
-        .spawn(move || accept(&daemon, &agent, &Access::Agent))?;
+    {
+        let daemon = Arc::clone(daemon);
+        thread::Builder::new()
+            .name("api-agent".to_owned())
+            .spawn(move || accept(&daemon, &agent, &Access::Agent))?;
+    }
+    if daemon.shared.config.remote {
+        crate::remote::start(daemon)?;
+    }
     Ok(())
 }
 
@@ -149,14 +154,15 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
 }
 
 /// Who is on the other end of a connection.
-struct Caller {
-    role: v1::Role,
-    uid: u32,
-    pid: u32,
+pub(crate) struct Caller {
+    pub(crate) role: v1::Role,
+    /// The user (`u32::MAX` for a remote device).
+    pub(crate) uid: u32,
+    pub(crate) pid: u32,
     /// A client's process, for step-up (root's connections need none).
-    pidfd: Option<OwnedFd>,
+    pub(crate) pidfd: Option<OwnedFd>,
     /// On the agent socket: the agent behind the MCP server.
-    agent: Option<crate::agents::Agent>,
+    pub(crate) agent: Option<crate::agents::Agent>,
 }
 
 /// Who a connection is, or why it is refused. For a client, also its process's pidfd: the connection ends when that
@@ -212,7 +218,7 @@ fn admit(
     }
 }
 
-fn refuse(stream: &UnixStream, reason: &str) {
+pub(crate) fn refuse(stream: &UnixStream, reason: &str) {
     let frame = v1::ServerFrame {
         body: Some(v1::server_frame::Body::Refusal(v1::Refusal {
             reason: reason.to_owned(),
@@ -221,7 +227,11 @@ fn refuse(stream: &UnixStream, reason: &str) {
     let _ = frame::write(&mut &*stream, &frame, &mut Vec::new());
 }
 
-fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io::Result<()> {
+pub(crate) fn serve(
+    daemon: &Arc<Daemon>,
+    stream: &UnixStream,
+    caller: &Caller,
+) -> std::io::Result<()> {
     let role = caller.role;
     let connection = CONNECTIONS.fetch_add(1, Ordering::Relaxed) + 1;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -371,7 +381,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::WithdrawProposal(_)
             | Method::AnnotatePending(_)
     );
-    let reads = reads || matches!(method, Method::ListProposals(_));
+    let reads = reads || matches!(method, Method::ListProposals(_) | Method::ListDevices(_));
     match role {
         // The agent role's requests are about the caller's own agent: a person's client has none.
         v1::Role::Root | v1::Role::Admin => {
@@ -451,6 +461,9 @@ fn handle(
         Method::AnnotatePending(annotate) => annotate_pending(daemon, caller, &annotate),
         Method::ListProposals(list) => list_proposals(daemon, list),
         Method::DecideProposal(decide) => decide_proposal(daemon, caller, app, &decide),
+        Method::StartPairing(start) => start_pairing(daemon, caller, app, &start),
+        Method::ListDevices(_) => crate::remote::list_devices(daemon),
+        Method::RemoveDevice(remove) => crate::remote::remove_device(daemon, &remove.id),
         Method::ConfirmSystemFirewall(_) => {
             if daemon.confirm_system() {
                 R::Done(v1::Done {})
@@ -1839,6 +1852,19 @@ fn kill_connection(daemon: &Daemon, kill: &v1::KillConnection) -> v1::response::
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Agents (decision 0008)
+
+/// `StartPairing`: a dangerous action (a device paired as admin can change everything).
+fn start_pairing(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    start: &v1::StartPairing,
+) -> v1::response::Result {
+    if let Err(refused) = step_up(daemon, caller, app, "pair a new device") {
+        return refused;
+    }
+    crate::remote::start_pairing(daemon, &start.name, start.role())
+}
 
 fn agent_of(caller: &Caller) -> Result<&crate::agents::Agent, v1::response::Result> {
     caller.agent.as_ref().ok_or_else(|| {
