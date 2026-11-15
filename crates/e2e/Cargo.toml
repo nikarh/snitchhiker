@@ -14,7 +14,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+base64 = "0.23.1"
 hickory-proto = { version = "0.26.3", default-features = false, features = ["std"] }
+ring = "0.17.14"
 serde_json = "1.0.154"
 snitchhiker-client = { version = "0.1.0", path = "../client", features = ["remote"] }
 snitchhiker-core = { version = "0.1.0", path = "../core" }

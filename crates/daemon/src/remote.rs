@@ -33,7 +33,7 @@ struct Pairing {
 /// The node's remote side: its endpoint once started, pairings waiting, and the devices' open connections.
 #[derive(Default)]
 pub struct Remote {
-    listener: OnceLock<Listener>,
+    listener: OnceLock<Arc<Listener>>,
     pairings: Mutex<HashMap<String, Pairing>>,
     /// The codes offered, by their pairing's secret.
     offers: Mutex<HashMap<String, Offer>>,
@@ -71,6 +71,20 @@ pub fn start(daemon: &Arc<Daemon>) -> std::io::Result<()> {
             .spawn(move || serve(&daemon, &accepted));
     })?;
     info!(id = %listener.id(), relays = ?config.relays, "remote endpoint started");
+    let listener = Arc::new(listener);
+    if !config.push_gateway.is_empty() {
+        let gateway = snitchhiker_remote::NodeAddress {
+            id: config.push_gateway.clone(),
+            relays: config.relays.clone(),
+            addrs: Vec::new(),
+        };
+        daemon.shared.router.push.spawn(
+            Arc::clone(&listener),
+            gateway,
+            hostname(),
+            config.offline_after_secs,
+        )?;
+    }
     let _ = daemon.remote.listener.set(listener);
     Ok(())
 }
@@ -193,6 +207,7 @@ fn pair(daemon: &Daemon, peer: &str, stream: &UnixStream) {
                 paired_ms: now,
                 last_seen_ms: 0,
                 muted: false,
+                push: None,
             };
             let stored = daemon.store().put_device(&device);
             match stored {
@@ -335,7 +350,7 @@ pub fn list_devices(daemon: &Daemon) -> v1::response::Result {
         .remote
         .listener
         .get()
-        .map_or_else(String::new, Listener::id);
+        .map_or_else(String::new, |listener| listener.id());
     v1::response::Result::Devices(v1::DeviceList {
         devices: devices
             .into_iter()
@@ -348,6 +363,7 @@ pub fn list_devices(daemon: &Daemon) -> v1::response::Result {
                 paired_ms: d.paired_ms,
                 last_seen_ms: d.last_seen_ms,
                 muted: d.muted,
+                push: d.push.is_some(),
             })
             .collect(),
         fingerprint: snitchhiker_remote::fingerprint(&node_id),
@@ -368,6 +384,7 @@ pub fn remove_device(daemon: &Daemon, id: &str) -> v1::response::Result {
                 let _ = stream.shutdown(std::net::Shutdown::Both);
             }
             info!(device = %id, "a device was unpaired");
+            daemon.devices_changed();
             v1::response::Result::Done(v1::Done {})
         }
         Ok(false) => error(v1::ErrorCode::NotFound, format!("no device {id}")),

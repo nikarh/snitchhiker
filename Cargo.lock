@@ -8046,7 +8046,9 @@ dependencies = [
 name = "snitchhiker-e2e"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "hickory-proto",
+ "ring",
  "serde_json",
  "snitchhiker-client",
  "snitchhiker-core",
@@ -8106,11 +8108,17 @@ dependencies = [
 name = "snitchhiker-relay"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "iroh-relay",
  "pico-args",
+ "reqwest",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
+ "serde_json",
+ "snitchhiker-proto",
+ "snitchhiker-remote",
  "thiserror 2.0.21",
  "tokio",
  "toml 1.2.1+spec-1.1.0",

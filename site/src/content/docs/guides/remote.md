@@ -72,6 +72,15 @@ A device can be **muted** (Devices → Mute, on the node): it still lists prompt
 
 The node's own connections (to its relay, to devices) are never prompted for: the daemon recognises its own process's packets.
 
+## While the phone sleeps
+
+The phone app stays connected while it is open, and in the background with **Stay connected in the background** on (an ongoing notification shows it). Otherwise Android keeps it asleep, and two things need a [push gateway](/install/relay/#push-notifications) on your relay, named in each node's [`push_gateway`](/reference/configuration/#push_gateway):
+
+- **Prompts:** a node with a prompt to notify a device of, and that device not connected, asks the gateway to wake it. The app connects and shows the prompt's notification, Allow and Deny included. With a device it can wake, a node asks about connections no rule decides even when no client is connected.
+- **Offline:** a node that stops, crashes or loses its network is reported offline once it has been gone for [`offline_after_secs`](/reference/configuration/#offline_after_secs), with its reason when it stopped on purpose ("the machine is shutting down or restarting"), and back online when it returns.
+
+The app's **Wake-ups** card says how it is woken: through a UnifiedPush app (ntfy, for example) or, in the Play build, Firebase Cloud Messaging. **Devices** on the node shows which devices can be woken.
+
 ## Dangerous actions from a device
 
 A device can't confirm a dangerous action with a password on the node, as a client there does through polkit. When a device asks for one (a rule for any program to anywhere, pairing another device), the request waits up to two minutes for an approval on the node: a card on the desktop app's **Prompts** page there (approving asks for the administrator's password), or `sudo snitchhiker approvals approve <id>`. Denied, or not answered in time, it is refused. Another remote device can't approve it.

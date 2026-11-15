@@ -6,6 +6,9 @@
 //!   local users' sessions are all locked or idle (logind says so), or once the prompt has waited
 //!   `escalate_after_secs`. The decision is made on a thread of its own, never on the packet path: asking logind
 //!   takes a D-Bus round trip.
+//!
+//! A device to notify that isn't connected is woken through the push gateway ([`Push`]), and told of the prompt when
+//! it connects.
 
 use std::collections::{BTreeSet, HashSet};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -19,6 +22,7 @@ use tracing::debug;
 use crate::config::Routing;
 use crate::hub::{Audience, Hub};
 use crate::prompts::Broker;
+use crate::push::Push;
 
 /// What the router needs of the daemon.
 pub struct Router {
@@ -28,6 +32,10 @@ pub struct Router {
     muted: Mutex<HashSet<String>>,
     /// New prompts to decide about (escalate only).
     opened: Mutex<Option<Sender<u64>>>,
+    /// Prompts escalated to the remote devices (escalate only), while they wait.
+    escalated: Mutex<HashSet<u64>>,
+    /// Waking devices that aren't connected.
+    pub push: Arc<Push>,
 }
 
 impl Router {
@@ -38,6 +46,8 @@ impl Router {
             after,
             muted: Mutex::new(HashSet::new()),
             opened: Mutex::new(None),
+            escalated: Mutex::new(HashSet::new()),
+            push: Arc::default(),
         }
     }
 
@@ -63,6 +73,53 @@ impl Router {
         }
     }
 
+    /// Whether a client connecting now (a device, by its id; or a local one) is to be told of a prompt waiting.
+    pub fn notifies_now(&self, device: Option<&str>, prompt: u64) -> bool {
+        match device {
+            Some(id) => {
+                let escalated = self
+                    .escalated
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .contains(&prompt);
+                self.notifies(&Audience::Device { id: id.to_owned() }, escalated)
+            }
+            None => true,
+        }
+    }
+
+    /// Whether some device not muted could be woken for a prompt.
+    pub fn can_wake_someone(&self) -> bool {
+        self.push.wakeable().iter().any(|d| !self.is_muted(d))
+    }
+
+    /// Wakes the devices (not muted) that aren't connected for prompts.
+    fn wake(&self, hub: &Hub) {
+        let connected: HashSet<String> = hub
+            .audiences(v1::Topic::Prompts)
+            .into_iter()
+            .filter_map(|a| match a {
+                Audience::Device { id } => Some(id),
+                _ => None,
+            })
+            .collect();
+        self.push.wake(
+            self.push
+                .wakeable()
+                .into_iter()
+                .filter(|d| !connected.contains(d) && !self.is_muted(d))
+                .collect(),
+        );
+    }
+
+    /// A prompt is answered or gone: no more to escalate.
+    pub fn closed(&self, id: u64) {
+        self.escalated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&id);
+    }
+
     /// Announces a prompt that opened.
     pub fn opened(&self, hub: &Hub, prompt: &v1::Prompt) {
         hub.publish_each(v1::Topic::Prompts, |audience| {
@@ -71,6 +128,9 @@ impl Router {
                 ..prompt.clone()
             }))
         });
+        if self.routing == Routing::All {
+            self.wake(hub);
+        }
         if self.routing == Routing::Escalate
             && let Some(opened) = self
                 .opened
@@ -88,6 +148,10 @@ impl Router {
             return;
         };
         debug!(id, "a prompt is escalated to the remote devices");
+        self.escalated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id);
         hub.publish_each(v1::Topic::Prompts, |audience| match audience {
             Audience::Device { id } if !self.is_muted(id) => {
                 Some(v1::notice::Body::Prompt(v1::Prompt {
@@ -97,6 +161,7 @@ impl Router {
             }
             _ => None,
         });
+        self.wake(hub);
     }
 
     /// Starts the escalation thread (with `escalate` only).

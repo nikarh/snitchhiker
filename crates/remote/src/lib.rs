@@ -21,6 +21,8 @@ pub mod code;
 pub const ALPN: &[u8] = b"snitchhiker/1";
 /// Pairing a device with a one-time secret (a link or a QR code).
 pub const PAIR_ALPN: &[u8] = b"snitchhiker-pair/1";
+/// A node's connection to its push gateway (plan §8.5): who to wake, and the node's presence.
+pub const PUSH_ALPN: &[u8] = b"snitchhiker-push/1";
 
 fn other(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
@@ -137,6 +139,8 @@ async fn bridge(
     let upstream = async {
         let copied = tokio::io::copy(&mut read, &mut send).await;
         let _ = send.finish();
+        // Until the peer has all of it: the connection may be closed right after, which would drop data in flight.
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), send.stopped()).await;
         copied
     };
     let downstream = async {
@@ -222,11 +226,22 @@ impl Listener {
         options: &Options,
         accept: impl Fn(Accepted) + Send + Sync + 'static,
     ) -> io::Result<Self> {
+        Self::bind_for(key, options, &[ALPN, PAIR_ALPN], accept)
+    }
+
+    /// Binds an endpoint accepting `alpns` (a node's are [`ALPN`] and [`PAIR_ALPN`]).
+    pub fn bind_for(
+        key: &Key,
+        options: &Options,
+        alpns: &[&[u8]],
+        accept: impl Fn(Accepted) + Send + Sync + 'static,
+    ) -> io::Result<Self> {
         let runtime = runtime("remote")?;
         let accept = Arc::new(accept);
+        let alpns = alpns.iter().map(|alpn| alpn.to_vec()).collect();
         let endpoint = runtime.block_on(async {
             builder(key, options)?
-                .alpns(vec![ALPN.to_vec(), PAIR_ALPN.to_vec()])
+                .alpns(alpns)
                 .bind()
                 .await
                 .map_err(other)
@@ -279,6 +294,31 @@ impl Listener {
             relays: addr.relay_urls().map(ToString::to_string).collect(),
             addrs: addr.ip_addrs().copied().collect(),
         }
+    }
+}
+
+impl Listener {
+    /// Opens a stream to `peer` for `alpn` from this endpoint: a node dials out with the key it listens with, on the
+    /// endpoint it listens on (one key, one endpoint). A connection of its own, closed when the stream ends.
+    pub fn open(&self, peer: &NodeAddress, alpn: &[u8]) -> io::Result<UnixStream> {
+        let addr = peer.endpoint_addr()?;
+        let endpoint = self.endpoint.clone();
+        self.runtime.block_on(async move {
+            let connection = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                endpoint.connect(addr, alpn),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the peer didn't answer"))?
+            .map_err(other)?;
+            let (send, receive) = connection.open_bi().await.map_err(other)?;
+            let (near, far) = UnixStream::pair()?;
+            tokio::spawn(async move {
+                let _ = bridge(send, receive, near).await;
+                connection.close(0_u32.into(), b"done");
+            });
+            Ok(far)
+        })
     }
 }
 

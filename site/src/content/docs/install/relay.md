@@ -75,6 +75,47 @@ allow = [
 
 A device paired later must be added before it can connect through the relay (it still connects directly where it can).
 
+## Push notifications
+
+A phone isn't connected to your nodes all the time: Android keeps apps asleep. The relay's **push gateway** wakes it when a prompt waits, and tells it when a node goes offline, which a sleeping phone can't notice by itself. Nodes keep a connection open to the gateway while they run; when a node's connection ends and it doesn't come back within its [`offline_after_secs`](/reference/configuration/#offline_after_secs) (two minutes), its devices are told it is offline, with the reason it gave if it stopped on purpose, and later that it is back.
+
+Turn it on in the relay's configuration, with the relay's own URL:
+
+```toml title="/etc/snitchhiker/relay.toml"
+[push]
+url = "https://relay.example.org/"
+```
+
+Restart the relay, and print the gateway's id:
+
+```bash
+sudo snitchhiker-relay push-id
+```
+
+Then on each node:
+
+```toml title="/etc/snitchhiker/daemon.toml"
+push_gateway = "8c1b…"   # what push-id printed
+```
+
+Phones tell their nodes where they are woken when they connect. The F-Droid build of the app is woken through [UnifiedPush](https://unifiedpush.org/): install a distributor app (ntfy, for example, with its server or your own), and the app uses it. The gateway encrypts each push to the phone's own keys, so the push server sees nothing but its size. A push only says "connect": the prompt itself comes from the node, over the same encrypted connection as always.
+
+### FCM
+
+The Play build of the app is woken through Firebase Cloud Messaging, which only the Firebase project the app was built with can send to. Build the app with your own project (`FCM_PROJECT_ID`, `FCM_APP_ID`, `FCM_API_KEY` and `FCM_SENDER_ID` set when building), and give the gateway that project's service account key:
+
+```toml title="/etc/snitchhiker/relay.toml"
+[push]
+url = "https://relay.example.org/"
+fcm_service_account = "/etc/snitchhiker/fcm-service-account.json"
+```
+
+FCM messages aren't encrypted to the phone: Google sees which node a push is about, its name, and, when it went offline, the reason it gave. A Play build without a Firebase project uses UnifiedPush instead.
+
+### What the gateway keeps
+
+In `/var/lib/snitchhiker-relay/push.json` (only the relay's user reads it): each node's id, name, threshold, and its devices' ids and push targets. Nothing about prompts, connections or rules reaches it. With `allow` under `[push]`, only the listed nodes may use the gateway.
+
 ## Monitoring
 
 `metrics_bind = "127.0.0.1:9090"` serves Prometheus metrics: clients connected, bytes relayed, and the like.

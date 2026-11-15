@@ -129,6 +129,14 @@ The UDP port of the remote endpoint. Default `0`: any free port (fine with a rel
 
 Announce the node on the local network (mDNS), so devices there find it without a relay, and [pairing codes](/guides/remote/#pairing-by-code) work there. Default `true`.
 
+### `push_gateway`
+
+The id of a push gateway: a [relay](/install/relay/#push-notifications) with its push service on, which `snitchhiker-relay push-id` prints there. It is reached through [`relays`](#relays). The gateway wakes your devices when a prompt waits for them and they aren't connected, and tells them when the node goes offline ([Phones and remote nodes](/guides/remote/#while-the-phone-sleeps)). Default empty: no gateway; devices learn of prompts only while connected.
+
+### `offline_after_secs`
+
+How long the node may be gone from its push gateway before your devices are told it is offline. Default `120`: a restart or an upgrade doesn't wake anyone.
+
 ### `prompt_routing`
 
 Which clients are notified of a prompt; every admin client lists every prompt and can answer it either way ([Phones and remote nodes](/guides/remote/#who-is-notified)). Default `"all"`: every client, but [muted](/guides/remote/#who-is-notified) devices. `"escalate"`: the clients on this machine first; remote devices when no client here listens, when the users of the clients here are all away (their sessions locked or idle, as logind says), or once the prompt has waited [`escalate_after_secs`](#escalate_after_secs).

@@ -1651,7 +1651,7 @@ fn devices(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                     for d in &list.devices {
                         let _ = writeln!(
                             text,
-                            "{}  {:<20} {:<6} {}{}",
+                            "{}  {:<20} {:<6} {}{}{}",
                             d.id,
                             d.name,
                             if d.role() == v1::Role::Viewer {
@@ -1664,7 +1664,8 @@ fn devices(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                                 "  never connected"
                             } else {
                                 ""
-                            }
+                            },
+                            if d.push { "  woken by push" } else { "" }
                         );
                     }
                     out(&text)

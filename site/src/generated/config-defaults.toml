@@ -22,3 +22,5 @@ remote_port = 0
 lan_discovery = true
 prompt_routing = "all"
 escalate_after_secs = 20
+push_gateway = ""
+offline_after_secs = 120

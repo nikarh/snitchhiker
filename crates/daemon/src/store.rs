@@ -216,6 +216,10 @@ CREATE TABLE devices (
     r"
 ALTER TABLE devices ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
 ",
+    // Where a device is woken (an encoded PushTarget), if it said.
+    r"
+ALTER TABLE devices ADD COLUMN push BLOB;
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -322,11 +326,11 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
     (
         "devices.all",
-        "SELECT id, name, role, paired_ms, last_seen_ms, muted FROM devices ORDER BY rowid",
+        "SELECT id, name, role, paired_ms, last_seen_ms, muted, push FROM devices ORDER BY rowid",
     ),
     (
         "devices.get",
-        "SELECT id, name, role, paired_ms, last_seen_ms, muted FROM devices WHERE id = ?1",
+        "SELECT id, name, role, paired_ms, last_seen_ms, muted, push FROM devices WHERE id = ?1",
     ),
     (
         "devices.put",
@@ -335,6 +339,7 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("devices.seen", "UPDATE devices SET last_seen_ms = ?2 WHERE id = ?1"),
     ("devices.mute", "UPDATE devices SET muted = ?2 WHERE id = ?1"),
+    ("devices.push", "UPDATE devices SET push = ?2 WHERE id = ?1"),
     ("devices.delete", "DELETE FROM devices WHERE id = ?1"),
     (
         "proposals.insert",
@@ -1303,6 +1308,8 @@ pub struct Device {
     pub paired_ms: u64,
     pub last_seen_ms: u64,
     pub muted: bool,
+    /// Where it is woken: an encoded `PushTarget`.
+    pub push: Option<Vec<u8>>,
 }
 
 pub struct Store {
@@ -1751,6 +1758,7 @@ impl Store {
                 paired_ms: id_of(row.get(3)?),
                 last_seen_ms: id_of(row.get(4)?),
                 muted: row.get(5)?,
+                push: row.get(6)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1787,6 +1795,15 @@ impl Store {
             .connection
             .prepare_cached(sql("devices.mute")?)?
             .execute(params![id, muted])?
+            > 0)
+    }
+
+    /// Sets or clears where a device is woken; whether it is paired.
+    pub fn set_device_push(&self, id: &str, push: Option<&[u8]>) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("devices.push")?)?
+            .execute(params![id, push])?
             > 0)
     }
 

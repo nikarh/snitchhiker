@@ -17,6 +17,7 @@ mod nftables;
 mod perf;
 mod pointer;
 mod prompts;
+mod push;
 mod queue;
 mod remote;
 mod seed;
@@ -169,6 +170,10 @@ const SCENARIOS: &[Scenario] = &[
     (
         "remote/prompts-escalate-to-devices-and-not-to-muted-ones",
         remote::prompts_escalate_to_devices_and_not_to_muted_ones,
+    ),
+    (
+        "remote/devices-are-woken-and-told-when-the-node-goes",
+        push::devices_are_woken_and_told_when_the_node_goes,
     ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (

@@ -106,6 +106,13 @@ pub struct Config {
     pub prompt_routing: Routing,
     /// With `escalate`: how long a prompt waits for the clients on this machine before remote devices are notified.
     pub escalate_after_secs: u64,
+    /// The push gateway's endpoint id (a `snitchhiker-relay` with `[push]`, reached through `relays`): it wakes the
+    /// devices with prompts while they are asleep, and tells them when the node goes offline. Empty: none, devices
+    /// learn of prompts only while connected.
+    pub push_gateway: String,
+    /// How long the node may be gone from its push gateway before its devices are told it is offline (a restart
+    /// doesn't make them wonder).
+    pub offline_after_secs: u32,
 }
 
 /// Who is notified of prompts.
@@ -146,6 +153,8 @@ impl Default for Config {
             lan_discovery: true,
             prompt_routing: Routing::All,
             escalate_after_secs: 20,
+            push_gateway: String::new(),
+            offline_after_secs: 120,
         }
     }
 }

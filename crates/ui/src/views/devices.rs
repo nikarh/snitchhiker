@@ -117,6 +117,16 @@ fn device_row(
                 .child(ago(device.last_seen_ms))
                 .into_any_element()
         })
+        .child(if device.push {
+            div()
+                .ml_2()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child("woken by push")
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        })
         .child(div().flex_1())
         .child({
             let (id, requests, muted) = (id.clone(), requests.clone(), device.muted);

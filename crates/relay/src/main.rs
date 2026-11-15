@@ -8,6 +8,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
+mod fcm;
+mod push;
+mod webpush;
+
 use iroh_relay::server::{
     self as relay, Access, AccessControl, AcmeConfig, CertConfig, ClientRequest, QuicConfig,
     RelayConfig, ServerConfig,
@@ -19,6 +23,7 @@ const HELP: &str = "\
 snitchhiker-relay: the relay Snitchhiker nodes and devices meet through behind NAT
 
 Usage: snitchhiker-relay [--config <path>]
+       snitchhiker-relay push-id [--config <path>]   Print the push gateway's id (for nodes' push_gateway)
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/relay.toml)
@@ -64,6 +69,8 @@ struct Config {
     allow: Vec<String>,
     /// Prometheus metrics, if set.
     metrics_bind: Option<SocketAddr>,
+    /// The push gateway (presence and push notifications), if set.
+    push: Option<push::Config>,
 }
 
 impl Default for Config {
@@ -81,6 +88,7 @@ impl Default for Config {
             key: PathBuf::new(),
             allow: Vec::new(),
             metrics_bind: None,
+            push: None,
         }
     }
 }
@@ -172,7 +180,15 @@ async fn run(config: Config) -> Result<(), Error> {
     let cert = cert_config(&config)?;
     let mut relay_config = RelayConfig::new(config.http_bind);
     if !config.allow.is_empty() {
-        relay_config.access = Arc::new(Allowed(config.allow.clone()));
+        let mut allowed = config.allow.clone();
+        // The gateway's own endpoint is homed here.
+        if let Some(push) = &config.push {
+            allowed.push(
+                push::id(push)
+                    .map_err(|e| Error::Config(format!("{}: {e}", push.key.display())))?,
+            );
+        }
+        relay_config.access = Arc::new(Allowed(allowed));
     }
     let quic = match (&cert, config.quic_bind) {
         (Some(CertConfig::Manual { server_config }), Some(bind)) => {
@@ -232,6 +248,8 @@ fn main() -> ExitCode {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+    // The HTTP client of the push gateway takes the process's provider.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let mut args = pico_args::Arguments::from_env();
     if args.contains(["-h", "--help"]) {
         let _ = std::io::Write::write_all(&mut std::io::stdout(), HELP.as_bytes());
@@ -249,11 +267,32 @@ fn main() -> ExitCode {
             .opt_value_from_str("--config")?
             .unwrap_or_else(|| PathBuf::from("/etc/snitchhiker/relay.toml"));
         let config = load(&path)?;
+        if args.subcommand()?.as_deref() == Some("push-id") {
+            let push = config
+                .push
+                .ok_or_else(|| Error::Config("no [push] section".to_owned()))?;
+            let id = push::id(&push)
+                .map_err(|e| Error::Config(format!("{}: {e}", push.key.display())))?;
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), format!("{id}\n").as_bytes());
+            return Ok(());
+        }
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|e| Error::Relay(e.to_string()))?;
-        runtime.block_on(run(config))
+        // The gateway's endpoint runs on a runtime of its own (outside this one), and homes on the relay once it
+        // serves.
+        let gateway = config
+            .push
+            .as_ref()
+            .map(|push| push::Gateway::start(push, runtime.handle().clone()))
+            .transpose()
+            .map_err(Error::Config)?;
+        let served = runtime.block_on(run(config));
+        if let Some(gateway) = gateway {
+            gateway.stop();
+        }
+        served
     })();
     match result {
         Ok(()) => ExitCode::SUCCESS,

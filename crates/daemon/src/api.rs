@@ -399,7 +399,11 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
     let reads = reads
         || matches!(
             method,
-            Method::ListProposals(_) | Method::ListDevices(_) | Method::ListApprovals(_)
+            Method::ListProposals(_)
+                | Method::ListDevices(_)
+                | Method::ListApprovals(_)
+                // A device's own push target: any device may be woken.
+                | Method::SetPushTarget(_)
         );
     match role {
         // The agent role's requests are about the caller's own agent: a person's client has none.
@@ -480,7 +484,8 @@ fn handle(
         | Method::RemoveDevice(_)
         | Method::ListApprovals(_)
         | Method::DecideApproval(_)
-        | Method::SetDeviceMuted(_)) => devices(daemon, caller, app, method),
+        | Method::SetDeviceMuted(_)
+        | Method::SetPushTarget(_)) => devices(daemon, caller, app, method),
         Method::ConfirmSystemFirewall(_) => confirm_system_firewall(daemon),
         Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
@@ -490,7 +495,13 @@ fn handle(
         },
         Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
-        Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),
+        Method::Subscribe(subscribe) => self::subscribe(
+            daemon,
+            connection,
+            outbox,
+            caller.device.as_ref().map(|(_, key)| key.as_str()),
+            &subscribe,
+        ),
         Method::Unsubscribe(unsubscribe) => {
             if daemon
                 .shared
@@ -1691,6 +1702,7 @@ fn subscribe(
     daemon: &Daemon,
     connection: u64,
     outbox: &Arc<Outbox>,
+    device: Option<&str>,
     subscribe: &v1::Subscribe,
 ) -> v1::response::Result {
     let topic = subscribe.topic();
@@ -1715,13 +1727,17 @@ fn subscribe(
                     .map(|a| Outgoing::Notice(v1::notice::Body::Approval(a)))
                     .collect(),
             ),
+            // Each says whether this client is to be told of it, as when it opened (a device woken for it is).
             (v1::Topic::Prompts, _) => Some(
                 daemon
                     .shared
                     .broker
                     .list()
                     .into_iter()
-                    .map(|prompt| Outgoing::Notice(v1::notice::Body::Prompt(prompt)))
+                    .map(|prompt| {
+                        let notify = daemon.shared.router.notifies_now(device, prompt.id);
+                        Outgoing::Notice(v1::notice::Body::Prompt(v1::Prompt { notify, ..prompt }))
+                    })
                     .collect(),
             ),
             (v1::Topic::Events, Some(after)) if columnar => {
@@ -1939,14 +1955,45 @@ fn devices(
             let muted = daemon.store().mute_device(&set.id, set.muted);
             match muted {
                 Ok(true) => {
-                    daemon.muted_devices_changed();
+                    daemon.devices_changed();
                     v1::response::Result::Done(v1::Done {})
                 }
                 Ok(false) => error(v1::ErrorCode::NotFound, format!("no device {}", set.id)),
                 Err(e) => internal(e),
             }
         }
+        Method::SetPushTarget(set) => set_push_target(daemon, caller, &set),
         _ => error(v1::ErrorCode::Unsupported, "not a device request"),
+    }
+}
+
+/// `SetPushTarget`: where the calling device is woken.
+fn set_push_target(
+    daemon: &Daemon,
+    caller: &Caller,
+    set: &v1::SetPushTarget,
+) -> v1::response::Result {
+    use snitchhiker_proto::prost::Message;
+    let Some((_, device)) = &caller.device else {
+        return error(
+            v1::ErrorCode::Invalid,
+            "only a paired device has a push target",
+        );
+    };
+    let encoded = set
+        .target
+        .as_ref()
+        .filter(|t| t.kind.is_some())
+        .map(Message::encode_to_vec);
+    // Bound first: the store's lock is released before devices_changed takes it again.
+    let set = daemon.store().set_device_push(device, encoded.as_deref());
+    match set {
+        Ok(true) => {
+            daemon.devices_changed();
+            v1::response::Result::Done(v1::Done {})
+        }
+        Ok(false) => error(v1::ErrorCode::NotFound, "this device isn't paired"),
+        Err(e) => internal(e),
     }
 }
 

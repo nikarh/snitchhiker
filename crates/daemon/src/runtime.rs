@@ -248,18 +248,26 @@ impl Daemon {
         self.spawn_agent_watch()?;
         self.watch_agents(agents);
         crate::router::Router::spawn(&self.shared)?;
-        self.muted_devices_changed();
+        self.devices_changed();
         Ok(())
     }
 
-    /// Tells the router which devices are muted, from the store.
-    pub fn muted_devices_changed(&self) {
+    /// Tells the router which devices are muted and where each is woken, from the store.
+    pub fn devices_changed(&self) {
         let devices = self.store().devices();
         match devices {
-            Ok(devices) => self
-                .shared
-                .router
-                .set_muted(devices.into_iter().filter(|d| d.muted).map(|d| d.id)),
+            Ok(devices) => {
+                let router = &self.shared.router;
+                router.set_muted(devices.iter().filter(|d| d.muted).map(|d| d.id.clone()));
+                router.push.set_targets(
+                    devices
+                        .iter()
+                        .filter_map(|d| {
+                            Some((d.id.clone(), crate::push::target(d.push.as_deref()?)?))
+                        })
+                        .collect(),
+                );
+            }
             Err(error) => error!(%error, "reading the paired devices"),
         }
     }
@@ -745,6 +753,7 @@ impl Daemon {
         if self.shared.events.try_send(event).is_err() {
             self.shared.dropped_events.fetch_add(1, Ordering::Relaxed);
         }
+        self.shared.router.closed(pending.prompt.id);
         self.shared.hub.publish(
             v1::Topic::Prompts,
             &v1::notice::Body::PromptResolved(v1::PromptResolved {
@@ -880,6 +889,7 @@ impl Daemon {
         } else {
             "the daemon was stopped (by an administrator, or for an upgrade)"
         };
+        self.shared.router.push.stopping(reason);
         self.shared.hub.publish(
             v1::Topic::Prompts,
             &v1::notice::Body::Stopping(v1::Stopping {
@@ -1060,12 +1070,12 @@ fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u6
 }
 
 /// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
-/// listens for prompts.
+/// listens for prompts, or a device can be woken to.
 pub fn asks(shared: &Shared) -> bool {
     let policy = shared.policy.load();
     policy.no_match == Policy::Ask
         && policy.mode == Mode::Enforce
-        && shared.hub.has_subscribers(v1::Topic::Prompts)
+        && (shared.hub.has_subscribers(v1::Topic::Prompts) || shared.router.can_wake_someone())
 }
 
 /// What a policy does without asking (`ask` falls back to `no_client`).

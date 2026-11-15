@@ -23,3 +23,15 @@
 
 # Prometheus metrics.
 # metrics_bind = "127.0.0.1:9090"
+
+# The push gateway: wakes devices when a prompt waits for them, and tells them when a node goes offline. Nodes name it
+# by its id (`snitchhiker-relay push-id`) in their `push_gateway`.
+# [push]
+# This relay's URL, as nodes reach it.
+# url = "https://relay.example.org/"
+# key = "/var/lib/snitchhiker-relay/push.key"
+# state = "/var/lib/snitchhiker-relay/push.json"
+# Node ids that may use the gateway. None: any.
+# allow = []
+# A Firebase service account key (JSON), for the Play build of the app.
+# fcm_service_account = "/etc/snitchhiker/fcm-service-account.json"
