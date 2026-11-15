@@ -50,6 +50,8 @@ pub enum Error {
     Store(#[from] crate::store::Error),
     #[error("rules: {0}")]
     Rules(#[from] snitchhiker_core::engine::CompileError),
+    #[error("managed rules: {0}")]
+    Managed(#[from] crate::managed::Error),
 }
 
 /// What the deciding threads share.
@@ -82,7 +84,7 @@ impl Daemon {
             std::fs::create_dir_all(parent)?;
         }
         let store = Store::open(&config.database)?;
-        let rules = RuleSet::compile(&store.folders()?, &store.rules()?)?;
+        let rules = compile(&config, &store)?;
         info!(rules = rules.len(), "rules loaded");
         // The programs first: from the moment the table is in place, every new flow's owner must be known.
         let attribution = Attribution::load()?;
@@ -151,7 +153,7 @@ impl Daemon {
     pub fn reload_rules(&self) -> Result<usize, Error> {
         let rules = {
             let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
-            RuleSet::compile(&store.folders()?, &store.rules()?)?
+            compile(&self.shared.config, &store)?
         };
         let count = rules.len();
         self.shared.rules.store(Arc::new(rules));
@@ -172,6 +174,16 @@ impl Daemon {
             "stopped"
         );
     }
+}
+
+/// The rules in effect: the stored ones, the System folder and the managed files.
+fn compile(config: &Config, store: &Store) -> Result<RuleSet, Error> {
+    let managed = crate::managed::Managed::load(config.default_rules, &config.rules_dir)?;
+    let mut folders = store.folders()?;
+    folders.extend(managed.folders);
+    let mut rules = store.rules()?;
+    rules.extend(managed.rules);
+    Ok(RuleSet::compile(&folders, &rules)?)
 }
 
 fn install(table: &Table) -> std::io::Result<()> {

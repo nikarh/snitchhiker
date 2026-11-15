@@ -76,7 +76,12 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             let config = Config::load(Path::new(&config_path))?;
             let mut store = Store::open(&config.database)?;
             match args.subcommand()?.as_deref() {
-                None | Some("list" | "ls") => list_rules(&store),
+                None | Some("list" | "ls") => {
+                    let managed =
+                        crate::managed::Managed::load(config.default_rules, &config.rules_dir)
+                            .map_err(|e| Error::Usage(e.to_string()))?;
+                    list_rules(&store, &managed)
+                }
                 Some("add") => {
                     let rule = rule_from_args(&mut args)?;
                     reject_rest(args)?;
@@ -87,6 +92,12 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 Some("rm" | "delete") => {
                     let id: u64 = args.free_from_str()?;
                     reject_rest(args)?;
+                    if id & crate::managed::MANAGED_ID != 0 {
+                        return Err(Error::Usage(format!(
+                            "rule {id} is a default or managed rule: it is changed in its file (or switched off with \
+                             default_rules = false)"
+                        )));
+                    }
                     if store.delete_rule(id)? {
                         reload();
                         out(&format!("deleted rule {id}\n"))
@@ -235,16 +246,25 @@ fn port_range(text: &str) -> Option<(u16, u16)> {
     }
 }
 
-fn list_rules(store: &Store) -> Result<(), Error> {
+fn list_rules(store: &Store, managed: &crate::managed::Managed) -> Result<(), Error> {
     let mut text = String::new();
-    for rule in store.rules()? {
+    for rule in store.rules()?.iter().chain(&managed.rules) {
         let _ = writeln!(
             text,
-            "{:>5}  {:<7} {:<8} {}{}  {}",
-            rule.id,
+            "{:>5}  {:<7} {:<8} {}{}{}  {}",
+            if rule.id & crate::managed::MANAGED_ID != 0 {
+                "-".to_owned()
+            } else {
+                rule.id.to_string()
+            },
             format!("{:?}", rule.action).to_lowercase(),
             format!("{:?}", rule.tier).to_lowercase(),
             if rule.enabled { "" } else { "(disabled) " },
+            if rule.id & crate::managed::MANAGED_ID != 0 {
+                "(locked) "
+            } else {
+                ""
+            },
             rule.name,
             serde_json::to_string(&rule.conditions).unwrap_or_default(),
         );

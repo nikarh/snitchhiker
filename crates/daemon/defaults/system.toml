@@ -1,0 +1,14 @@
+# Snitchhiker's default rules: the System folder. Locked (they can't be edited) but can be switched off with
+# `default_rules = false` in daemon.toml. They are in the fallback tier, so any other rule that matches decides
+# instead.
+
+[folder]
+name = "System"
+
+[[rule]]
+name = "Loopback"
+notes = "Local services on this machine, as OpenSnitch allows by default."
+action = "allow"
+tier = "fallback"
+net = ["loopback"]
+context = "any"

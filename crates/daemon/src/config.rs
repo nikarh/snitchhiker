@@ -44,6 +44,10 @@ pub struct Config {
     /// so rules can name hosts.
     pub learn_dns: bool,
     pub database: PathBuf,
+    /// The built-in System folder (loopback and the like).
+    pub default_rules: bool,
+    /// Rule files root keeps, read-only for clients (provisioning).
+    pub rules_dir: PathBuf,
     /// How long connection history is kept.
     pub retention_days: u32,
 }
@@ -58,6 +62,8 @@ impl Default for Config {
             queue: 0,
             learn_dns: true,
             database: PathBuf::from("/var/lib/snitchhiker/state.db"),
+            default_rules: true,
+            rules_dir: PathBuf::from("/etc/snitchhiker/rules.d"),
             retention_days: 30,
         }
     }

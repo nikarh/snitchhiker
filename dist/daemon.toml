@@ -20,5 +20,13 @@ fail = "closed"
 # Learn the names of addresses from the DNS answers processes receive, so rules can name hosts.
 #learn_dns = true
 
+# The built-in System folder: loopback allowed, as OpenSnitch does by default. Its rules are in the fallback tier, so
+# any other matching rule decides instead.
+#default_rules = true
+
+# Rule files root keeps (*.toml, the format of `snitchhiker rules export`): read at start and on reload, shown to
+# clients but locked. For a fleet's baseline from provisioning.
+#rules_dir = "/etc/snitchhiker/rules.d"
+
 #database = "/var/lib/snitchhiker/state.db"
 #retention_days = 30
