@@ -106,6 +106,8 @@ pub struct Shared {
     pub blocked: crate::agents::Ring,
     /// Agents with session rules or proposals waiting: when one ends, so do they.
     pub agents: crate::agents::Watch,
+    /// Who is notified of prompts.
+    pub router: crate::router::Router,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -186,6 +188,10 @@ impl Daemon {
             blocked: crate::agents::Ring::default(),
             agents: crate::agents::Watch::new()?,
             proposals_changed: (Mutex::new(0), std::sync::Condvar::new()),
+            router: crate::router::Router::new(
+                config.prompt_routing,
+                Duration::from_secs(config.escalate_after_secs),
+            ),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -231,11 +237,31 @@ impl Daemon {
             remote: crate::remote::Remote::default(),
             approvals: crate::approvals::Approvals::default(),
         });
-        daemon.spawn_prompt_timeouts()?;
-        daemon.spawn_table_watch()?;
-        daemon.spawn_agent_watch()?;
-        daemon.watch_agents(agents);
+        daemon.spawn_watches(agents)?;
         Ok(daemon)
+    }
+
+    /// The threads that wait for something: prompts timing out, the tables, agents ending, prompts to escalate.
+    fn spawn_watches(self: &Arc<Self>, agents: HashSet<ProcessRef>) -> std::io::Result<()> {
+        self.spawn_prompt_timeouts()?;
+        self.spawn_table_watch()?;
+        self.spawn_agent_watch()?;
+        self.watch_agents(agents);
+        crate::router::Router::spawn(&self.shared)?;
+        self.muted_devices_changed();
+        Ok(())
+    }
+
+    /// Tells the router which devices are muted, from the store.
+    pub fn muted_devices_changed(&self) {
+        let devices = self.store().devices();
+        match devices {
+            Ok(devices) => self
+                .shared
+                .router
+                .set_muted(devices.into_iter().filter(|d| d.muted).map(|d| d.id)),
+            Err(error) => error!(%error, "reading the paired devices"),
+        }
     }
 
     /// Announces a proposal made or changed: to subscribers, and to requests waiting for a change.
@@ -1056,6 +1082,11 @@ fn decide(
         destination_port: headers.destination_port,
     };
     let owner = shared.attribution.owner(&key);
+    // The daemon's own traffic (its remote endpoint: the relay, devices) is never decided, as marked packets aren't
+    // queued: its sockets come from a library that can't mark them, but the kernel names their process.
+    if owner.is_some_and(|o| o.pid == std::process::id()) {
+        return (Some(Verdict::Accept), None);
+    }
     let process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
     let now = now_ms();
     // The user as the kernel recorded it when the socket was opened (the queue's uid is the socket's owner, for
@@ -1212,11 +1243,8 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
     });
     match opened {
         Hold::Opened(prompt) => {
-            let id = prompt.id;
-            shared
-                .hub
-                .publish(v1::Topic::Prompts, &v1::notice::Body::Prompt(prompt));
-            id
+            shared.router.opened(&shared.hub, &prompt);
+            prompt.id
         }
         Hold::Joined(id) => id,
     }
