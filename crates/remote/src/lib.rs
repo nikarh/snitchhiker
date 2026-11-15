@@ -65,6 +65,18 @@ impl Key {
         }
     }
 
+    /// A key from its 32 bytes (as stored elsewhere: an app's keystore).
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8; 32]) -> Self {
+        Self(SecretKey::from_bytes(bytes))
+    }
+
+    /// The key's 32 bytes, to store it elsewhere.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.0.to_bytes()
+    }
+
     /// The public id others know it by.
     #[must_use]
     pub fn id(&self) -> String {
@@ -161,9 +173,18 @@ pub struct Options {
     pub lan: bool,
 }
 
+/// How often an idle connection says it is alive: a node and its devices stay connected for hours with nothing to
+/// say, and a connection silent for longer than QUIC's idle timeout is dropped (by it, or by a NAT in between).
+const KEEP_ALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
 fn builder(key: &Key, options: &Options) -> io::Result<iroh::endpoint::Builder> {
     let mut builder = Endpoint::builder(presets::Minimal)
         .secret_key(key.0.clone())
+        .transport_config(
+            iroh::endpoint::QuicTransportConfig::builder()
+                .keep_alive_interval(KEEP_ALIVE)
+                .build(),
+        )
         .relay_mode(relay_mode(&options.relays)?)
         .portmapper_config(if options.port_mapping {
             iroh::endpoint::PortmapperConfig::default()
@@ -275,16 +296,46 @@ pub struct Connected {
     pub keep: Box<dyn Send>,
 }
 
+/// A device's endpoint, shared by all its connections: one key may be on one endpoint only (a relay routes by key, so
+/// a second endpoint with the same key takes the first one's traffic). Each node gets one QUIC connection, and each
+/// protocol connection a stream of its own on it.
 struct Dialer {
     endpoint: Endpoint,
     runtime: tokio::runtime::Runtime,
+    connections:
+        std::sync::Mutex<std::collections::HashMap<(String, Vec<u8>), iroh::endpoint::Connection>>,
 }
 
-impl Drop for Dialer {
-    fn drop(&mut self) {
-        let endpoint = self.endpoint.clone();
-        self.runtime.block_on(async move { endpoint.close().await });
+/// A dialer's identity: the key and the options (relays, LAN lookup).
+type DialerId = ([u8; 32], Vec<String>, bool);
+type Dialers = std::sync::Mutex<std::collections::HashMap<DialerId, Arc<Dialer>>>;
+
+/// The dialers of this process.
+fn dialers() -> &'static Dialers {
+    static DIALERS: std::sync::OnceLock<Dialers> = std::sync::OnceLock::new();
+    DIALERS.get_or_init(std::sync::Mutex::default)
+}
+
+fn dialer(key: &Key, options: &Options) -> io::Result<Arc<Dialer>> {
+    let mut relays = options.relays.clone();
+    relays.sort();
+    let id = (key.to_bytes(), relays, options.lan);
+    let mut all = dialers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(dialer) = all.get(&id) {
+        return Ok(Arc::clone(dialer));
     }
+    let runtime = runtime("remote-client")?;
+    let endpoint =
+        runtime.block_on(async { builder(key, options)?.bind().await.map_err(other) })?;
+    let dialer = Arc::new(Dialer {
+        endpoint,
+        runtime,
+        connections: std::sync::Mutex::default(),
+    });
+    all.insert(id, Arc::clone(&dialer));
+    Ok(dialer)
 }
 
 /// Connects to `node` as `key`, for `alpn`; one stream. Without relays of its own in `options`, the client uses the
@@ -295,32 +346,63 @@ pub fn connect(
     options: &Options,
     alpn: &[u8],
 ) -> io::Result<Connected> {
-    let runtime = runtime("remote-client")?;
     let addr = node.endpoint_addr()?;
     let mut options = options.clone();
     if options.relays.is_empty() {
         options.relays.clone_from(&node.relays);
     }
-    let (endpoint, stream) = runtime.block_on(async {
-        let endpoint = builder(key, &options)?.bind().await.map_err(other)?;
-        let connection = tokio::time::timeout(
-            std::time::Duration::from_secs(20),
-            endpoint.connect(addr, alpn),
-        )
-        .await
-        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the node didn't answer"))?
-        .map_err(other)?;
-        let (send, receive) = connection.open_bi().await.map_err(other)?;
+    let dialer = dialer(key, &options)?;
+    let shared = Arc::clone(&dialer);
+    let stream = dialer.runtime.block_on(async move {
+        let id = (node.id.clone(), alpn.to_vec());
+        let open = shared
+            .connections
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&id)
+            .filter(|c| c.close_reason().is_none())
+            .cloned();
+        let connection = if let Some(connection) = open {
+            connection
+        } else {
+            let connection = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                shared.endpoint.connect(addr, alpn),
+            )
+            .await
+            .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "the node didn't answer"))?
+            .map_err(other)?;
+            shared
+                .connections
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(id.clone(), connection.clone());
+            connection
+        };
+        // A connection that died unnoticed opens no stream: it is forgotten, for the next attempt to dial afresh.
+        let opened =
+            tokio::time::timeout(std::time::Duration::from_secs(10), connection.open_bi()).await;
+        let Ok(Ok((send, receive))) = opened else {
+            connection.close(0_u32.into(), b"unresponsive");
+            shared
+                .connections
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .remove(&id);
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the node didn't answer",
+            ));
+        };
         let (near, far) = UnixStream::pair()?;
         tokio::spawn(async move {
             let _ = bridge(send, receive, near).await;
-            drop(connection);
         });
-        Ok::<_, io::Error>((endpoint, far))
+        Ok::<_, io::Error>(far)
     })?;
     Ok(Connected {
         stream,
-        keep: Box::new(Dialer { endpoint, runtime }),
+        keep: Box::new(dialer),
     })
 }
 
