@@ -296,7 +296,7 @@ impl Render for EventsPage {
 }
 
 /// A user's uid, from this machine's `/etc/passwd`.
-fn uid_of(name: &str) -> Option<u32> {
+pub fn uid_of(name: &str) -> Option<u32> {
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
     passwd.lines().find_map(|line| {
         let mut fields = line.split(':');

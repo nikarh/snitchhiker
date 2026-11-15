@@ -5,6 +5,7 @@ mod app;
 mod backend;
 mod csv;
 mod env;
+mod history;
 mod model;
 mod notify;
 mod prefs;

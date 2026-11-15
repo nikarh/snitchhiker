@@ -227,7 +227,7 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io:
             minor: MINOR,
             daemon_version: daemon.version().to_owned(),
             node_name: hostname(),
-            node_epoch: 0,
+            node_epoch: daemon.store().epoch().unwrap_or(0),
             capabilities: vec!["prompts".to_owned()],
             role: role.into(),
         })),
@@ -1307,6 +1307,14 @@ fn reload(daemon: &Daemon) -> v1::response::Result {
 fn status(daemon: &Daemon) -> v1::Status {
     let config: &Config = &daemon.shared.config;
     let policy = daemon.shared.policy.load();
+    // One lock of the store for both: two in one expression would deadlock (the first is held to its end).
+    let (oldest_seq, open_alerts) = {
+        let store = daemon.store();
+        (
+            store.oldest_seq().ok().flatten().unwrap_or(0),
+            store.open_alerts().unwrap_or(0),
+        )
+    };
     v1::Status {
         daemon_version: daemon.version().to_owned(),
         mode: crate::policy::mode(policy.mode).into(),
@@ -1315,7 +1323,8 @@ fn status(daemon: &Daemon) -> v1::Status {
         decided: daemon.shared.decided.load(Ordering::Relaxed),
         dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),
         rules: u32::try_from(daemon.shared.rules.load().len()).unwrap_or(u32::MAX),
-        open_alerts: daemon.store().open_alerts().unwrap_or(0),
+        oldest_seq,
+        open_alerts,
         pending_prompts: u32::try_from(daemon.shared.broker.count()).unwrap_or(u32::MAX),
         clients: u32::try_from(connected()).unwrap_or(u32::MAX),
     }

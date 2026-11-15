@@ -13,7 +13,13 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+# The local cache of a node's history (SQLite), for apps.
+cache = ["dep:rusqlite", "dep:snitchhiker-core"]
+
 [dependencies]
 nix = { version = "0.32.0", default-features = false, features = ["socket"] }
+rusqlite = { version = "0.42.0", features = ["bundled"], optional = true }
+snitchhiker-core = { version = "0.1.0", path = "../core", optional = true }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
 thiserror = "2.0.21"

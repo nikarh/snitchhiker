@@ -34,6 +34,7 @@ impl Settings {
     pub fn refresh(&self) {
         let _ = self.requests.send(Request::Policy);
         let _ = self.requests.send(Request::TrustedClients);
+        let _ = self.requests.send(Request::CacheSize);
     }
 }
 
@@ -342,6 +343,11 @@ impl Render for Settings {
             .child(format!("Snitchhiker desktop {}", env!("CARGO_PKG_VERSION")))
             .children(model.node.as_ref().map(|node| {
                 format!("Node {}, daemon {}", node.node_name, node.daemon_version)
+            }))
+            .child(div().text_color(muted).child(match model.cache_size {
+                Some(size) => format!("History kept here: {size} connections"),
+                None => "History isn't kept here (no cache directory: the app wasn't installed by its package)."
+                    .to_owned(),
             }));
         div()
             .id("settings")

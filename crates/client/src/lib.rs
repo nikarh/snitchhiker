@@ -5,6 +5,9 @@
 //! change, and the process serving it runs as root. A process that bound a socket somewhere else, or got one into a
 //! directory it may write, can't pose as the node to answer the client's requests or feed it prompts.
 
+#[cfg(feature = "cache")]
+pub mod cache;
+
 use std::collections::{HashMap, VecDeque};
 use std::io::{BufReader, BufWriter, Write as _};
 use std::os::unix::fs::MetadataExt as _;

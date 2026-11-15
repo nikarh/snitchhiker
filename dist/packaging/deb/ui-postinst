@@ -7,4 +7,6 @@ if [ "$1" = configure ]; then
   chgrp snitchhiker-ui /usr/bin/snitchhiker-ui
   chmod 2755 /usr/bin/snitchhiker-ui
   snitchhikerd trust-client /usr/bin/snitchhiker-ui >/dev/null
+  # The app's caches of history: only the app (setgid to the group) can enter this directory.
+  install -d -o root -g snitchhiker-ui -m 0770 /var/cache/snitchhiker-ui
 fi

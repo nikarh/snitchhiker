@@ -66,13 +66,17 @@ Code running as you controls your display: no app can fully defend its window ag
 
 Prompt buttons arm only after a moment and only in the focused window, so a click or key meant for another window can't answer a prompt that just appeared. Dangerous actions need step-up whatever the session.
 
+## History the app keeps
+
+The desktop app keeps the history it was sent, so nothing is fetched twice and a query over what it holds runs without the node. Connection history is sensitive, so the cache is kept where only the app can reach it: `/var/cache/snitchhiker-ui` belongs to root and the app's group (`0770`), and holds a directory per user (`0700`). The app enters it through its group; the user's other programs can't, though the files inside are the user's. The cache is of one node's database: when the node's is recreated, the app starts a new one. Events the node no longer keeps are dropped from it too, and it holds two million connections at most. Removing the app's package removes the caches.
+
 ## Facts a process can't fake
 
 A rule matches on what the kernel says about a connection, not on what the process says about itself:
 
 - **The program** is the executable the kernel resolved for the process (`/proc/<pid>/exe`), read when the connection is decided and checked against the process's start time. A process renaming itself, or exec'd with another `argv[0]`, is still its executable.
 - **The user** is the real user id the kernel recorded when the socket was opened.
-- **The context** compares the process's namespaces with the host's. A process in a private mount namespace, where an allowed path can be bind-mounted over with anything, is in a container, and host rules don't apply to it.
+- **The context** compares the process's namespaces with the host's. A user can only make a mount namespace (where an allowed path can be bind-mounted over with anything) inside a user namespace of their own; a process in a user or process namespace that isn't the host's is in a container, and host rules don't apply to it. Mount namespaces made with privileges, as systemd makes for the services it sandboxes, are the host's.
 - **Host names** are learned only from answers to queries the process (or the local resolver) was seen sending ([Names](/internals/how-it-works/#names)).
 
 ## The escape tests
@@ -89,6 +93,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `escape/spoofed-process-name` | passing for an allowed program by `argv[0]` and process name |
 | `escape/non-dumpable-process-is-not-root` | passing for root by being non-dumpable |
 | `escape/allowed-path-in-a-private-mount-namespace` | mounting another program over an allowed path |
+| `escape/sandboxed-service-is-the-host` | (the other way) a service in a mount namespace root made gets the host's rules |
 | `names/unsolicited-answers-teach-nothing` | teaching the daemon a name with an unsolicited DNS answer |
 | `local-auth/plain-process-cannot-connect` | connecting to the client socket |
 | `local-auth/open-socket-still-refuses-plain-process` | the same, with the socket's mode opened up |

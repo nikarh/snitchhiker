@@ -9,6 +9,8 @@ use std::time::Duration;
 
 use snitchhiker_client::{Client, Error as ClientError};
 use snitchhiker_proto::columns::{EventBlock, EventRow};
+
+use crate::history::History;
 use snitchhiker_proto::v1;
 
 /// What the app asks of the node.
@@ -75,6 +77,8 @@ pub enum Request {
         id: u64,
     },
     TrustedClients,
+    /// How many events the cache holds.
+    CacheSize,
     /// The lint report, with rules unused for `days`.
     Lint {
         days: u32,
@@ -121,6 +125,8 @@ pub enum Update {
     AlertsChanged(u32),
     AlertRules(Vec<v1::AlertRule>),
     TrustedClients(Vec<v1::TrustedClient>),
+    /// Events the cache holds (`None`: no cache).
+    CacheSize(Option<u64>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -146,18 +152,20 @@ pub fn start(
 ) {
     let (updates, received) = async_channel::unbounded();
     let (requests, incoming) = mpsc::channel();
+    let history = History::default();
     {
         let socket = socket.clone();
         let updates = updates.clone();
+        let history = history.clone();
         let _ = thread::Builder::new()
             .name("node-requests".to_owned())
-            .spawn(move || serve_requests(&socket, &incoming, &updates));
+            .spawn(move || serve_requests(&socket, &incoming, &updates, &history));
     }
     let _ = thread::Builder::new()
         .name("node-subscriptions".to_owned())
         .spawn({
             let updates = updates.clone();
-            move || listen(&socket, &updates)
+            move || listen(&socket, &updates, &history)
         });
     (requests, received, updates)
 }
@@ -184,15 +192,58 @@ fn block(block: &v1::EventBlock) -> Result<Rows, String> {
     Ok((rows, strings))
 }
 
+/// What the cache can answer without the node: a page of history it holds, and its own size.
+fn from_history(history: &History, request: &Request) -> Option<Update> {
+    match request {
+        Request::CacheSize => Some(Update::CacheSize(history.len())),
+        Request::Events { before, query } if *before != 0 => {
+            let page = history.page(*before, PAGE as usize, query)?;
+            Some(Update::Events {
+                rows: page.rows,
+                strings: page.strings,
+                live: false,
+                scanned_from: page.scanned_from,
+                query: query.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Keeps what the node answered that the cache holds.
+fn keep(history: &History, request: &Request, update: &Update) {
+    match (request, update) {
+        (
+            Request::Events { before, query },
+            Update::Events {
+                rows,
+                strings,
+                scanned_from,
+                ..
+            },
+        ) => history.add_page(rows, strings, *before, *scanned_from, query),
+        (_, Update::Status(status)) => history.clamp(status.oldest_seq),
+        _ => {}
+    }
+}
+
 fn serve_requests(
     socket: &Path,
     incoming: &mpsc::Receiver<Request>,
     updates: &async_channel::Sender<Update>,
+    history: &History,
 ) {
     let mut client: Option<Client> = None;
     while let Ok(request) = incoming.recv() {
+        if let Some(update) = from_history(history, &request) {
+            let _ = updates.send_blocking(update);
+            continue;
+        }
         if client.is_none() {
             client = connect(socket).ok();
+            if let Some(connected) = &client {
+                history.connected(connected.welcome().node_epoch);
+            }
         }
         let Some(connected) = client.as_mut() else {
             let _ = updates.send_blocking(Update::Failed("the node isn't reachable".to_owned()));
@@ -200,6 +251,7 @@ fn serve_requests(
         };
         match perform(connected, &request) {
             Ok(Some(update)) => {
+                keep(history, &request, &update);
                 let _ = updates.send_blocking(update);
             }
             Ok(None) => {}
@@ -219,7 +271,8 @@ fn serve_requests(
 fn method(request: &Request) -> v1::request::Method {
     use v1::request::Method;
     match request {
-        Request::Status => Method::GetStatus(v1::GetStatus {}),
+        // The cache's size is answered by the cache (`from_history`) and never reaches the node.
+        Request::Status | Request::CacheSize => Method::GetStatus(v1::GetStatus {}),
         Request::Rules => Method::ListRules(v1::ListRules {}),
         Request::Events { before, query } => Method::ListEvents(v1::ListEvents {
             before: *before,
@@ -333,12 +386,12 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
 }
 
 /// The subscriptions: prompts, rules and live events, resumed after every reconnect.
-fn listen(socket: &Path, updates: &async_channel::Sender<Update>) {
+fn listen(socket: &Path, updates: &async_channel::Sender<Update>, history: &History) {
     let mut last_seq: Option<i64> = None;
     let mut attempt = 0;
     loop {
         let mut connected = false;
-        let reason = match subscribe(socket, updates, &mut last_seq, &mut connected) {
+        let reason = match subscribe(socket, updates, history, &mut last_seq, &mut connected) {
             Ok(()) => return,
             Err(reason) => reason,
         };
@@ -367,11 +420,13 @@ fn listen(socket: &Path, updates: &async_channel::Sender<Update>) {
 fn subscribe(
     socket: &Path,
     updates: &async_channel::Sender<Update>,
+    history: &History,
     last_seq: &mut Option<i64>,
     connected: &mut bool,
 ) -> Result<(), String> {
     let mut client = connect(socket).map_err(|e| e.to_string())?;
     *connected = true;
+    history.connected(client.welcome().node_epoch);
     let send = |update| updates.send_blocking(update).map_err(|_| ());
     if send(Update::Connected(client.welcome().clone())).is_err() {
         return Ok(());
@@ -392,6 +447,8 @@ fn subscribe(
             Some(v1::notice::Body::AlertsChanged(changed)) => Update::AlertsChanged(changed.open),
             Some(v1::notice::Body::EventBlock(event_block)) => {
                 let (rows, strings) = block(&event_block)?;
+                // Every event after the last one seen comes, in order: the cache holds that range whole.
+                history.add_live(&rows, &strings, *last_seq);
                 if let Some(newest) = rows.iter().map(|r| r.seq).max() {
                     *last_seq = Some(last_seq.map_or(newest, |seq| seq.max(newest)));
                 }

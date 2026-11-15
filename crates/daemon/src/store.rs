@@ -180,6 +180,14 @@ CREATE TABLE alert_rules (
     rule TEXT NOT NULL
 );
 ",
+    // The database's epoch: random, made with it, so clients drop what they cached of another one.
+    r"
+CREATE TABLE node (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    epoch INTEGER NOT NULL
+);
+INSERT INTO node (id, epoch) VALUES (1, abs(random()));
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -254,6 +262,7 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
     ("policy.get", "SELECT overrides FROM policy WHERE id = 1"),
+    ("node.epoch", "SELECT epoch FROM node WHERE id = 1"),
     ("system.get", "SELECT firewall FROM system_firewall WHERE id = 1"),
     (
         "alerts.insert",
@@ -1675,6 +1684,23 @@ impl Store {
             .prepare_cached(sql("alert_rules.delete")?)?
             .execute(params![db_id(id)])?
             > 0)
+    }
+
+    /// The database's epoch: changes when the database is made anew.
+    pub fn epoch(&self) -> Result<u64, Error> {
+        let epoch: i64 = self
+            .connection
+            .prepare_cached(sql("node.epoch")?)?
+            .query_row([], |row| row.get(0))?;
+        Ok(id_of(epoch))
+    }
+
+    /// The oldest event kept, if any.
+    pub fn oldest_seq(&self) -> Result<Option<i64>, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("events.span")?)?
+            .query_row([], |row| row.get::<_, Option<i64>>(0))?)
     }
 
     /// For each rule: when it was last changed, and when it last decided a connection.

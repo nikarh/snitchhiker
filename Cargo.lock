@@ -6473,6 +6473,8 @@ name = "snitchhiker-client"
 version = "0.1.0"
 dependencies = [
  "nix",
+ "rusqlite",
+ "snitchhiker-core",
  "snitchhiker-proto",
  "thiserror 2.0.21",
 ]
@@ -6525,6 +6527,7 @@ version = "0.1.0"
 dependencies = [
  "hickory-proto",
  "snitchhiker-client",
+ "snitchhiker-core",
  "snitchhiker-daemon",
  "snitchhiker-ebpf",
  "snitchhiker-netfilter",

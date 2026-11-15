@@ -189,6 +189,8 @@ message Status {
   uint32 clients = 9;
   // Alerts not acknowledged yet.
   uint32 open_alerts = 10;
+  // The oldest event the node keeps (0: none): clients forget what they cached of older ones.
+  int64 oldest_seq = 11;
 }
 
 enum Mode {

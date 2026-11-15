@@ -258,6 +258,8 @@ pub struct Model {
     pub open_alerts: u32,
     pub alert_rules: Vec<v1::AlertRule>,
     pub trusted: Vec<v1::TrustedClient>,
+    /// Events the app's cache holds (`None`: no cache).
+    pub cache_size: Option<u64>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -403,6 +405,10 @@ impl Model {
             }
             Update::Policy(policy) => {
                 self.policy = Some(policy);
+                Changed::Status
+            }
+            Update::CacheSize(size) => {
+                self.cache_size = size;
                 Changed::Status
             }
             Update::TrustedClients(clients) => {
