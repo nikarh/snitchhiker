@@ -114,6 +114,7 @@ impl Subscription {
                     let block = v1::EventBlock {
                         columns: columns.clone(),
                         dictionary: Some(dictionary),
+                        scanned_from: 0,
                     };
                     notice(id, v1::notice::Body::EventBlock(block), missed)
                 })

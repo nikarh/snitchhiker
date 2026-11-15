@@ -210,6 +210,21 @@ pub fn home_of(uid: u32) -> Option<String> {
     home_in(&passwd, uid)
 }
 
+/// The uid of the user named `name`, from `/etc/passwd`.
+#[must_use]
+pub fn uid_of(name: &str) -> Option<u32> {
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    uid_in(&passwd, name)
+}
+
+fn uid_in(passwd: &str, name: &str) -> Option<u32> {
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        (fields.next()? == name).then_some(())?;
+        fields.nth(1)?.parse().ok()
+    })
+}
+
 fn home_in(passwd: &str, uid: u32) -> Option<String> {
     passwd.lines().find_map(|line| {
         let mut fields = line.split(':');
@@ -230,6 +245,8 @@ mod tests {
         assert_eq!(home_in(passwd, 0).as_deref(), Some("/root"));
         assert_eq!(home_in(passwd, 5), None);
         assert_eq!(home_in(passwd, 42), None);
+        assert_eq!(uid_in(passwd, "ada"), Some(1000));
+        assert_eq!(uid_in(passwd, "nobody"), None);
     }
 
     #[test]

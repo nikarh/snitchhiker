@@ -6496,6 +6496,7 @@ dependencies = [
  "arrayvec",
  "bytes",
  "hickory-proto",
+ "ipnet",
  "nix",
  "pico-args",
  "rusqlite",

@@ -17,7 +17,7 @@ use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
 use crate::views::connections::ConnectionsTable;
 use crate::views::editor;
-use crate::views::events::EventsTable;
+use crate::views::events::{self, EventsPage, EventsTable};
 use crate::views::explain;
 use crate::views::explorer::Explorer;
 use crate::views::history::History;
@@ -41,6 +41,7 @@ pub struct App {
     page: Page,
     prompts: Entity<Prompts>,
     events: Entity<TableState<EventsTable>>,
+    events_page: Entity<EventsPage>,
     rules: Entity<TableState<RulesTable>>,
     history: Entity<History>,
     explorer: Entity<Explorer>,
@@ -82,14 +83,12 @@ impl App {
         Self::explain_on_double_click(&events, window, cx);
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
-        for request in [
-            Request::Status,
-            Request::Rules,
-            Request::Changes,
-            Request::Events { before: 0 },
-        ] {
+        for request in [Request::Status, Request::Rules, Request::Changes] {
             let _ = requests.send(request);
         }
+        events::request_page(&model, &requests, cx);
+        let events_page = cx
+            .new(|cx| EventsPage::new(model.clone(), requests.clone(), events.clone(), window, cx));
         // The backend's updates, folded into the model on the UI thread.
         cx.spawn(async move |this, cx| {
             while let Ok(update) = updates.recv().await {
@@ -118,6 +117,10 @@ impl App {
                         }
                         Changed::Events => {
                             app.events.update(cx, TableState::refresh);
+                            // A query matching little: older history is looked through until a screenful is found.
+                            if app.model.read(cx).events.len() < 100 {
+                                events::request_page(&app.model, &requests, cx);
+                            }
                             // New connections: the live list is listed again while it is shown.
                             if app.page == Page::Connections {
                                 let _ = requests.send(Request::Connections);
@@ -147,6 +150,7 @@ impl App {
             page: Page::Events,
             prompts,
             events,
+            events_page,
             rules,
             history,
             explorer,
@@ -235,7 +239,7 @@ impl Render for App {
             );
         let page: AnyElement = match self.page {
             Page::Prompts => self.prompts.clone().into_any_element(),
-            Page::Events => DataTable::new(&self.events).into_any_element(),
+            Page::Events => self.events_page.clone().into_any_element(),
             Page::Rules => {
                 let model = self.model.clone();
                 let requests = self.requests.clone();

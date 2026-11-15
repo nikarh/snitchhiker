@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
+use snitchhiker_core::query::{self, EventFilter, SqlValue};
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
 use snitchhiker_proto::columns::EventRow;
 
@@ -310,6 +311,11 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
     ),
     // The same pages as rows for columnar blocks: strings stay ids.
+    // Each from the primary key: one row each.
+    (
+        "events.span",
+        "SELECT (SELECT min(seq) FROM events), (SELECT max(seq) FROM events)",
+    ),
     (
         "events.page_rows",
         "SELECT seq, time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule, bytes_out,
@@ -1119,6 +1125,7 @@ impl Store {
              PRAGMA temp_store = MEMORY;
              PRAGMA busy_timeout = 5000;",
         )?;
+        register_query_functions(&connection)?;
         let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         let version = usize::try_from(version).unwrap_or(0);
         for (index, migration) in MIGRATIONS.iter().enumerate().skip(version) {
@@ -1402,6 +1409,50 @@ impl Store {
         let mut rows: Vec<EventRow> = rows.collect::<Result<_, _>>()?;
         rows.reverse();
         Ok(rows)
+    }
+
+    /// The newest events before `before` that `filter` matches, at most `limit`, oldest first as `event_rows` gives
+    /// them, and the oldest sequence number covered (the next page asks for events before it; 0: nothing older). At
+    /// most [`SCAN_WINDOW`] sequence numbers are examined, so a sparse query over a long history answers in pages.
+    pub fn event_rows_matching(
+        &self,
+        before: i64,
+        limit: u32,
+        filter: &EventFilter,
+    ) -> Result<(Vec<EventRow>, i64), Error> {
+        let span: (Option<i64>, Option<i64>) = self
+            .connection
+            .prepare_cached(sql("events.span")?)?
+            .query_row([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        let (Some(oldest), Some(newest)) = span else {
+            return Ok((Vec::new(), 0));
+        };
+        let before = before.min(newest.saturating_add(1));
+        let floor = before.saturating_sub(SCAN_WINDOW).max(oldest);
+        let (condition, values) = filter.sql();
+        let statement_sql = format!(
+            "SELECT e.seq, e.time_ms, e.exe, e.host, e.uid, e.pid, e.protocol, e.address, e.port, e.context, e.action,
+                    e.source, e.rule, e.bytes_out, e.bytes_in
+             FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+             WHERE e.seq < ? AND e.seq >= ? AND {condition} ORDER BY e.seq DESC LIMIT ?"
+        );
+        let mut params: Vec<rusqlite::types::Value> = vec![before.into(), floor.into()];
+        params.extend(values.into_iter().map(|v| match v {
+            SqlValue::Int(i) => rusqlite::types::Value::Integer(i),
+            SqlValue::Text(t) => rusqlite::types::Value::Text(t),
+        }));
+        params.push(i64::from(limit).into());
+        let mut statement = self.connection.prepare_cached(&statement_sql)?;
+        let rows = statement.query_map(rusqlite::params_from_iter(params), event_row)?;
+        let mut rows: Vec<EventRow> = rows.collect::<Result<_, _>>()?;
+        let full = rows.len() >= usize::try_from(limit).unwrap_or(usize::MAX);
+        let scanned_from = match rows.last() {
+            Some(last) if full => last.seq,
+            _ if floor <= oldest => 0,
+            _ => floor,
+        };
+        rows.reverse();
+        Ok((rows, scanned_from))
     }
 
     /// The oldest events after `after` as rows for a columnar block.
@@ -1716,6 +1767,37 @@ fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
         bytes_out: id_of(row.get(13)?),
         bytes_in: id_of(row.get(14)?),
     })
+}
+
+/// Sequence numbers a filtered page of history examines at most.
+pub const SCAN_WINDOW: i64 = 100_000;
+
+/// The query language's matching functions, for the SQL it compiles to: the same code the clients run.
+fn register_query_functions(connection: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
+    connection.create_scalar_function("snitchhiker_glob", 2, flags, |cx| {
+        let pattern: String = cx.get(0)?;
+        let value: Option<String> = cx.get(1)?;
+        Ok(value.is_some_and(|value| query::glob(&pattern, &value)))
+    })?;
+    connection.create_scalar_function("snitchhiker_text", 3, flags, |cx| {
+        let needle: String = cx.get(0)?;
+        let exe: Option<String> = cx.get(1)?;
+        let host: Option<String> = cx.get(2)?;
+        Ok(query::text(
+            &needle,
+            &[exe.as_deref().unwrap_or(""), host.as_deref().unwrap_or("")],
+        ))
+    })?;
+    connection.create_scalar_function("snitchhiker_net", 2, flags, |cx| {
+        let net: String = cx.get(0)?;
+        let address: Vec<u8> = cx.get(1)?;
+        Ok(net
+            .parse::<ipnet::IpNet>()
+            .is_ok_and(|net| query::in_net(&net, address_from(&address))))
+    })?;
+    Ok(())
 }
 
 fn id_of(id: i64) -> u64 {
@@ -2068,6 +2150,215 @@ mod tests {
     }
 
     /// Every statement is an index seek: no scan of a growing table, no temporary sort.
+    /// The query language's two executors, SQL here and in memory in the clients, agree on the same history.
+    #[test]
+    fn queries_match_the_same_events_in_sql_and_in_memory() {
+        let mut seed: u64 = 0x5eed;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % n
+        };
+        let pick = |options: &[&'static str], i: u64| options[usize::try_from(i).unwrap()];
+        let exes = [
+            "/usr/bin/curl",
+            "/usr/bin/firefox",
+            "/opt/App Image/app",
+            "/usr/lib/systemd/systemd-resolved",
+        ];
+        let hosts = [
+            "example.com",
+            "api.example.com",
+            "Mirror.Example.ORG",
+            "cdn.net",
+        ];
+        let addresses = [
+            "198.51.100.7",
+            "10.1.2.3",
+            "192.168.0.10",
+            "2001:db8::1",
+            "::ffff:10.9.8.7",
+        ];
+        let mut events = Vec::new();
+        for seq in 0..600 {
+            let mut e = event(seq, pick(&exes, next(4)), None);
+            e.host = (next(5) != 0).then(|| Arc::from(pick(&hosts, next(4))));
+            e.uid = [0, 1000, 1001][usize::try_from(next(3)).unwrap()];
+            e.port = [53, 80, 443, 8080][usize::try_from(next(4)).unwrap()];
+            e.protocol = if next(3) == 0 { 17 } else { 6 };
+            e.address = pick(&addresses, next(5)).parse().unwrap();
+            e.action =
+                [Action::Allow, Action::Deny, Action::Reject][usize::try_from(next(3)).unwrap()];
+            e.rule = (next(3) != 0).then(|| next(4) + 1);
+            e.context = u8::try_from(next(4)).unwrap();
+            e.time_ms = 1_000_000 + seq * 60_000;
+            events.push(e);
+        }
+        let mut store = Store::in_memory().unwrap();
+        store.record(&events, &mut Vec::new()).unwrap();
+        store
+            .connection()
+            .execute_batch(
+                "UPDATE events SET bytes_out = (seq * 37) % 5000, bytes_in = (seq * 7919) % 3000000",
+            )
+            .unwrap();
+        let stored = store.events(i64::MAX, 10_000).unwrap();
+        assert_eq!(stored.len(), 600);
+        let terms = [
+            "curl",
+            "EXAMPLE",
+            "exe:*/curl",
+            "exe:\"/opt/App Image/*\"",
+            "host:*.example.com",
+            "host:example",
+            "host:none",
+            "ip:10.0.0.0/8",
+            "ip:2001:db8::/32",
+            "ip:198.51.100.7",
+            "port:443",
+            "port:50-90",
+            "port>80",
+            "port<=53",
+            "proto:udp",
+            "user:1000",
+            "user>=1000",
+            "action:deny",
+            "rule:none",
+            "rule:2",
+            "bytes>1M",
+            "sent<100",
+            "received>=2M",
+            "time>1970-01-01T05:00",
+            "time<2000000",
+            "context:vm",
+            "context:host",
+            "a?p",
+        ];
+        let cx = query::Context {
+            now_ms: 0,
+            uid_of: &|_| None,
+        };
+        let mut queries: Vec<String> = terms.iter().map(|t| (*t).to_owned()).collect();
+        for _ in 0..300 {
+            let mut term = |next: &mut dyn FnMut(u64) -> u64| {
+                let t = pick(&terms, next(terms.len() as u64));
+                if next(4) == 0 {
+                    format!("-{t}")
+                } else {
+                    t.to_owned()
+                }
+            };
+            let shape = next(3);
+            let (a, b, c, d) = (
+                term(&mut next),
+                term(&mut next),
+                term(&mut next),
+                term(&mut next),
+            );
+            queries.push(match shape {
+                0 => format!("{a} {b}"),
+                1 => format!("{a} OR {b}"),
+                _ => format!("({a} OR {b}) -({c} {d})"),
+            });
+        }
+        let mut matched_some = 0;
+        for q in &queries {
+            let filter = EventFilter::parse(q, &cx).unwrap();
+            let (rows, scanned_from) = store
+                .event_rows_matching(i64::MAX, 10_000, &filter)
+                .unwrap();
+            assert_eq!(scanned_from, 0, "{q}: the whole history fits one window");
+            let in_sql: Vec<i64> = rows.iter().rev().map(|r| r.seq).collect();
+            let in_memory: Vec<i64> = stored
+                .iter()
+                .filter(|e| {
+                    filter.matches(&query::EventView {
+                        time_ms: e.time_ms,
+                        exe: &e.exe,
+                        host: e.host.as_deref().unwrap_or(""),
+                        address: e.address,
+                        port: e.port,
+                        protocol: e.protocol,
+                        uid: e.uid,
+                        action: action_code(e.action),
+                        rule: e.rule.unwrap_or(0),
+                        context: e.context,
+                        bytes_out: e.bytes_out,
+                        bytes_in: e.bytes_in,
+                    })
+                })
+                .map(|e| e.seq)
+                .collect();
+            assert_eq!(in_sql, in_memory, "{q}");
+            matched_some += usize::from(!in_sql.is_empty() && in_sql.len() < 600);
+        }
+        assert!(
+            matched_some > queries.len() / 2,
+            "the queries should discriminate"
+        );
+    }
+
+    #[test]
+    fn a_sparse_query_pages_through_history_in_windows() {
+        let mut store = Store::in_memory().unwrap();
+        let events: Vec<Event> = (0..10).map(|i| event(i, "/usr/bin/x", None)).collect();
+        store.record(&events, &mut Vec::new()).unwrap();
+        let cx = query::Context {
+            now_ms: 0,
+            uid_of: &|_| None,
+        };
+        let filter = EventFilter::parse("exe:x", &cx).unwrap();
+        // A page full before the window ends continues from its oldest event.
+        let (rows, scanned_from) = store.event_rows_matching(i64::MAX, 3, &filter).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(scanned_from, rows[0].seq);
+        let none = EventFilter::parse("exe:nothing", &cx).unwrap();
+        assert_eq!(
+            store.event_rows_matching(i64::MAX, 3, &none).unwrap(),
+            (Vec::new(), 0)
+        );
+    }
+
+    /// Filtered pages walk the primary key down from `before`: whatever the query, never a table scan or a sort.
+    #[test]
+    fn filtered_pages_walk_the_primary_key() {
+        let store = Store::in_memory().unwrap();
+        let cx = query::Context {
+            now_ms: 0,
+            uid_of: &|_| None,
+        };
+        let filter = EventFilter::parse("(curl OR host:*.x) -port:443 time>5", &cx).unwrap();
+        let (condition, values) = filter.sql();
+        let mut plan = store
+            .connection()
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT e.seq FROM events e CROSS JOIN strings x ON x.id = e.exe
+                 LEFT JOIN strings h ON h.id = e.host WHERE e.seq < ? AND e.seq >= ? AND {condition}
+                 ORDER BY e.seq DESC LIMIT ?"
+            ))
+            .unwrap();
+        let params = values.len() + 3;
+        let details: Vec<String> = plan
+            .query_map(
+                rusqlite::params_from_iter((0..params).map(|_| rusqlite::types::Value::Integer(1))),
+                |row| row.get::<_, String>(3),
+            )
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            details
+                .first()
+                .is_some_and(|d| d.starts_with("SEARCH e USING INTEGER PRIMARY KEY")),
+            "{details:?}"
+        );
+        assert!(
+            !details.iter().any(|d| d.contains("TEMP B-TREE")),
+            "{details:?}"
+        );
+    }
+
     #[test]
     fn every_statement_uses_an_index() {
         let mut store = Store::in_memory().unwrap();
@@ -2100,7 +2391,9 @@ mod tests {
                 .collect::<Result<_, _>>()
                 .unwrap();
             for detail in &details {
+                // A constant row is no table: the frame of scalar subqueries.
                 let scans_growing_table = detail.starts_with("SCAN")
+                    && detail != "SCAN CONSTANT ROW"
                     && !SCANNABLE.iter().any(|t| detail == &format!("SCAN {t}"));
                 assert!(!scans_growing_table, "{name} scans: {details:?}");
                 let sorts_within_range = GROUPS_IN_RANGE

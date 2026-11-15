@@ -54,6 +54,7 @@ pub fn events_resume_from_a_sequence_number() -> Result<(), String> {
             before: 0,
             limit: 100,
             columnar: false,
+            query: String::new(),
         }))
         .map_err(|e| e.to_string())?
     {
@@ -149,6 +150,7 @@ pub fn events_come_as_columnar_blocks() -> Result<(), String> {
             before: 0,
             limit: 100,
             columnar,
+            query: String::new(),
         })
     };
     let plain = match client.call(list(false)).map_err(|e| e.to_string())? {

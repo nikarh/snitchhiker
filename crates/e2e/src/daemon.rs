@@ -175,6 +175,11 @@ pub fn enforces_rules() -> Result<(), String> {
     let other_ok = mallory_connects(other)?;
     thread::sleep(Duration::from_millis(500));
     let events = daemon.cli(&["events", "--limit", "20"])?;
+    let queried = daemon.cli(&[
+        "events",
+        "--query",
+        &format!("port:{allowed} -action:deny exe:*/python3*"),
+    ])?;
     // Explained with the rules as they are now: a broader rule added since matches too, but is outranked.
     daemon.cli(&[
         "rules",
@@ -196,6 +201,14 @@ pub fn enforces_rules() -> Result<(), String> {
     };
     daemon.stop()?;
     check(allowed_ok, "the allowed connection was blocked", &events)?;
+    check(
+        !queried.is_empty()
+            && queried
+                .lines()
+                .all(|l| l.contains(&format!(":{allowed} ")) && l.contains("allow")),
+        "a query over the history doesn't give just the events it matches",
+        &format!("{events}{queried}"),
+    )?;
     let decides = explained.lines().find(|l| l.contains("decides"));
     check(
         decides.is_some_and(|l| l.contains("python to the test port") && l.contains("allow"))

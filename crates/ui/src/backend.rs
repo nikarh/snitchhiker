@@ -16,9 +16,10 @@ use snitchhiker_proto::v1;
 pub enum Request {
     Status,
     Rules,
-    /// A page of history older than `before` (0: the newest).
+    /// A page of history older than `before` (0: the newest), of the events `query` matches.
     Events {
         before: i64,
+        query: String,
     },
     Answer {
         id: u64,
@@ -65,7 +66,9 @@ pub enum Update {
         rows: Vec<EventRow>,
         strings: Vec<(u32, String)>,
         live: bool,
-        more: bool,
+        /// A page's: the oldest seq it covers (0: there is nothing older), and the query it was asked for.
+        scanned_from: i64,
+        query: String,
     },
     RulesChanged,
     /// The history of rules and folders, newest first.
@@ -174,10 +177,11 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
     let result = match request {
         Request::Status => client.call(Method::GetStatus(v1::GetStatus {}))?,
         Request::Rules => client.call(Method::ListRules(v1::ListRules {}))?,
-        Request::Events { before } => client.call(Method::ListEvents(v1::ListEvents {
+        Request::Events { before, query } => client.call(Method::ListEvents(v1::ListEvents {
             before: *before,
             limit: PAGE,
             columnar: true,
+            query: query.clone(),
         }))?,
         Request::Answer {
             id,
@@ -229,12 +233,16 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
                 code: v1::ErrorCode::Invalid,
                 message: e,
             })?;
-            let more = rows.len() >= PAGE as usize;
+            let query = match request {
+                Request::Events { query, .. } => query.clone(),
+                _ => String::new(),
+            };
             Some(Update::Events {
                 rows,
                 strings,
                 live: false,
-                more,
+                scanned_from: event_block.scanned_from,
+                query,
             })
         }
         _ => None,
@@ -305,7 +313,8 @@ fn subscribe(
                     rows,
                     strings,
                     live: true,
-                    more: false,
+                    scanned_from: 0,
+                    query: String::new(),
                 }
             }
             _ => continue,

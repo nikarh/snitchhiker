@@ -91,10 +91,10 @@ snitchhiker undo <change>
 ## `events`
 
 ```text
-snitchhiker events [--limit <n>]
+snitchhiker events [--limit <n>] [--query <query>]
 ```
 
-The newest connections (50 by default): sequence number, action, user, program, destination (the name the program looked up, or the address), port, protocol, and the bytes sent and received so far.
+The newest connections (50 by default): sequence number, action, user, program, destination (the name the program looked up, or the address), port, protocol, and the bytes sent and received so far. With `--query`, only those the [query](/reference/query-language/) matches, looked for among the newest 100 000.
 
 ## `explain`
 

@@ -72,7 +72,8 @@ Commands:
                                   Close a live connection, as a reject does
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
-  events [--limit <n>]            The newest connections
+  events [--limit <n>] [--query <q>]
+                                  The newest connections; with a query, those it matches among the newest 100000
   explain <seq>                   Which rules match a recorded connection now, the deciding one first
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
@@ -179,12 +180,14 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         Some("events") => {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
+            let query: String = args.opt_value_from_str("--query")?.unwrap_or_default();
             reject_rest(args)?;
             let mut client = connect(version)?;
             match client.call(Method::ListEvents(v1::ListEvents {
                 before: 0,
                 limit,
                 columnar: false,
+                query,
             }))? {
                 v1::response::Result::Events(page) => out(&format_events(&page.events)),
                 _ => Err(unexpected()),

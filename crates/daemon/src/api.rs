@@ -25,6 +25,7 @@ use crate::runtime::{AnswerError, Daemon, now_ms};
 use crate::store::{
     AuditEntry, Batch, Dimension, Error as StoreError, HOUR_MS, Store, StringKind, UndoError,
 };
+use snitchhiker_core::query::{self, EventFilter};
 use snitchhiker_core::rule::{Condition, allows_everything};
 use snitchhiker_proto::columns::{self, EventRow};
 
@@ -251,11 +252,16 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io:
         let sent = match handle(daemon, connection, caller, &hello.app, &outbox, request) {
             Reply::Result(result) => outbox.send(response(result)),
             // A block's dictionary is filled in as it is queued: see hub::Outbox.
-            Reply::Block { columns, strings } => outbox
+            Reply::Block {
+                columns,
+                strings,
+                scanned_from,
+            } => outbox
                 .send_block(&strings, true, |dictionary| {
                     response(v1::response::Result::EventBlock(v1::EventBlock {
                         columns,
                         dictionary: Some(dictionary),
+                        scanned_from,
                     }))
                 })
                 .map_err(|_| crate::hub::Closed),
@@ -406,6 +412,7 @@ enum Reply {
     Block {
         columns: bytes::Bytes,
         strings: Vec<(u32, Arc<str>)>,
+        scanned_from: i64,
     },
 }
 
@@ -427,15 +434,49 @@ fn event_block(daemon: &Daemon, list: &v1::ListEvents) -> Reply {
     } else {
         list.before
     };
-    let rows = daemon
-        .store()
-        .event_rows(before, list.limit.clamp(1, 10_000));
+    let limit = list.limit.clamp(1, 10_000);
+    let rows = match event_filter(&list.query) {
+        Err(e) => return Reply::Result(e),
+        Ok(None) => daemon.store().event_rows(before, limit).map(|rows| {
+            // Oldest first: the first row is where the next page starts.
+            let scanned_from = match rows.first() {
+                Some(oldest) if rows.len() >= limit as usize => oldest.seq,
+                _ => 0,
+            };
+            (rows, scanned_from)
+        }),
+        Ok(Some(filter)) => daemon.store().event_rows_matching(before, limit, &filter),
+    };
     match rows
         .map_err(|e| e.to_string())
-        .and_then(|rows| block_of(daemon, &rows))
-    {
-        Ok((columns, strings)) => Reply::Block { columns, strings },
+        .and_then(|(rows, scanned_from)| {
+            block_of(daemon, &rows).map(|(columns, strings)| (columns, strings, scanned_from))
+        }) {
+        Ok((columns, strings, scanned_from)) => Reply::Block {
+            columns,
+            strings,
+            scanned_from,
+        },
         Err(e) => Reply::Result(internal(e)),
+    }
+}
+
+/// A history query compiled for this node (`None` for the empty one), or the error to answer with.
+fn event_filter(query: &str) -> Result<Option<EventFilter>, v1::response::Result> {
+    if query.trim().is_empty() {
+        return Ok(None);
+    }
+    let cx = query::Context {
+        now_ms: crate::runtime::now_ms(),
+        uid_of: &crate::process::uid_of,
+    };
+    match EventFilter::parse(query, &cx) {
+        Ok(filter) if filter.is_all() => Ok(None),
+        Ok(filter) => Ok(Some(filter)),
+        Err(e) => Err(error(
+            v1::ErrorCode::Invalid,
+            format!("query: {} (at {}..{})", e.message, e.span.start, e.span.end),
+        )),
     }
 }
 
@@ -715,10 +756,32 @@ fn list_events(daemon: &Daemon, list: &v1::ListEvents) -> v1::response::Result {
     } else {
         list.before
     };
-    let events = daemon.store().events(before, list.limit.clamp(1, 1000));
+    let limit = list.limit.clamp(1, 1000);
+    let store = daemon.store();
+    let events =
+        match event_filter(&list.query) {
+            Err(e) => return e,
+            Ok(None) => store.events(before, limit).map(|events| {
+                let scanned_from = match events.last() {
+                    Some(oldest) if events.len() >= limit as usize => oldest.seq,
+                    _ => 0,
+                };
+                (events, scanned_from)
+            }),
+            Ok(Some(filter)) => store.event_rows_matching(before, limit, &filter).and_then(
+                |(rows, scanned_from)| {
+                    let mut events = Vec::with_capacity(rows.len());
+                    for row in rows.iter().rev() {
+                        events.extend(store.event(row.seq)?);
+                    }
+                    Ok((events, scanned_from))
+                },
+            ),
+        };
     match events {
-        Ok(events) => v1::response::Result::Events(v1::EventPage {
+        Ok((events, scanned_from)) => v1::response::Result::Events(v1::EventPage {
             events: events.iter().map(event).collect(),
+            scanned_from,
         }),
         Err(e) => internal(e),
     }

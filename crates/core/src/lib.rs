@@ -6,6 +6,7 @@ pub mod engine;
 pub mod generalize;
 pub mod opensnitch;
 pub mod pattern;
+pub mod query;
 pub mod rule;
 pub mod spec;
 pub mod suggest;

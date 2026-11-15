@@ -5,12 +5,17 @@ use std::sync::mpsc;
 
 use chrono::{Local, TimeZone as _};
 use gpui::{
-    App, Context, Entity, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
+    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Window, div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::table::DataTable;
 use gpui_component::table::{Column, TableDelegate, TableState};
 use gpui_component::tag::Tag;
+use gpui_component::v_flex;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex};
+use snitchhiker_core::query::{self, EventFilter};
 use snitchhiker_proto::columns::EventRow;
 use snitchhiker_proto::v1;
 
@@ -33,19 +38,132 @@ const COLUMNS: [(&str, &str, f32); 9] = [
 pub struct EventsTable {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
-    /// The oldest seq a page was asked for, so one isn't asked twice.
-    requested: Option<i64>,
 }
 
 impl EventsTable {
     #[must_use]
     pub fn new(model: Entity<Model>, requests: mpsc::Sender<Request>) -> Self {
+        Self { model, requests }
+    }
+}
+
+/// Asks for the next page of history, if there is one not asked for yet.
+pub fn request_page(model: &Entity<Model>, requests: &mpsc::Sender<Request>, cx: &mut App) {
+    let next = model.update(cx, |model, _| {
+        model
+            .events
+            .next_page()
+            .map(|before| (before, model.events.query.clone()))
+    });
+    if let Some((before, query)) = next {
+        let _ = requests.send(Request::Events { before, query });
+    }
+}
+
+/// The page: a query over the events, and the table of those it matches.
+pub struct EventsPage {
+    model: Entity<Model>,
+    requests: mpsc::Sender<Request>,
+    input: Entity<InputState>,
+    table: Entity<TableState<EventsTable>>,
+    error: Option<String>,
+}
+
+impl EventsPage {
+    pub fn new(
+        model: Entity<Model>,
+        requests: mpsc::Sender<Request>,
+        table: Entity<TableState<EventsTable>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(
+                "Filter, then Enter: curl  host:*.example.com  -action:allow  time>-1h  bytes>10M",
+            )
+        });
+        cx.subscribe_in(&input, window, |page, input, event, _, cx| {
+            let empty = input.read(cx).value().is_empty();
+            match event {
+                InputEvent::PressEnter { .. } => page.apply(cx),
+                // Cleared: back to everything.
+                InputEvent::Change if empty && !page.model.read(cx).events.query.is_empty() => {
+                    page.apply(cx);
+                }
+                _ => {}
+            }
+        })
+        .detach();
         Self {
             model,
             requests,
-            requested: None,
+            input,
+            table,
+            error: None,
         }
     }
+
+    fn apply(&mut self, cx: &mut Context<Self>) {
+        let text = self.input.read(cx).value().trim().to_owned();
+        let filter = if text.is_empty() {
+            None
+        } else {
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+            let query_cx = query::Context {
+                now_ms,
+                uid_of: &uid_of,
+            };
+            match EventFilter::parse(&text, &query_cx) {
+                Ok(filter) => Some(filter),
+                Err(e) => {
+                    self.error = Some(format!(
+                        "{}: {}",
+                        text.get(e.span.clone()).unwrap_or(""),
+                        e.message
+                    ));
+                    cx.notify();
+                    return;
+                }
+            }
+        };
+        self.error = None;
+        self.model
+            .update(cx, |model, _| model.events.set_query(text, filter));
+        self.table.update(cx, TableState::refresh);
+        request_page(&self.model, &self.requests, cx);
+        cx.notify();
+    }
+}
+
+impl Render for EventsPage {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .child(
+                v_flex()
+                    .p_2()
+                    .gap_1()
+                    .child(Input::new(&self.input).cleanable(true))
+                    .children(
+                        self.error.clone().map(|error| {
+                            div().text_sm().text_color(cx.theme().danger).child(error)
+                        }),
+                    ),
+            )
+            .child(DataTable::new(&self.table))
+    }
+}
+
+/// A user's uid, from this machine's `/etc/passwd`.
+fn uid_of(name: &str) -> Option<u32> {
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        (fields.next()? == name).then_some(())?;
+        fields.nth(1)?.parse().ok()
+    })
 }
 
 /// A byte count, as people read it.
@@ -190,14 +308,7 @@ impl TableDelegate for EventsTable {
     }
 
     fn load_more(&mut self, _: &mut Window, cx: &mut Context<TableState<Self>>) {
-        let Some(oldest) = self.model.read(cx).events.oldest() else {
-            return;
-        };
-        if self.requested == Some(oldest) {
-            return;
-        }
-        self.requested = Some(oldest);
-        let _ = self.requests.send(Request::Events { before: oldest });
+        request_page(&self.model, &self.requests, cx);
     }
 }
 

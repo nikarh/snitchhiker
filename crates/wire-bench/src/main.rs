@@ -131,6 +131,7 @@ impl Format for Protobuf {
 
     fn encode(&self, events: &[Event]) -> Vec<u8> {
         v1::EventPage {
+            scanned_from: 0,
             events: events
                 .iter()
                 .map(|e| v1::ConnectionEvent {
@@ -213,6 +214,7 @@ impl Format for Columnar {
         let mut columns = Vec::new();
         let _ = encode_events(&rows, &mut columns);
         v1::EventBlock {
+            scanned_from: 0,
             columns: columns.into(),
             dictionary: Some(v1::Dictionary {
                 ids: (1..=u32::try_from(strings.len()).unwrap_or(0)).collect(),

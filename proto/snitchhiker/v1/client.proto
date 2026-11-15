@@ -391,6 +391,10 @@ message ListEvents {
   uint32 limit = 2;
   // Answer with an EventBlock instead of an EventPage.
   bool columnar = 3;
+  // Only the events this query matches (the query language: see the documentation). A filtered page examines a bounded
+  // range of history, so it can hold fewer than `limit` events, or none, while older ones match: the next page starts
+  // at its `scanned_from`.
+  string query = 4;
 }
 
 // Bulk data: events as a columnar block (its format is in the protocol documentation), and the strings it refers to
@@ -399,6 +403,9 @@ message ListEvents {
 message EventBlock {
   bytes columns = 1;
   Dictionary dictionary = 2;
+  // For a page of history: the oldest sequence number it covers; the next page asks for events before it. 0: there is
+  // nothing older. Unset in subscriptions.
+  int64 scanned_from = 3;
 }
 
 message Dictionary {
@@ -409,6 +416,8 @@ message Dictionary {
 
 message EventPage {
   repeated ConnectionEvent events = 1;
+  // As EventBlock's.
+  int64 scanned_from = 2;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
