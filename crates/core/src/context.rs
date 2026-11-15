@@ -18,6 +18,39 @@ pub struct Container {
 }
 
 impl Container {
+    /// The identity as one line, as the history keeps it: runtime, id, name, image, Compose service and owner,
+    /// tab-separated (none of them holds a tab). Labels are for rules only and aren't kept.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            self.runtime,
+            self.id,
+            self.name,
+            self.image,
+            self.compose.as_deref().unwrap_or_default(),
+            self.owner.map_or_else(String::new, |uid| uid.to_string())
+        )
+    }
+
+    /// The identity a [`Container::key`] wrote.
+    #[must_use]
+    pub fn from_key(key: &str) -> Self {
+        let mut parts = key.split('\t');
+        let mut next = || parts.next().unwrap_or_default().to_owned();
+        let (runtime, id, name, image, compose, owner) =
+            (next(), next(), next(), next(), next(), next());
+        Self {
+            runtime,
+            id,
+            name,
+            image,
+            compose: (!compose.is_empty()).then_some(compose),
+            labels: Vec::new(),
+            owner: owner.parse().ok(),
+        }
+    }
+
     /// How people know it: the Compose service, or the name, with the image.
     #[must_use]
     pub fn label(&self) -> String {
@@ -37,4 +70,30 @@ pub struct Vm {
     pub hypervisor: String,
     pub name: String,
     pub uuid: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_round_trip_without_labels() {
+        let container = Container {
+            runtime: "podman".to_owned(),
+            id: "abc".to_owned(),
+            name: "db".to_owned(),
+            image: "docker.io/library/postgres:17".to_owned(),
+            compose: Some("shop/db".to_owned()),
+            labels: vec![("a".to_owned(), "b".to_owned())],
+            owner: Some(1001),
+        };
+        assert_eq!(
+            Container::from_key(&container.key()),
+            Container {
+                labels: Vec::new(),
+                ..container
+            }
+        );
+        assert_eq!(Container::from_key("docker\tid\tname\t\t\t").compose, None);
+    }
 }

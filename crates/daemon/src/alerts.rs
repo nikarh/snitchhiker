@@ -271,6 +271,7 @@ mod tests {
             source: Source::Rule,
             rule: Some(1),
             cookie: None,
+            container: None,
         }
     }
 
@@ -280,6 +281,7 @@ mod tests {
             exe: 1,
             host: 1,
             new_exe,
+            container: 0,
         }
     }
 

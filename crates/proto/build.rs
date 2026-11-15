@@ -11,6 +11,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // So is a proposal (with its provenance).
         .boxed(".snitchhiker.v1.Response.result.proposal")
         .boxed(".snitchhiker.v1.Notice.body.proposal")
+        // A container's identity is rare and large: boxed, so events and prompts without one stay small.
+        .boxed(".snitchhiker.v1.ConnectionEvent.container")
+        .boxed(".snitchhiker.v1.Prompt.container")
+        .boxed(".snitchhiker.v1.LiveConnection.container")
         .compile_fds(descriptors)?;
     Ok(())
 }

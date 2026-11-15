@@ -150,6 +150,7 @@ impl Format for Protobuf {
                     rule: Some(e.rule),
                     bytes_out: e.bytes_out,
                     bytes_in: e.bytes_in,
+                    container: None,
                 })
                 .collect(),
         }
@@ -209,6 +210,7 @@ impl Format for Columnar {
                 rule: e.rule,
                 bytes_out: e.bytes_out,
                 bytes_in: e.bytes_in,
+                container: 0,
             })
             .collect();
         let mut columns = Vec::new();

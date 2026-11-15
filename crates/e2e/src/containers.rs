@@ -177,3 +177,96 @@ pub fn rules_name_containers_by_name_image_and_compose_service() -> Result<(), S
         &found,
     )
 }
+
+/// A container's prompt names the container, its suggestions hold for its Compose service, and the rule an answer
+/// leaves lets another container of the service through, but not a container of another.
+pub fn a_containers_prompt_names_it_and_its_answer_holds_for_its_service() -> Result<(), String> {
+    use snitchhiker_client::{ADMIN_SOCKET, Client};
+    use snitchhiker_proto::v1;
+    docker()?;
+    let daemon = Running::start(
+        "containers-prompt",
+        "mode = \"enforce\"\nno_match = \"ask\"\nno_client = \"deny\"\non_timeout = \"deny\"\n",
+    )?;
+    let mut client = Client::connect(std::path::Path::new(ADMIN_SOCKET), "e2e", "0")
+        .map_err(|e| format!("connecting: {e}"))?;
+    client
+        .subscribe(v1::Topic::Prompts)
+        .map_err(|e| e.to_string())?;
+    client
+        .set_read_timeout(Some(Duration::from_secs(15)))
+        .map_err(|e| e.to_string())?;
+    let service = [
+        "com.docker.compose.project=shop",
+        "com.docker.compose.service=api",
+    ];
+    let first = thread::spawn(move || wget_in("e2e-api-1", &service, "http://203.0.113.80:8090/"));
+    let prompt = loop {
+        let notice = client
+            .notice()
+            .map_err(|e| format!("waiting for a prompt: {e}"))?;
+        if let Some(v1::notice::Body::Prompt(prompt)) = notice.body
+            && prompt.container.is_some()
+        {
+            break prompt;
+        }
+    };
+    client
+        .call(v1::request::Method::AnswerPrompt(v1::AnswerPrompt {
+            id: prompt.id,
+            action: v1::Action::Allow.into(),
+            duration: v1::Duration::Forever.into(),
+            suggestion: 0,
+            conditions: None,
+            folder: None,
+        }))
+        .map_err(|e| format!("answering: {e}"))?;
+    let _ = first.join();
+    // Another container of the service: the rule decides, without a prompt.
+    wget_in("e2e-api-2", &service, "http://203.0.113.80:8090/");
+    // Nobody listening any more: a container of no service is decided by the policy (deny).
+    drop(client);
+    wget_in("e2e-other", &[], "http://203.0.113.80:8090/");
+    thread::sleep(Duration::from_millis(500));
+    let decided = decisions(&daemon, "203.0.113.80:8090")?;
+    let rules = daemon.cli(&["rules"])?;
+    let found = format!("{prompt:#?}\n{}\n{rules}", decided.join("\n"));
+    let container = prompt.container.as_deref();
+    check(
+        container.is_some_and(|c| {
+            c.runtime == "docker"
+                && c.name == "e2e-api-1"
+                && c.image == IMAGE
+                && c.compose == "shop/api"
+        }),
+        "the prompt doesn't name the container",
+        &found,
+    )?;
+    check(
+        prompt.suggestions.first().is_some_and(|s| {
+            s.label.starts_with("in shop/api: ")
+                && s.conditions
+                    .as_ref()
+                    .and_then(|c| c.container.as_ref())
+                    .is_some_and(|c| c.compose == ["shop/api"])
+        }),
+        "the first suggestion isn't for the container's service",
+        &found,
+    )?;
+    let service: Vec<&String> = decided
+        .iter()
+        .filter(|l| l.contains("[docker shop/api]"))
+        .collect();
+    let other: Vec<&String> = decided
+        .iter()
+        .filter(|l| l.contains("[docker e2e-other]"))
+        .collect();
+    check(
+        service.len() >= 2
+            && service.iter().all(|l| l.contains(" allow "))
+            && !other.is_empty()
+            && other.iter().all(|l| l.contains(" deny ")),
+        "the answer's rule didn't let the service's other container through, or let another container through",
+        &found,
+    )
+}

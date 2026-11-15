@@ -279,3 +279,189 @@ mod tests {
         assert!(v6.iter().any(|s| s.conditions.net == vec!["2001:db8::/64"]));
     }
 }
+
+/// The suggestions for a connection from a container, a VM or another network namespace: the same rules, made to hold
+/// in that context only (a rule made from a container's prompt never applies to the host), and for a container, its
+/// own ladder after the first (plan §5.10): any program in it, any container from its image, this exact container.
+///
+/// A container is named by its most stable identity: its Compose service, else its name, else its image.
+#[must_use]
+pub fn in_context(
+    base: Vec<Suggestion>,
+    context: crate::rule::ContextKind,
+    container: Option<&crate::context::Container>,
+) -> Vec<Suggestion> {
+    use crate::rule::ContextKind;
+    let within = |suggestion: &Suggestion, who: &str, apply: &dyn Fn(&mut Conditions)| {
+        let mut conditions = suggestion.conditions.clone();
+        apply(&mut conditions);
+        Suggestion {
+            label: format!("in {who}: {}", suggestion.label),
+            conditions,
+            broad: suggestion.broad,
+        }
+    };
+    match (context, container) {
+        (ContextKind::Host | ContextKind::Any, _) => base,
+        (ContextKind::Container, Some(c)) => container_suggestions(&base, c)
+            .unwrap_or_else(|| in_context(base, ContextKind::Container, None)),
+        (kind, _) => {
+            let name = match kind {
+                ContextKind::Vm => "a VM",
+                ContextKind::Netns => "another network namespace",
+                _ => "a container",
+            };
+            base.iter()
+                .map(|s| within(s, name, &|conditions| conditions.context = Some(kind)))
+                .collect()
+        }
+    }
+}
+
+/// A container's suggestions (see [`in_context`]); `None` when it has nothing stable to be named by.
+fn container_suggestions(
+    base: &[Suggestion],
+    c: &crate::context::Container,
+) -> Option<Vec<Suggestion>> {
+    use crate::spec::ContainerSpec;
+    let within = |suggestion: &Suggestion, who: &str, scope: &ContainerSpec| Suggestion {
+        label: format!("in {who}: {}", suggestion.label),
+        conditions: Conditions {
+            container: scope.clone(),
+            ..suggestion.conditions.clone()
+        },
+        broad: suggestion.broad,
+    };
+    let (who, scope) = if let Some(compose) = &c.compose {
+        (
+            compose.clone(),
+            ContainerSpec {
+                compose: vec![compose.clone()],
+                ..ContainerSpec::default()
+            },
+        )
+    } else if !c.name.is_empty() {
+        (
+            c.name.clone(),
+            ContainerSpec {
+                name: vec![c.name.clone()],
+                ..ContainerSpec::default()
+            },
+        )
+    } else if !c.image.is_empty() {
+        (
+            c.image.clone(),
+            ContainerSpec {
+                image: vec![c.image.clone()],
+                ..ContainerSpec::default()
+            },
+        )
+    } else {
+        return None;
+    };
+    let mut out: Vec<Suggestion> = base.iter().map(|s| within(s, &who, &scope)).collect();
+    let Some(first) = base.first() else {
+        return Some(out);
+    };
+    let destination = first
+        .label
+        .split_once(" → ")
+        .map_or("", |(_, d)| d)
+        .to_owned();
+    let without_program = |conditions: &Conditions| Conditions {
+        exe: Vec::new(),
+        ..conditions.clone()
+    };
+    let mut ladder = vec![Suggestion {
+        label: format!("any program in {who} → {destination}"),
+        conditions: Conditions {
+            container: scope.clone(),
+            ..without_program(&first.conditions)
+        },
+        broad: false,
+    }];
+    if !c.image.is_empty() && scope.image.is_empty() {
+        ladder.push(Suggestion {
+            label: format!("any container from {} → {destination}", c.image),
+            conditions: Conditions {
+                container: ContainerSpec {
+                    image: vec![c.image.clone()],
+                    ..ContainerSpec::default()
+                },
+                ..without_program(&first.conditions)
+            },
+            broad: true,
+        });
+    }
+    if !c.id.is_empty() {
+        ladder.push(Suggestion {
+            label: format!(
+                "this container ({}) → {destination}",
+                c.id.get(..12).unwrap_or(&c.id)
+            ),
+            conditions: Conditions {
+                container: ContainerSpec {
+                    id: vec![c.id.clone()],
+                    ..ContainerSpec::default()
+                },
+                ..without_program(&first.conditions)
+            },
+            broad: false,
+        });
+    }
+    out.splice(1..1, ladder);
+    Some(out)
+}
+
+#[cfg(test)]
+mod context_tests {
+    use super::*;
+    use crate::rule::ContextKind;
+
+    #[test]
+    fn a_containers_suggestions_hold_in_it_only() {
+        let base = suggestions(
+            "/usr/local/bin/node",
+            None,
+            &[Arc::from("api.example.com")],
+            "198.51.100.7".parse().unwrap(),
+            443,
+            6,
+        );
+        let web = crate::context::Container {
+            runtime: "docker".to_owned(),
+            id: "0133794d05ab40d47d94868c4fb19a4d610f6c97e3ee0c5ee5fcf8aa21c03ea9".to_owned(),
+            name: "shop-web-1".to_owned(),
+            image: "node:22".to_owned(),
+            compose: Some("shop/web".to_owned()),
+            ..crate::context::Container::default()
+        };
+        let all = in_context(base.clone(), ContextKind::Container, Some(&web));
+        assert_eq!(all[0].label, "in shop/web: node → api.example.com:443");
+        assert_eq!(
+            all[0].conditions.container.compose,
+            vec!["shop/web".to_owned()]
+        );
+        assert_eq!(all[0].conditions.exe, base[0].conditions.exe);
+        assert_eq!(
+            all[1].label,
+            "any program in shop/web → api.example.com:443"
+        );
+        assert_eq!(all[1].conditions.exe, Vec::<String>::new());
+        assert_eq!(
+            all[2].conditions.container.image,
+            vec!["node:22".to_owned()]
+        );
+        assert!(all[3].label.starts_with("this container (0133794d05ab)"));
+        // Every one is limited to containers.
+        assert!(all.iter().all(|s| !s.conditions.container.is_empty()));
+        // The host keeps its own.
+        assert_eq!(in_context(base.clone(), ContextKind::Host, None), base);
+        let netns = in_context(base, ContextKind::Netns, None);
+        assert!(
+            netns
+                .iter()
+                .all(|s| s.conditions.context == Some(ContextKind::Netns))
+        );
+    }
+}

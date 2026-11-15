@@ -1,5 +1,7 @@
 # An event block of two rows: one field per line, `name value`, rows separated by a blank line. Addresses are hex.
-# The block (events-2-rows.hex) must parse to these rows, and these rows must encode to it.
+# The block (events-2-rows.hex) must parse to these rows. It is a block of a node from before containers were recorded
+# (no container column): readers must still take it, with no container; encoders now write the column.
+# decode-only
 seq 1000
 time_ms 1763200000000
 exe 3

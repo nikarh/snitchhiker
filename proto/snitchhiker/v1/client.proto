@@ -281,6 +281,21 @@ message Conditions {
   repeated string netns = 14;
 }
 
+// A container, as the node found it: its runtime and id from its cgroup, the rest from the runtime. Empty fields
+// couldn't be read.
+message ContainerIdentity {
+  // `docker`, `podman`, `containerd`, `cri-o`, `nspawn`, `lxc`.
+  string runtime = 1;
+  string id = 2;
+  string name = 3;
+  // The image reference it was created from.
+  string image = 4;
+  // The Compose project and service, `project/service`.
+  string compose = 5;
+  // For a rootless runtime: the user it runs as.
+  optional uint32 owner = 6;
+}
+
 // Patterns as rules write them (exact, `glob:`, `re:`); a list means any of its items.
 message ContainerConditions {
   repeated string name = 1;
@@ -459,6 +474,8 @@ message ConnectionEvent {
   optional uint64 rule = 13;
   uint64 bytes_out = 14;
   uint64 bytes_in = 15;
+  // The container it came from (context CONTEXT_CONTAINER), when it could be named.
+  ContainerIdentity container = 16;
 }
 
 message ListEvents {
@@ -597,6 +614,8 @@ message Prompt {
   // Whether this client should notify about it (the node's prompt routing); every admin client lists it and can
   // answer it either way. A prompt sent again with notify set (escalated) is to be notified about then.
   bool notify = 18;
+  // The container it comes from, when it could be named.
+  ContainerIdentity container = 19;
 }
 
 message Suggestion {
@@ -748,6 +767,7 @@ message LiveConnection {
   uint64 bytes_out = 11;
   uint64 bytes_in = 12;
   Context context = 13;
+  ContainerIdentity container = 14;
 }
 
 message ConnectionList {

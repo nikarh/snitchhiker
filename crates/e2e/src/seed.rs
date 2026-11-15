@@ -186,6 +186,7 @@ pub fn seed(path: &str, count: u64, days: u64) -> Result<(), String> {
             source: Source::Rule,
             rule: None,
             cookie: None,
+            container: None,
         });
         if batch.len() == 5000 {
             store

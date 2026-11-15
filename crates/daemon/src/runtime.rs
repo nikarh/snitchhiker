@@ -547,6 +547,12 @@ impl Daemon {
                         process.as_ref().map_or(ContextKind::Host, |p| p.context),
                     )
                     .into(),
+                    container: owner
+                        .filter(|_| {
+                            process.as_ref().map(|p| p.context) == Some(ContextKind::Container)
+                        })
+                        .and_then(|o| self.shared.contexts.container(o.pid, o.cgroup))
+                        .map(|c| Box::new(convert::container(&c.container))),
                 }
             })
             .collect())
@@ -1077,7 +1083,13 @@ fn context_code(context: ContextKind) -> u8 {
 }
 
 /// The history's record of a connection, before it is decided.
-fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u64>) -> Event {
+fn undecided_event(
+    facts: &Facts<'_>,
+    exe: Arc<str>,
+    pid: u32,
+    cookie: Option<u64>,
+    container: Option<Arc<str>>,
+) -> Event {
     Event {
         time_ms: facts.now_ms,
         exe,
@@ -1092,6 +1104,7 @@ fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u6
         source: Source::Policy,
         rule: None,
         cookie,
+        container,
     }
 }
 
@@ -1213,14 +1226,20 @@ fn decide(
         protocol: headers.protocol,
         context,
         now_ms: now,
-        container: container.as_deref(),
+        container: container.as_deref().map(|c| &c.container),
         vm: None,
         netns: None,
     };
     let exe = process
         .as_ref()
         .map_or_else(|| Arc::clone(&shared.unknown), |p| Arc::clone(&p.exe));
-    let event = undecided_event(&facts, exe, pid, owner.map(|o| o.cookie));
+    let event = undecided_event(
+        &facts,
+        exe,
+        pid,
+        owner.map(|o| o.cookie),
+        container.as_ref().map(|c| Arc::clone(&c.key)),
+    );
     let rules = shared.rules.load();
     let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
         (decision.action, Source::Rule, Some(decision.rule))
@@ -1317,15 +1336,20 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
         destination,
         port: facts.port,
         protocol: facts.protocol,
+        container: event.container.clone(),
     };
     let opened = shared.broker.hold(key, packet, facts.now_ms, || {
-        let suggestions = snitchhiker_core::suggest::suggestions(
-            facts.exe,
-            facts.home,
-            facts.hosts,
-            facts.address,
-            facts.port,
-            facts.protocol,
+        let suggestions = snitchhiker_core::suggest::in_context(
+            snitchhiker_core::suggest::suggestions(
+                facts.exe,
+                facts.home,
+                facts.hosts,
+                facts.address,
+                facts.port,
+                facts.protocol,
+            ),
+            facts.context,
+            facts.container,
         );
         NewPrompt {
             prompt: v1::Prompt {
@@ -1339,6 +1363,7 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
                 port: u32::from(facts.port),
                 protocol: u32::from(facts.protocol),
                 context: convert::context(facts.context).into(),
+                container: facts.container.map(|c| Box::new(convert::container(c))),
                 exe_writable: crate::process::writable_by_others(event.pid),
                 suggestions: suggestions
                     .iter()
@@ -1436,6 +1461,7 @@ fn event_row(event: &Event, recorded: &crate::store::Recorded) -> EventRow {
         rule: event.rule.unwrap_or(0),
         bytes_out: 0,
         bytes_in: 0,
+        container: recorded.container,
     }
 }
 

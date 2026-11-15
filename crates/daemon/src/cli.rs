@@ -1335,10 +1335,18 @@ fn format_events(events: &[v1::ConnectionEvent]) -> String {
             convert::address_from(&event.address).map_or_else(String::new, |a| a.to_string());
         let _ = writeln!(
             text,
-            "{:>8}  {:<6} uid {:<6} {} -> {}:{} proto {} out {} in {}{}",
+            "{:>8}  {:<6} uid {:<6} {}{} -> {}:{} proto {} out {} in {}{}",
             event.seq,
             format!("{:?}", event.action()).to_lowercase(),
             event.uid,
+            event.container.as_deref().map_or_else(String::new, |c| {
+                let name = if c.compose.is_empty() {
+                    &c.name
+                } else {
+                    &c.compose
+                };
+                format!("[{} {name}] ", c.runtime)
+            }),
             if event.exe.is_empty() {
                 "?"
             } else {

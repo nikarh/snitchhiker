@@ -220,6 +220,10 @@ ALTER TABLE devices ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
     r"
 ALTER TABLE devices ADD COLUMN push BLOB;
 ",
+    // The container a connection came from (its identity, interned), if any.
+    r"
+ALTER TABLE events ADD COLUMN container INTEGER REFERENCES strings(id);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -243,6 +247,8 @@ macro_rules! explore {
 pub enum StringKind {
     Exe = 1,
     Host = 2,
+    /// A container's identity, as `snitchhiker_core::context::Container::key` writes it.
+    Container = 3,
 }
 
 /// Why a connection got its verdict.
@@ -278,6 +284,8 @@ pub struct Event {
     pub rule: Option<RuleId>,
     /// The socket's cookie, to attribute its bytes to this event; `None` when the socket isn't known.
     pub cookie: Option<u64>,
+    /// The container it came from, as its identity's key.
+    pub container: Option<std::sync::Arc<str>>,
 }
 
 /// Named statements; the only SQL the daemon runs.
@@ -452,29 +460,32 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     (
         "events.insert",
         "INSERT INTO events (time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule,
-                             cookie)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                             cookie, container)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
     ),
     (
         "events.page",
         "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
-                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in, c.value
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+              LEFT JOIN strings c ON c.id = e.container
          WHERE e.seq < ?1 ORDER BY e.seq DESC LIMIT ?2",
     ),
     (
         "events.one",
         "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
-                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in, c.value
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+              LEFT JOIN strings c ON c.id = e.container
          WHERE e.seq = ?1",
     ),
     // A subscriber catching up after a reconnect: the events after the last one it saw, oldest first.
     (
         "events.after",
         "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
-                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in, c.value
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+              LEFT JOIN strings c ON c.id = e.container
          WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
     ),
     // The same pages as rows for columnar blocks: strings stay ids.
@@ -486,13 +497,13 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     (
         "events.page_rows",
         "SELECT seq, time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule, bytes_out,
-                bytes_in
+                bytes_in, container
          FROM events WHERE seq < ?1 ORDER BY seq DESC LIMIT ?2",
     ),
     (
         "events.after_rows",
         "SELECT seq, time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule, bytes_out,
-                bytes_in
+                bytes_in, container
          FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2",
     ),
     // Connections no rule decided, since a time: what `learn` turns into rules.
@@ -1196,6 +1207,7 @@ impl Event {
             rule: self.rule,
             bytes_out: 0,
             bytes_in: 0,
+            container: self.container.as_deref().map(str::to_owned),
         }
     }
 }
@@ -1206,6 +1218,8 @@ pub struct Recorded {
     pub seq: i64,
     pub exe: u32,
     pub host: u32,
+    /// The container's identity's string id; 0: none.
+    pub container: u32,
     /// The program was never recorded before.
     pub new_exe: bool,
 }
@@ -1272,6 +1286,8 @@ pub struct StoredEvent {
     pub rule: Option<RuleId>,
     pub bytes_out: u64,
     pub bytes_in: u64,
+    /// The container it came from, as its identity's key.
+    pub container: Option<String>,
 }
 
 /// A dangerous action attempted, and its outcome (the protocol's `AuditOutcome` number).
@@ -1527,6 +1543,18 @@ impl Store {
                 std::net::IpAddr::V4(a) => a.to_ipv6_mapped().octets(),
                 std::net::IpAddr::V6(a) => a.octets(),
             };
+            let container = match &event.container {
+                Some(key) => Some(
+                    intern(
+                        &self.connection,
+                        &mut self.strings,
+                        StringKind::Container,
+                        key,
+                    )?
+                    .0,
+                ),
+                None => None,
+            };
             self.connection
                 .prepare_cached(sql("events.insert")?)?
                 .execute(params![
@@ -1543,6 +1571,7 @@ impl Store {
                     event.source as u8,
                     event.rule.map(db_id),
                     event.cookie.map(db_id),
+                    container,
                 ])?;
             let seq = self.connection.last_insert_rowid();
             self.connection
@@ -1575,6 +1604,7 @@ impl Store {
                 seq,
                 exe: u32::try_from(exe).unwrap_or(0),
                 host: host.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
+                container: container.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
                 new_exe,
             });
             if let Some(rule) = event.rule {
@@ -2066,7 +2096,7 @@ impl Store {
         let (condition, values) = filter.sql();
         let statement_sql = format!(
             "SELECT e.seq, e.time_ms, e.exe, e.host, e.uid, e.pid, e.protocol, e.address, e.port, e.context, e.action,
-                    e.source, e.rule, e.bytes_out, e.bytes_in
+                    e.source, e.rule, e.bytes_out, e.bytes_in, e.container
              FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
              WHERE e.seq < ? AND e.seq >= ? AND {condition} ORDER BY e.seq DESC LIMIT ?"
         );
@@ -2379,6 +2409,7 @@ fn event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
         rule: row.get::<_, Option<i64>>(12)?.map_or(0, id_of),
         bytes_out: id_of(row.get(13)?),
         bytes_in: id_of(row.get(14)?),
+        container: id(15)?,
     })
 }
 
@@ -2401,6 +2432,7 @@ fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
         rule: row.get::<_, Option<i64>>(12)?.map(id_of),
         bytes_out: id_of(row.get(13)?),
         bytes_in: id_of(row.get(14)?),
+        container: row.get(15)?,
     })
 }
 
@@ -2465,6 +2497,7 @@ mod tests {
             source: Source::Rule,
             rule: Some(1),
             cookie: Some(seq),
+            container: None,
         }
     }
 

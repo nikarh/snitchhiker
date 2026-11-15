@@ -197,7 +197,7 @@ impl App {
                     let prompts = &app.model.read(cx).prompts;
                     for (id, prompt) in prompts {
                         if prompt.notify && before.get(id) != Some(&true) {
-                            let _ = notices.try_send(Notice::Show(prompt.clone()));
+                            let _ = notices.try_send(Notice::Show(Box::new(prompt.clone())));
                         }
                     }
                     for id in before.keys().filter(|id| !prompts.contains_key(id)) {

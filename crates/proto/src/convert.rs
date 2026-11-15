@@ -237,6 +237,25 @@ pub fn address_from(bytes: &[u8]) -> Option<IpAddr> {
     <[u8; 16]>::try_from(bytes).ok().map(IpAddr::from)
 }
 
+/// A container's identity for the wire.
+#[must_use]
+pub fn container(container: &snitchhiker_core::context::Container) -> v1::ContainerIdentity {
+    v1::ContainerIdentity {
+        runtime: container.runtime.clone(),
+        id: container.id.clone(),
+        name: container.name.clone(),
+        image: container.image.clone(),
+        compose: container.compose.clone().unwrap_or_default(),
+        owner: container.owner,
+    }
+}
+
+/// A container's identity from the history's key.
+#[must_use]
+pub fn container_from_key(key: &str) -> v1::ContainerIdentity {
+    container(&snitchhiker_core::context::Container::from_key(key))
+}
+
 #[cfg(test)]
 mod tests {
     use snitchhiker_core::spec::RuleFile;

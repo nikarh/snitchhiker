@@ -33,6 +33,8 @@ pub struct PromptKey {
     pub destination: String,
     pub port: u16,
     pub protocol: u8,
+    /// The container it comes from (its identity's key): the same program in two containers is asked about twice.
+    pub container: Option<Arc<str>>,
 }
 
 /// A prompt waiting for an answer.
@@ -259,6 +261,7 @@ mod tests {
             destination: "example.com".to_owned(),
             port,
             protocol: 6,
+            container: None,
         }
     }
 
@@ -280,6 +283,7 @@ mod tests {
                 source: Source::Policy,
                 rule: None,
                 cookie: None,
+                container: None,
             },
         }
     }

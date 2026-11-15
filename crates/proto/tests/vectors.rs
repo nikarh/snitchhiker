@@ -147,6 +147,7 @@ fn rows(text: &str) -> Vec<snitchhiker_proto::columns::EventRow> {
                     "rule" => row.rule = number(),
                     "bytes_out" => row.bytes_out = number(),
                     "bytes_in" => row.bytes_in = number(),
+                    "container" => row.container = u32::try_from(number()).unwrap(),
                     other => panic!("unknown field {other}"),
                 }
             }
@@ -164,7 +165,10 @@ fn event_blocks() {
         if path.extension().is_none_or(|e| e != "txt") {
             continue;
         }
-        let expected = rows(&fs::read_to_string(&path).unwrap());
+        let text = fs::read_to_string(&path).unwrap();
+        // A block of an older format: it must still parse, but an encoder no longer writes it.
+        let decode_only = text.lines().any(|l| l.trim() == "# decode-only");
+        let expected = rows(&text);
         let mut encoded = Vec::new();
         snitchhiker_proto::columns::encode_events(&expected, &mut encoded).unwrap();
         let hex_path = path.with_extension("hex");
@@ -177,12 +181,14 @@ fn event_blocks() {
             fs::write(&hex_path, to_hex(&encoded)).unwrap();
         }
         let block = from_hex(&fs::read_to_string(&hex_path).unwrap());
-        assert_eq!(
-            to_hex(&encoded),
-            to_hex(&block),
-            "{}: the rows no longer encode to the block",
-            path.display()
-        );
+        if !decode_only {
+            assert_eq!(
+                to_hex(&encoded),
+                to_hex(&block),
+                "{}: the rows no longer encode to the block",
+                path.display()
+            );
+        }
         let parsed = snitchhiker_proto::columns::EventBlock::parse(&block).unwrap();
         assert_eq!(
             parsed.rows().collect::<Vec<_>>(),

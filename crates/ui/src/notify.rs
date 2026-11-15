@@ -44,7 +44,7 @@ trait Notifications {
 #[derive(Debug, Clone)]
 pub enum Notice {
     /// A prompt opened: show it.
-    Show(v1::Prompt),
+    Show(Box<v1::Prompt>),
     /// A prompt was resolved: take its notification down.
     Close(u64),
     /// An alert was raised.

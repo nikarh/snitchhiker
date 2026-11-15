@@ -1564,6 +1564,10 @@ pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
         rule: stored.rule,
         bytes_out: stored.bytes_out,
         bytes_in: stored.bytes_in,
+        container: stored
+            .container
+            .as_deref()
+            .map(|key| Box::new(convert::container_from_key(key))),
     }
 }
 

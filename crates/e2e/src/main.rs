@@ -258,6 +258,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::rules_name_containers_by_name_image_and_compose_service,
     ),
     (
+        "containers/a-containers-prompt-names-it-and-its-answer-holds-for-its-service",
+        containers::a_containers_prompt_names_it_and_its_answer_holds_for_its_service,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

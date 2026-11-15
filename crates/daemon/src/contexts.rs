@@ -99,15 +99,22 @@ pub fn named(path: &str) -> Option<Named> {
     None
 }
 
+/// A container looked up, with its identity's key (as the history keeps it), made once.
+#[derive(Debug)]
+pub struct Identified {
+    pub container: Container,
+    pub key: Arc<str>,
+}
+
 /// The containers looked up, by cgroup id.
 #[derive(Default)]
 pub struct Contexts {
-    containers: Mutex<HashMap<u64, Option<Arc<Container>>>>,
+    containers: Mutex<HashMap<u64, Option<Arc<Identified>>>>,
 }
 
 impl Contexts {
     /// The container process `pid` (in cgroup `cgroup`) runs in, if it runs in one that can be named.
-    pub fn container(&self, pid: u32, cgroup: u64) -> Option<Arc<Container>> {
+    pub fn container(&self, pid: u32, cgroup: u64) -> Option<Arc<Identified>> {
         if let Some(known) = self
             .containers
             .lock()
@@ -123,7 +130,13 @@ impl Contexts {
                 text.lines()
                     .find_map(|line| line.strip_prefix("0::").and_then(named))
             })
-            .map(|named| Arc::new(describe(named)));
+            .map(|named| {
+                let container = describe(named);
+                Arc::new(Identified {
+                    key: Arc::from(container.key()),
+                    container,
+                })
+            });
         let mut containers = self
             .containers
             .lock()

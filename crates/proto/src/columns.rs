@@ -61,10 +61,12 @@ pub enum Column {
     BytesOut = 14,
     /// u64.
     BytesIn = 15,
+    /// u32: the string id of the container's identity, 0 for none.
+    Container = 16,
 }
 
 impl Column {
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Seq,
         Self::Time,
         Self::Exe,
@@ -80,12 +82,19 @@ impl Column {
         Self::Rule,
         Self::BytesOut,
         Self::BytesIn,
+        Self::Container,
     ];
 
     #[must_use]
     pub const fn width(self) -> usize {
         match self {
-            Self::Seq | Self::Time | Self::Exe | Self::Host | Self::Uid | Self::Pid => 4,
+            Self::Seq
+            | Self::Time
+            | Self::Exe
+            | Self::Host
+            | Self::Uid
+            | Self::Pid
+            | Self::Container => 4,
             Self::Address => 16,
             Self::Port => 2,
             Self::Protocol | Self::Context | Self::Action | Self::Source => 1,
@@ -95,7 +104,7 @@ impl Column {
 
     /// Every column of format 1, in the order the encoder writes them.
     #[must_use]
-    pub const fn all() -> [Self; 15] {
+    pub const fn all() -> [Self; 16] {
         Self::ALL
     }
 
@@ -118,6 +127,9 @@ impl Column {
             Self::Rule => "u64: the deciding rule's id; 0 for none",
             Self::BytesOut => "u64: bytes sent",
             Self::BytesIn => "u64: bytes received",
+            Self::Container => {
+                "u32: the string id of the container's identity; 0 for none (optional: older nodes don't write it)"
+            }
         }
     }
 
@@ -147,6 +159,8 @@ pub struct EventRow {
     pub rule: u64,
     pub bytes_out: u64,
     pub bytes_in: u64,
+    /// The string id of the container's identity; 0: none.
+    pub container: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -251,6 +265,7 @@ fn write_value(
         Column::Rule => out.extend_from_slice(&row.rule.to_le_bytes()),
         Column::BytesOut => out.extend_from_slice(&row.bytes_out.to_le_bytes()),
         Column::BytesIn => out.extend_from_slice(&row.bytes_in.to_le_bytes()),
+        Column::Container => out.extend_from_slice(&row.container.to_le_bytes()),
     }
     Ok(())
 }
@@ -276,6 +291,8 @@ pub struct EventBlock<'a> {
     rule: &'a [U64],
     bytes_out: &'a [U64],
     bytes_in: &'a [U64],
+    /// Absent in blocks of nodes from before containers were recorded.
+    container: Option<&'a [U32]>,
 }
 
 impl<'a> EventBlock<'a> {
@@ -336,6 +353,11 @@ impl<'a> EventBlock<'a> {
             rule: u64s(Column::Rule)?,
             bytes_out: u64s(Column::BytesOut)?,
             bytes_in: u64s(Column::BytesIn)?,
+            container: match u32s(Column::Container) {
+                Ok(column) => Some(column),
+                Err(BlockError::Missing(_)) => None,
+                Err(error) => return Err(error),
+            },
         })
     }
 
@@ -372,6 +394,9 @@ impl<'a> EventBlock<'a> {
             rule: self.rule.get(index)?.get(),
             bytes_out: self.bytes_out.get(index)?.get(),
             bytes_in: self.bytes_in.get(index)?.get(),
+            container: self
+                .container
+                .map_or(0, |column| column.get(index).map_or(0, |c| c.get())),
         })
     }
 
@@ -407,6 +432,7 @@ mod tests {
             rule: 18,
             bytes_out: 517,
             bytes_in: u64::MAX,
+            container: u32::try_from(seq % 3).unwrap(),
         }
     }
 
@@ -420,8 +446,23 @@ mod tests {
         assert_eq!(parsed.rows().collect::<Vec<_>>(), rows);
         assert!(parsed.exe_ids().all(|id| id == 3));
         assert_eq!(parsed.row(64), None);
-        // 70 bytes a row (six u32, the address, a u16, four u8, three u64), and the header and directory.
-        assert_eq!(block.len(), HEADER + 15 * DIRECTORY_ENTRY + 64 * 70);
+        // 74 bytes a row (seven u32, the address, a u16, four u8, three u64), and the header and directory.
+        assert_eq!(block.len(), HEADER + 16 * DIRECTORY_ENTRY + 64 * 74);
+    }
+
+    #[test]
+    fn blocks_without_the_container_column_are_read() {
+        // A block of a node from before containers were recorded: its directory doesn't list the column.
+        let mut block = Vec::new();
+        encode_events(&[row(1)], &mut block).unwrap();
+        let entry = HEADER + 15 * DIRECTORY_ENTRY;
+        assert_eq!(
+            &block[entry..entry + 2],
+            &(Column::Container as u16).to_le_bytes()
+        );
+        block[entry..entry + 2].copy_from_slice(&999_u16.to_le_bytes());
+        let parsed = EventBlock::parse(&block).unwrap();
+        assert_eq!(parsed.row(0).map(|r| r.container), Some(0));
     }
 
     #[test]
