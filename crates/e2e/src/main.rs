@@ -13,6 +13,7 @@ mod escape;
 mod local_auth;
 mod names;
 mod nftables;
+mod perf;
 mod queue;
 mod util;
 
@@ -92,6 +93,10 @@ const SCENARIOS: &[Scenario] = &[
     ),
     ("daemon/bytes-are-counted", daemon::bytes_are_counted),
     ("daemon/learn-then-enforce", daemon::learn_then_enforce),
+    (
+        "perf/foreign-sets-dont-slow-us-down",
+        perf::foreign_sets_dont_slow_us_down,
+    ),
     ("escape/tcp-fast-open", escape::tcp_fast_open),
     ("escape/udp-sendto", escape::udp_sendto),
     ("escape/ipv6-and-mapped-ipv4", escape::ipv6_and_mapped_ipv4),
