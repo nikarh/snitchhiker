@@ -86,7 +86,7 @@
 <tbody>
 <tr>
 <td><code dir="auto">rules</code></td>
-<td>List the rules: id (<code dir="auto">-</code> for locked ones), action, tier, name and conditions</td>
+<td>List the rules: id (<code dir="auto">-</code> for locked ones), action, tier, folder path and name, and conditions</td>
 </tr>
 <tr>
 <td><code dir="auto">rules add &lt;allow|deny|reject&gt; [conditions] [--name &lt;n&gt;] [--tier &lt;override|normal|fallback&gt;]</code></td>
@@ -175,8 +175,8 @@
 <td>Print prompts as they open and as they are resolved, until interrupted. While it runs, the daemon has a client to ask</td>
 </tr>
 <tr>
-<td><code dir="auto">prompts answer &lt;id&gt; &lt;allow|deny|reject&gt; [--suggestion &lt;n&gt;] [--duration &lt;d&gt;]</code></td>
-<td>Answer a prompt with a rule made from suggestion <code dir="auto">n</code> (default 0, the narrowest)</td>
+<td><code dir="auto">prompts answer &lt;id&gt; &lt;allow|deny|reject&gt; [--suggestion &lt;n&gt;] [--duration &lt;d&gt;] [--folder &lt;id&gt;]</code></td>
+<td>Answer a prompt with a rule made from suggestion <code dir="auto">n</code> (default 0, the narrowest), in the program’s folder (<code dir="auto">Apps/&lt;program&gt;</code>) or the folder given</td>
 </tr>
 </tbody>
 </table>
