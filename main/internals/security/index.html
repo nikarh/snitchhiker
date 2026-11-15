@@ -120,6 +120,7 @@
 <li>it isn’t dumpable.</li>
 </ol>
 <p>Then it checks the pidfd still refers to a live process, so the process can’t have exited and its pid been reused while it was being checked. A process that fails any check gets a refusal and the connection closes.</p>
+<p><strong>The session is the process’s.</strong> The daemon keeps the pidfd and ends the connection when that process exits, even if another process holds the socket by then (passed on, or inherited by a child). A client’s rights don’t outlive it.</p>
 <p><strong>Clients check the daemon too.</strong> Before sending anything, a client (the command line included) checks that the socket and every directory above it belong to root and that no one else may write to those directories, and that the process serving the socket runs as root. A socket some other process bound elsewhere can’t pose as the daemon to feed a client false prompts or collect its answers.</p>
 <div class="sl-heading-wrapper level-h2"><h2 id="facts-a-process-cant-fake">Facts a process can’t fake</h2><a class="sl-anchor-link" href="#facts-a-process-cant-fake"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Facts a process can’t fake”</span></a></div>
 <p>A rule matches on what the kernel says about a connection, not on what the process says about itself:</p>
@@ -198,6 +199,10 @@
 <tr>
 <td><code dir="auto">local-auth/registered-clients-are-pinned</code></td>
 <td>a registered client binary changed in place, and registering a binary that isn’t a setgid client</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/connection-ends-with-its-process</code></td>
+<td>keeping a client’s connection after the client exits, by holding its socket</td>
 </tr>
 <tr>
 <td><code dir="auto">local-auth/client-refuses-a-fake-node</code></td>
