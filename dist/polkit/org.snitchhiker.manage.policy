@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Step-up for dangerous actions a Snitchhiker client asks the daemon for (an allow-everything rule, and later
+     policy changes and pairing). The daemon asks polkit about the client's process; by default an administrator's
+     password is needed, remembered for a few minutes. Local policy can change that with a rules.d file. -->
+<policyconfig>
+  <vendor>Snitchhiker</vendor>
+  <vendor_url>https://github.com/nikarh/snitchhiker</vendor_url>
+  <action id="org.snitchhiker.manage">
+    <description>Make a dangerous change to the Snitchhiker firewall</description>
+    <message>Authentication is required to make a dangerous change to the Snitchhiker firewall</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

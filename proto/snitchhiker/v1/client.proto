@@ -90,6 +90,7 @@ message Request {
     Learn learn = 20;
     ImportRules import_rules = 21;
     ExportRules export_rules = 22;
+    ListAudit list_audit = 23;
   }
 }
 
@@ -105,6 +106,7 @@ message Response {
     Subscribed subscribed = 16;
     PromptList prompts = 18;
     RuleFile rule_file = 20;
+    AuditPage audit = 23;
   }
 }
 
@@ -125,6 +127,8 @@ enum ErrorCode {
   ERROR_CODE_INTERNAL = 5;
   // The node doesn't know the method (an older node).
   ERROR_CODE_UNSUPPORTED = 6;
+  // A dangerous action that needs step-up authorization (polkit) the client's user didn't give.
+  ERROR_CODE_NOT_AUTHORIZED = 7;
 }
 
 // Success without a result.
@@ -429,4 +433,40 @@ message AnswerPrompt {
   uint32 suggestion = 4;
   // Or conditions of the client's own (instead of a suggestion).
   optional Conditions conditions = 5;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The audit trail: every dangerous action attempted (an allow-everything rule, and later policy changes, pairing),
+// with who asked and what came of it.
+
+enum AuditOutcome {
+  AUDIT_OUTCOME_UNSPECIFIED = 0;
+  // Step-up authorization was given.
+  AUDIT_OUTCOME_AUTHORIZED = 1;
+  // Step-up authorization was refused, or couldn't be asked for.
+  AUDIT_OUTCOME_REFUSED = 2;
+  // Done without step-up: by root, or with step-up switched off.
+  AUDIT_OUTCOME_UNCHECKED = 3;
+}
+
+message AuditEntry {
+  uint64 id = 1;
+  uint64 time_ms = 2;
+  // The client ("desktop", "cli", a device's name).
+  string app = 3;
+  uint32 uid = 4;
+  uint32 pid = 5;
+  // What was asked, for people.
+  string action = 6;
+  AuditOutcome outcome = 7;
+}
+
+message ListAudit {
+  // Entries older than this id; 0 for the newest.
+  uint64 before = 1;
+  uint32 limit = 2;
+}
+
+message AuditPage {
+  repeated AuditEntry entries = 1;
 }

@@ -41,6 +41,17 @@ pub enum Fail {
     Closed,
 }
 
+/// What confirms a dangerous action asked for by a client (not root).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum StepUp {
+    /// polkit authorizes the client's process (`org.snitchhiker.manage`): the user's password, usually.
+    #[default]
+    Polkit,
+    /// Nothing: the client's session is enough. Dangerous actions are still audited.
+    Off,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
@@ -57,6 +68,8 @@ pub struct Config {
     /// Client binaries allowed on the client socket by path alone, besides those registered with
     /// `snitchhikerd trust-client` (which are also pinned to their digest).
     pub trusted_clients: Vec<PathBuf>,
+    /// What confirms dangerous actions asked for by clients.
+    pub step_up: StepUp,
     pub fail: Fail,
     /// NFQUEUE queues, one deciding thread each.
     pub queues: u16,
@@ -84,6 +97,7 @@ impl Default for Config {
             on_timeout: Action::Deny,
             client_group: "snitchhiker-ui".to_owned(),
             trusted_clients: Vec::new(),
+            step_up: StepUp::Polkit,
             fail: Fail::Closed,
             queues: 4,
             queue: 0,

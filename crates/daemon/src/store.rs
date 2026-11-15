@@ -69,6 +69,18 @@ ALTER TABLE events ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE events ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX events_cookie ON events(cookie, seq) WHERE cookie IS NOT NULL;
 ",
+    // Dangerous actions attempted, and what came of them. Kept for good: there are few.
+    r"
+CREATE TABLE audit (
+    id INTEGER PRIMARY KEY,
+    time_ms INTEGER NOT NULL,
+    app TEXT NOT NULL,
+    uid INTEGER NOT NULL,
+    pid INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    outcome INTEGER NOT NULL
+);
+",
 ];
 
 /// What kind of string a `strings` row is.
@@ -175,6 +187,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          WHERE seq = (SELECT seq FROM events WHERE cookie = ?1 ORDER BY seq DESC LIMIT 1)",
     ),
     (
+        "audit.insert",
+        "INSERT INTO audit (time_ms, app, uid, pid, action, outcome) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    ),
+    (
+        "audit.page",
+        "SELECT id, time_ms, app, uid, pid, action, outcome FROM audit WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    (
         "events.prune",
         "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE time_ms < ?1 ORDER BY time_ms LIMIT ?2)",
     ),
@@ -212,6 +232,18 @@ pub struct StoredEvent {
     pub rule: Option<RuleId>,
     pub bytes_out: u64,
     pub bytes_in: u64,
+}
+
+/// A dangerous action attempted, and its outcome (the protocol's `AuditOutcome` number).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEntry {
+    pub id: u64,
+    pub time_ms: u64,
+    pub app: String,
+    pub uid: u32,
+    pub pid: u32,
+    pub action: String,
+    pub outcome: u8,
 }
 
 /// A connection no rule decided.
@@ -466,6 +498,40 @@ impl Store {
                 bytes_in: id_of(row.get(14)?),
             })
         })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records a dangerous action attempted (`entry.id` is ignored); returns its id.
+    pub fn audit(&mut self, entry: &AuditEntry) -> Result<u64, Error> {
+        let mut statement = self.connection.prepare_cached(sql("audit.insert")?)?;
+        statement.execute(params![
+            i64::try_from(entry.time_ms).unwrap_or(i64::MAX),
+            entry.app,
+            entry.uid,
+            entry.pid,
+            entry.action,
+            entry.outcome,
+        ])?;
+        Ok(id_of(self.connection.last_insert_rowid()))
+    }
+
+    /// The newest audit entries before the id `before` (`u64::MAX` for the newest), at most `limit`.
+    pub fn audit_page(&self, before: u64, limit: u32) -> Result<Vec<AuditEntry>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("audit.page")?)?;
+        let rows = statement.query_map(
+            params![i64::try_from(before).unwrap_or(i64::MAX), limit],
+            |row| {
+                Ok(AuditEntry {
+                    id: id_of(row.get(0)?),
+                    time_ms: id_of(row.get(1)?),
+                    app: row.get(2)?,
+                    uid: row.get(3)?,
+                    pid: row.get(4)?,
+                    action: row.get(5)?,
+                    outcome: row.get(6)?,
+                })
+            },
+        )?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 

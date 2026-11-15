@@ -85,6 +85,26 @@ pub enum Condition {
     Not(Box<Condition>),
 }
 
+/// Whether a rule with these conditions (its own, and its folders' scopes) allows every program to reach anywhere: an
+/// allow rule that names no program and no destination. Asking for one is a dangerous action.
+pub fn allows_everything<'a>(
+    action: Action,
+    conditions: impl IntoIterator<Item = &'a Condition>,
+) -> bool {
+    action == Action::Allow
+        && !conditions.into_iter().any(|condition| {
+            matches!(
+                condition,
+                Condition::Exe(_)
+                    | Condition::App(_)
+                    | Condition::Cmdline(_)
+                    | Condition::Parent(_)
+                    | Condition::Host(_)
+                    | Condition::Net(_)
+            )
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Folder {
     pub id: FolderId,
@@ -116,4 +136,20 @@ pub struct Rule {
 
 const fn yes() -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn allow_rules_without_program_or_destination_allow_everything() {
+        let port = Condition::Port(vec![(443, 443)]);
+        let exe = Condition::Exe(vec![PatternSource::Exact("/usr/bin/curl".to_owned())]);
+        let not_host = Condition::Not(Box::new(Condition::Host(vec![])));
+        assert!(allows_everything(Action::Allow, [&port]));
+        assert!(allows_everything(Action::Allow, [&port, &not_host]));
+        assert!(!allows_everything(Action::Allow, [&port, &exe]));
+        assert!(!allows_everything(Action::Deny, [&port]));
+    }
 }

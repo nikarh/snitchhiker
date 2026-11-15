@@ -18,6 +18,9 @@ overrides:
     depends:
       - libc6 (>= 2.35)
       - systemd
+    # Step-up authorization of dangerous actions from clients; without it they are refused.
+    recommends:
+      - polkitd
     scripts:
       postinstall: dist/packaging/deb/postinst
       preremove: dist/packaging/deb/prerm
@@ -40,6 +43,10 @@ contents:
       mode: 0644
   - src: dist/snitchhiker.sysusers
     dst: /usr/lib/sysusers.d/snitchhiker.conf
+    file_info:
+      mode: 0644
+  - src: dist/polkit/org.snitchhiker.manage.policy
+    dst: /usr/share/polkit-1/actions/org.snitchhiker.manage.policy
     file_info:
       mode: 0644
   - src: dist/daemon.toml

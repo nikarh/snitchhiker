@@ -13,5 +13,6 @@ pub mod peer;
 pub mod process;
 pub mod prompts;
 pub mod runtime;
+pub mod stepup;
 pub mod store;
 pub mod trust;

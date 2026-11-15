@@ -38,6 +38,8 @@ Commands:
   prompts watch                   Print prompts as they open and close (until interrupted)
   prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|12h|forever>]
                                   Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default)
+  audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
+                                  and whether step-up authorized them
   version                         Print the version
 
 Options:
@@ -101,6 +103,15 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             }
         }
         Some("rules") => rules(args, version),
+        Some("audit") => {
+            let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
+            reject_rest(args)?;
+            let mut client = connect(version)?;
+            match client.call(Method::ListAudit(v1::ListAudit { before: 0, limit }))? {
+                v1::response::Result::Audit(page) => out(&format_audit(&page.entries)),
+                _ => Err(unexpected()),
+            }
+        }
         Some("events") => {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
             reject_rest(args)?;
@@ -332,6 +343,24 @@ fn format_rules(list: &v1::RuleList) -> String {
             toml::to_string(&spec)
                 .unwrap_or_default()
                 .replace('\n', " "),
+        );
+    }
+    text
+}
+
+fn format_audit(entries: &[v1::AuditEntry]) -> String {
+    let mut text = String::new();
+    for entry in entries {
+        let _ = writeln!(
+            text,
+            "{:>6}  {}  {:<10} {} uid {} pid {}: {}",
+            entry.id,
+            entry.time_ms,
+            format!("{:?}", entry.outcome()).to_lowercase(),
+            entry.app,
+            entry.uid,
+            entry.pid,
+            entry.action,
         );
     }
     text

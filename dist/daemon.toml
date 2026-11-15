@@ -30,6 +30,10 @@ fail = "closed"
 # `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
 #trusted_clients = []
 
+# What confirms a dangerous action a client asks for (a rule allowing every program to connect anywhere): polkit
+# (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`).
+#step_up = "polkit"
+
 # The built-in System folder: loopback allowed, as OpenSnitch does by default. Its rules are in the fallback tier, so
 # any other matching rule decides instead.
 #default_rules = true

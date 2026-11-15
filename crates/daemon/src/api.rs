@@ -18,10 +18,12 @@ use nix::sys::socket::{getsockopt, sockopt};
 use snitchhiker_proto::{MAJOR, MINOR, convert, frame, v1};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, Mode, Policy};
+use crate::config::{Config, Mode, Policy, StepUp};
 use crate::hub::OUTBOUND;
 use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
+use crate::store::AuditEntry;
+use snitchhiker_core::rule::{Condition, allows_everything};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
 pub const CLIENT_SOCKET: &str = "/run/snitchhiker/client.sock";
@@ -101,7 +103,7 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
                 continue;
             }
         };
-        let (role, pidfd) = match admit(&stream, access, &daemon.shared.config) {
+        let (caller, pidfd) = match admit(&stream, access, &daemon.shared.config) {
             Ok(admitted) => admitted,
             Err(reason) => {
                 info!(%reason, "refused a client");
@@ -123,7 +125,7 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
                     None => None,
                 };
                 OPEN.fetch_add(1, Ordering::Relaxed);
-                if let Err(error) = serve(&daemon, &stream, role) {
+                if let Err(error) = serve(&daemon, &stream, &caller) {
                     debug!(%error, "client connection ended");
                 }
                 OPEN.fetch_sub(1, Ordering::Relaxed);
@@ -131,18 +133,34 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
     }
 }
 
-/// The role a connection gets, or why it is refused. For a client, also its process's pidfd: the connection ends when that process does.
+/// Who is on the other end of a connection.
+struct Caller {
+    role: v1::Role,
+    uid: u32,
+    pid: u32,
+    /// A client's process, for step-up (root's connections need none).
+    pidfd: Option<OwnedFd>,
+}
+
+/// Who a connection is, or why it is refused. For a client, also its process's pidfd: the connection ends when that
+/// process does.
 fn admit(
     stream: &UnixStream,
     access: &Access,
     config: &Config,
-) -> Result<(v1::Role, Option<OwnedFd>), String> {
+) -> Result<(Caller, Option<OwnedFd>), String> {
     match access {
         Access::Admin => {
             let credentials =
                 getsockopt(stream, sockopt::PeerCredentials).map_err(|e| e.to_string())?;
             if credentials.uid() == 0 {
-                Ok((v1::Role::Root, None))
+                let caller = Caller {
+                    role: v1::Role::Root,
+                    uid: 0,
+                    pid: u32::try_from(credentials.pid()).unwrap_or(0),
+                    pidfd: None,
+                };
+                Ok((caller, None))
             } else {
                 Err("the admin socket is root's".to_owned())
             }
@@ -152,7 +170,13 @@ fn admit(
                 .map_err(|e| format!("the trusted-client registry: {e}"))?;
             let (peer, pidfd) = identify(stream).map_err(|e| e.to_string())?;
             verify(&peer, &policy).map_err(|e| e.to_string())?;
-            Ok((v1::Role::Admin, Some(pidfd)))
+            let caller = Caller {
+                role: v1::Role::Admin,
+                uid: peer.uid,
+                pid: peer.pid,
+                pidfd: Some(pidfd.try_clone().map_err(|e| e.to_string())?),
+            };
+            Ok((caller, Some(pidfd)))
         }
     }
 }
@@ -166,7 +190,8 @@ fn refuse(stream: &UnixStream, reason: &str) {
     let _ = frame::write(&mut &*stream, &frame, &mut Vec::new());
 }
 
-fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, role: v1::Role) -> std::io::Result<()> {
+fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io::Result<()> {
+    let role = caller.role;
     let connection = CONNECTIONS.fetch_add(1, Ordering::Relaxed) + 1;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut buffer = Vec::new();
@@ -213,7 +238,7 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, role: v1::Role) -> std::io::
             continue;
         };
         let id = request.id;
-        let result = handle(daemon, connection, role, &outbound, request, &hello.app);
+        let result = handle(daemon, connection, caller, &hello.app, &outbound, request);
         let response = v1::ServerFrame {
             body: Some(v1::server_frame::Body::Response(v1::Response {
                 id,
@@ -276,6 +301,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::Unsubscribe(_)
             | Method::ListPrompts(_)
             | Method::ExportRules(_)
+            | Method::ListAudit(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -287,13 +313,14 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
 fn handle(
     daemon: &Arc<Daemon>,
     connection: u64,
-    role: v1::Role,
+    caller: &Caller,
+    app: &str,
     outbound: &SyncSender<v1::ServerFrame>,
     request: v1::Request,
-    app: &str,
 ) -> v1::response::Result {
     use v1::request::Method;
     use v1::response::Result as R;
+    let role = caller.role;
     let Some(method) = request.method else {
         return error(v1::ErrorCode::Unsupported, "unknown method");
     };
@@ -303,7 +330,7 @@ fn handle(
     match method {
         Method::GetStatus(_) => R::Status(status(daemon)),
         Method::ListRules(_) => list_rules(daemon),
-        Method::AddRule(add) => add_rule(daemon, add),
+        Method::AddRule(add) => add_rule(daemon, caller, app, add),
         Method::DeleteRule(delete) => delete_rule(daemon, delete.id),
         Method::SetRuleEnabled(set) => set_rule_enabled(daemon, &set),
         Method::ListEvents(list) => list_events(daemon, &list),
@@ -332,14 +359,15 @@ fn handle(
         Method::ListPrompts(_) => R::Prompts(v1::PromptList {
             prompts: daemon.shared.broker.list(),
         }),
-        Method::AnswerPrompt(answer) => answer_prompt(daemon, &answer, app),
+        Method::AnswerPrompt(answer) => answer_prompt(daemon, caller, app, &answer),
         Method::Learn(learn) => self::learn(daemon, &learn),
-        Method::ImportRules(import) => import_rules(daemon, &import),
+        Method::ImportRules(import) => import_rules(daemon, caller, app, &import),
+        Method::ListAudit(list) => list_audit(daemon, &list),
         Method::ExportRules(_) => export_rules(daemon),
     }
 }
 
-fn add_rule(daemon: &Daemon, add: v1::AddRule) -> v1::response::Result {
+fn add_rule(daemon: &Daemon, caller: &Caller, app: &str, add: v1::AddRule) -> v1::response::Result {
     let Some(wire) = add.rule else {
         return error(v1::ErrorCode::Invalid, "no rule");
     };
@@ -348,6 +376,23 @@ fn add_rule(daemon: &Daemon, add: v1::AddRule) -> v1::response::Result {
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
     rule.id = 0;
+    let scope = match scope_of(daemon, rule.folder) {
+        Ok(scope) => scope,
+        Err(e) => return internal(e),
+    };
+    if allows_everything(rule.action, rule.conditions.iter().chain(&scope))
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "add the rule \"{}\", which allows every program to connect anywhere",
+                rule.name
+            ),
+        )
+    {
+        return refused;
+    }
     let added = daemon.store().insert_rule(&rule, now_ms());
     match added
         .map_err(|e| e.to_string())
@@ -399,10 +444,34 @@ fn list_events(daemon: &Daemon, list: &v1::ListEvents) -> v1::response::Result {
     }
 }
 
-fn answer_prompt(daemon: &Daemon, answer: &v1::AnswerPrompt, app: &str) -> v1::response::Result {
+fn answer_prompt(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    answer: &v1::AnswerPrompt,
+) -> v1::response::Result {
     let Some(action) = convert::action_from(answer.action()) else {
         return error(v1::ErrorCode::Invalid, "no action");
     };
+    // The suggestions all name a program or a destination; conditions of the client's own may not.
+    if let Some(conditions) = &answer.conditions
+        && answer.duration() != v1::Duration::Once
+    {
+        let conditions = match convert::conditions_from(conditions).to_conditions() {
+            Ok(conditions) => conditions,
+            Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
+        };
+        if allows_everything(action, &conditions)
+            && let Err(refused) = step_up(
+                daemon,
+                caller,
+                app,
+                "answer a prompt with a rule that allows every program to connect anywhere",
+            )
+        {
+            return refused;
+        }
+    }
     let suggestion = usize::try_from(answer.suggestion).unwrap_or(usize::MAX);
     match daemon.answer_prompt(
         answer.id,
@@ -518,7 +587,12 @@ fn list_rules(daemon: &Daemon) -> v1::response::Result {
     })
 }
 
-fn import_rules(daemon: &Daemon, import: &v1::ImportRules) -> v1::response::Result {
+fn import_rules(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    import: &v1::ImportRules,
+) -> v1::response::Result {
     let file: snitchhiker_core::spec::RuleFile = match toml::from_str(&import.toml) {
         Ok(file) => file,
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
@@ -550,6 +624,24 @@ fn import_rules(daemon: &Daemon, import: &v1::ImportRules) -> v1::response::Resu
         Ok(rules) => rules,
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
+    let everything = rules
+        .iter()
+        .filter(|rule| {
+            rule.enabled && allows_everything(rule.action, rule.conditions.iter().chain(&scope))
+        })
+        .count();
+    if everything > 0
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "import {everything} rule(s) into \"{name}\" that allow every program to connect anywhere"
+            ),
+        )
+    {
+        return refused;
+    }
     let stored = {
         let mut store = daemon.store();
         store
@@ -605,6 +697,110 @@ fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
         rule: stored.rule,
         bytes_out: stored.bytes_out,
         bytes_in: stored.bytes_in,
+    }
+}
+
+/// The conditions the folder `folder` and those above it add to their rules.
+fn scope_of(daemon: &Daemon, folder: Option<u64>) -> Result<Vec<Condition>, crate::store::Error> {
+    let Some(mut next) = folder else {
+        return Ok(Vec::new());
+    };
+    let folders = daemon.store().folders()?;
+    let mut scope = Vec::new();
+    // A cycle can't be stored, but the walk is bounded anyway.
+    for _ in 0..folders.len() {
+        let Some(folder) = folders.iter().find(|f| f.id == next) else {
+            break;
+        };
+        scope.extend(folder.scope.iter().cloned());
+        match folder.parent {
+            Some(parent) => next = parent,
+            None => break,
+        }
+    }
+    Ok(scope)
+}
+
+/// A dangerous action asked for by `caller`: goes ahead when root asks, when step-up is off, or when polkit authorizes
+/// the client's process; otherwise the error to answer with. Every attempt is audited.
+fn step_up(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    action: &str,
+) -> Result<(), v1::response::Result> {
+    let unchecked = caller.role == v1::Role::Root || daemon.shared.config.step_up == StepUp::Off;
+    let outcome = if unchecked {
+        v1::AuditOutcome::Unchecked
+    } else {
+        let message = format!("Authentication is required to {action}.");
+        match caller
+            .pidfd
+            .as_ref()
+            .map(|pidfd| crate::stepup::authorize(pidfd, caller.uid, &message))
+        {
+            Some(Ok(true)) => v1::AuditOutcome::Authorized,
+            Some(Ok(false)) | None => v1::AuditOutcome::Refused,
+            Some(Err(reason)) => {
+                warn!(%reason, "step-up authorization couldn't be asked for; refused");
+                v1::AuditOutcome::Refused
+            }
+        }
+    };
+    let entry = AuditEntry {
+        id: 0,
+        time_ms: now_ms(),
+        app: app.to_owned(),
+        uid: caller.uid,
+        pid: caller.pid,
+        action: action.to_owned(),
+        outcome: u8::try_from(i32::from(outcome)).unwrap_or(0),
+    };
+    let recorded = daemon.store().audit(&entry);
+    if let Err(error) = recorded {
+        // An action that can't be audited doesn't happen.
+        return Err(internal(format!("auditing: {error}")));
+    }
+    info!(
+        app,
+        uid = caller.uid,
+        pid = caller.pid,
+        action,
+        ?outcome,
+        "dangerous action"
+    );
+    if outcome == v1::AuditOutcome::Refused {
+        return Err(error(
+            v1::ErrorCode::NotAuthorized,
+            format!("not authorized to {action}"),
+        ));
+    }
+    Ok(())
+}
+
+fn list_audit(daemon: &Daemon, list: &v1::ListAudit) -> v1::response::Result {
+    let before = if list.before == 0 {
+        u64::MAX
+    } else {
+        list.before
+    };
+    let page = daemon.store().audit_page(before, list.limit.clamp(1, 1000));
+    match page {
+        Ok(entries) => v1::response::Result::Audit(v1::AuditPage {
+            entries: entries
+                .into_iter()
+                .map(|e| v1::AuditEntry {
+                    id: e.id,
+                    time_ms: e.time_ms,
+                    app: e.app,
+                    uid: e.uid,
+                    pid: e.pid,
+                    action: e.action,
+                    outcome: i32::from(e.outcome),
+                })
+                .collect(),
+        }),
+        Err(e) => internal(e),
     }
 }
 

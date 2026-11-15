@@ -16,6 +16,7 @@ mod nftables;
 mod perf;
 mod prompts;
 mod queue;
+mod stepup;
 mod util;
 
 /// A scenario: a name and a function that fails with a message.
@@ -81,6 +82,10 @@ const SCENARIOS: &[Scenario] = &[
     (
         "local-auth/client-refuses-a-fake-node",
         local_auth::client_refuses_a_fake_node,
+    ),
+    (
+        "step-up/allow-everything-needs-authorization",
+        stepup::allow_everything_needs_authorization,
     ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
@@ -166,6 +171,11 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2))
     {
         return local_auth::protocol_client(socket);
+    }
+    if let (Some("--add-rule"), Some(socket), Some(kind)) =
+        (args.get(1).map(String::as_str), args.get(2), args.get(3))
+    {
+        return stepup::add_rule(socket, kind);
     }
     if let (Some("--hand-off"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
         return local_auth::hand_off(socket);

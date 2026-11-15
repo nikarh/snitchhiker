@@ -20,7 +20,7 @@ use crate::util::{check, run};
 const GROUP: &str = "snitchhiker-ui";
 const DIR: &str = "/run/snitchhiker-test";
 /// The registered client: this binary, root-owned, setgid to the client group.
-const CLIENT: &str = "/usr/local/libexec/snitchhiker-test-client";
+pub const CLIENT: &str = "/usr/local/libexec/snitchhiker-test-client";
 /// Root-owned and setgid to the client group too, but not registered.
 const UNREGISTERED: &str = "/usr/local/libexec/snitchhiker-test-other";
 /// A copy mallory owns: no setgid bit, nothing root vouches for.
@@ -151,7 +151,7 @@ fn serve(name: &str, mode: u32) -> Result<String, String> {
 }
 
 /// Runs `program args` as mallory; returns (succeeded, output).
-fn as_mallory(program: &str, args: &[&str]) -> Result<(bool, String), String> {
+pub fn as_mallory(program: &str, args: &[&str]) -> Result<(bool, String), String> {
     let output = Command::new("runuser")
         .args(["-u", "mallory", "--", program])
         .args(args)
@@ -432,4 +432,9 @@ pub fn connection_ends_with_its_process() -> Result<(), String> {
         "the connection outlived the client's process in another process's hands",
         &format!("clients: {after}, without the client: {baseline}"),
     )
+}
+
+/// Installs the test clients (as `serve` does) for scenarios that only need the registered one.
+pub fn install_clients() -> Result<(), String> {
+    serve("install-clients", 0o660).map(|_| ())
 }
