@@ -22,7 +22,9 @@ use crate::config::{Config, Mode, Policy, StepUp};
 use crate::hub::{OUTBOUND, Outbox, Outgoing};
 use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
-use crate::store::{AuditEntry, Batch, Error as StoreError, Store, UndoError};
+use crate::store::{
+    AuditEntry, Batch, Dimension, Error as StoreError, HOUR_MS, Store, StringKind, UndoError,
+};
 use snitchhiker_core::rule::{Condition, allows_everything};
 use snitchhiker_proto::columns::{self, EventRow};
 
@@ -316,6 +318,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ExportRules(_)
             | Method::ListAudit(_)
             | Method::ListChanges(_)
+            | Method::Explore(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -356,6 +359,7 @@ fn handle(
         Method::DeleteFolder(delete) => delete_folder(daemon, caller, app, delete),
         Method::ListChanges(list) => list_changes(daemon, &list),
         Method::Undo(request) => undo(daemon, app, request),
+        Method::Explore(explore) => self::explore(daemon, &explore),
         Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
         Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),
@@ -1144,6 +1148,85 @@ fn subscribe(
             error(v1::ErrorCode::Internal, "the connection closed")
         }
     }
+}
+
+fn dimension(dimension: v1::Dimension) -> Option<Dimension> {
+    match dimension {
+        v1::Dimension::Program => Some(Dimension::Exe),
+        v1::Dimension::Host => Some(Dimension::Host),
+        v1::Dimension::Port => Some(Dimension::Port),
+        v1::Dimension::User => Some(Dimension::Uid),
+        v1::Dimension::Unspecified => None,
+    }
+}
+
+fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
+    let Some(group) = dimension(explore.group_by()) else {
+        return error(v1::ErrorCode::Invalid, "no dimension to group by");
+    };
+    let store = daemon.store();
+    // A filter's value as the rollups hold it: a string's id, or the number. A name the history doesn't have
+    // matches nothing.
+    let filter = match &explore.filter {
+        None => None,
+        Some(filter) => {
+            let Some(by) = dimension(filter.dimension()) else {
+                return error(v1::ErrorCode::Invalid, "no dimension to filter by");
+            };
+            let value = match by {
+                Dimension::Host if filter.value.is_empty() => Ok(Some(0)),
+                Dimension::Exe => store.string_id(StringKind::Exe, &filter.value),
+                Dimension::Host => store.string_id(StringKind::Host, &filter.value),
+                Dimension::Port | Dimension::Uid => match filter.value.parse() {
+                    Ok(number) => Ok(Some(number)),
+                    Err(_) => return error(v1::ErrorCode::Invalid, "not a number"),
+                },
+            };
+            match value {
+                Ok(Some(value)) => Some((by, value)),
+                Ok(None) => return v1::response::Result::Explored(v1::ExplorePage::default()),
+                Err(e) => return internal(e),
+            }
+        }
+    };
+    let rows = store.explore(
+        explore.from_ms / HOUR_MS,
+        explore.to_ms.div_ceil(HOUR_MS),
+        group,
+        filter,
+        explore.limit.clamp(1, 1000),
+    );
+    let rows = match rows {
+        Ok(rows) => rows,
+        Err(e) => return internal(e),
+    };
+    // Programs and hosts by name.
+    let names = if matches!(group, Dimension::Exe | Dimension::Host) {
+        match store.strings_of(rows.iter().filter_map(|r| u32::try_from(r.key).ok())) {
+            Ok(names) => names,
+            Err(e) => return internal(e),
+        }
+    } else {
+        Vec::new()
+    };
+    v1::response::Result::Explored(v1::ExplorePage {
+        rows: rows
+            .iter()
+            .map(|row| v1::ExploreRow {
+                key: match group {
+                    Dimension::Exe | Dimension::Host => u32::try_from(row.key)
+                        .ok()
+                        .and_then(|id| names.iter().find(|(i, _)| *i == id))
+                        .map_or_else(String::new, |(_, name)| name.to_string()),
+                    Dimension::Port | Dimension::Uid => row.key.to_string(),
+                },
+                allowed: row.allowed,
+                blocked: row.blocked,
+                bytes_out: row.bytes_out,
+                bytes_in: row.bytes_in,
+            })
+            .collect(),
+    })
 }
 
 #[cfg(test)]

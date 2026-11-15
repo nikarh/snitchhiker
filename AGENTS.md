@@ -29,7 +29,10 @@ Everything is `MIT OR Apache-2.0`; the eBPF programs in `crates/ebpf/` are `GPL-
 
 See "Performance and data efficiency" in `docs/plan.md`. In short: no heap allocation on the packet path after
 warm-up; every SQL statement goes through the statement registry and must be an index seek (the query-plan test
-enforces it); never read nftables objects that aren't ours; no polling loops.
+enforces it); never read nftables objects that aren't ours; no polling loops. The one exception to "no sorting" is
+grouping what an index range of rollups yields (statements named `explore.*`, listed in `GROUPS_IN_RANGE`): its
+cost is the variety of the traffic in that range, not the size of the history. `mise run perf` checks the Explorer
+over a million events.
 
 ## Unsafe code
 

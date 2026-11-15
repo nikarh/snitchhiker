@@ -98,7 +98,61 @@ CREATE TABLE changes (
 );
 CREATE INDEX changes_batch ON changes(batch);
 ",
+    // Hourly rollups of the history: what the Explorer groups, whatever the number of events. One row per hour,
+    // program, host (0: none), port, protocol, user and action; filled from the history there is, then kept as events
+    // are recorded and their bytes counted.
+    r"
+CREATE TABLE rollups (
+    hour INTEGER NOT NULL,
+    exe INTEGER NOT NULL,
+    host INTEGER NOT NULL,
+    port INTEGER NOT NULL,
+    protocol INTEGER NOT NULL,
+    uid INTEGER NOT NULL,
+    action INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    bytes_out INTEGER NOT NULL,
+    bytes_in INTEGER NOT NULL,
+    PRIMARY KEY (hour, exe, host, port, protocol, uid, action)
+) WITHOUT ROWID;
+INSERT INTO rollups
+SELECT time_ms / 3600000, exe, coalesce(host, 0), port, protocol, uid, action, count(*), sum(bytes_out), sum(bytes_in)
+FROM events GROUP BY 1, 2, 3, 4, 5, 6, 7;
+",
+    // The same, per dimension alone (1 program, 2 host, 3 port, 4 user): what grouping by one dimension reads, at
+    // most one row per hour and value, however varied the rest of the traffic.
+    r"
+CREATE TABLE rollups_by (
+    dimension INTEGER NOT NULL,
+    hour INTEGER NOT NULL,
+    key INTEGER NOT NULL,
+    action INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    bytes_out INTEGER NOT NULL,
+    bytes_in INTEGER NOT NULL,
+    PRIMARY KEY (dimension, hour, key, action)
+) WITHOUT ROWID;
+INSERT INTO rollups_by SELECT 1, hour, exe, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
+INSERT INTO rollups_by SELECT 2, hour, host, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
+INSERT INTO rollups_by SELECT 3, hour, port, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
+INSERT INTO rollups_by SELECT 4, hour, uid, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
+",
 ];
+
+/// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
+macro_rules! explore {
+    ($group:literal, $filter:literal) => {
+        (
+            concat!("explore.", $group, ".", $filter),
+            concat!(
+                "SELECT ", $group, ", sum(CASE WHEN action = 1 THEN count ELSE 0 END),
+                        sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
+                 FROM rollups WHERE hour >= ?1 AND hour < ?2 AND ", $filter, " = ?4
+                 GROUP BY ", $group, " ORDER BY sum(count) DESC LIMIT ?3"
+            ),
+        )
+    };
+}
 
 /// What kind of string a `strings` row is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -269,12 +323,6 @@ pub const STATEMENTS: &[(&str, &str)] = &[
               CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.time_ms >= ?1 AND e.source != 1",
     ),
-    // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
-    (
-        "events.bytes",
-        "UPDATE events SET bytes_out = ?2, bytes_in = ?3
-         WHERE seq = (SELECT seq FROM events WHERE cookie = ?1 ORDER BY seq DESC LIMIT 1)",
-    ),
     (
         "audit.insert",
         "INSERT INTO audit (time_ms, app, uid, pid, action, outcome) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -283,6 +331,58 @@ pub const STATEMENTS: &[(&str, &str)] = &[
         "audit.page",
         "SELECT id, time_ms, app, uid, pid, action, outcome FROM audit WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
     ),
+    (
+        "rollups.add",
+        "INSERT INTO rollups (hour, exe, host, port, protocol, uid, action, count, bytes_out, bytes_in)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+         ON CONFLICT (hour, exe, host, port, protocol, uid, action) DO UPDATE SET
+             count = count + excluded.count,
+             bytes_out = bytes_out + excluded.bytes_out,
+             bytes_in = bytes_in + excluded.bytes_in",
+    ),
+    ("rollups.prune", "DELETE FROM rollups WHERE hour < ?1"),
+    (
+        "rollups_by.add",
+        "INSERT INTO rollups_by (dimension, hour, key, action, count, bytes_out, bytes_in)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT (dimension, hour, key, action) DO UPDATE SET
+             count = count + excluded.count,
+             bytes_out = bytes_out + excluded.bytes_out,
+             bytes_in = bytes_in + excluded.bytes_in",
+    ),
+    (
+        "rollups_by.prune",
+        "DELETE FROM rollups_by WHERE dimension = ?1 AND hour < ?2",
+    ),
+    (
+        "explore.by",
+        "SELECT key, sum(CASE WHEN action = 1 THEN count ELSE 0 END),
+                sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
+         FROM rollups_by WHERE dimension = ?4 AND hour >= ?1 AND hour < ?2
+         GROUP BY key ORDER BY sum(count) DESC LIMIT ?3",
+    ),
+    // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
+    (
+        "events.by_cookie",
+        "SELECT seq, time_ms, exe, coalesce(host, 0), port, protocol, uid, action, bytes_out, bytes_in
+         FROM events WHERE cookie = ?1 ORDER BY seq DESC LIMIT 1",
+    ),
+    (
+        "events.bytes_of",
+        "UPDATE events SET bytes_out = ?2, bytes_in = ?3 WHERE seq = ?1",
+    ),
+    explore!("exe", "host"),
+    explore!("exe", "port"),
+    explore!("exe", "uid"),
+    explore!("host", "exe"),
+    explore!("host", "port"),
+    explore!("host", "uid"),
+    explore!("port", "exe"),
+    explore!("port", "host"),
+    explore!("port", "uid"),
+    explore!("uid", "exe"),
+    explore!("uid", "host"),
+    explore!("uid", "port"),
     (
         "events.prune",
         "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE time_ms < ?1 ORDER BY time_ms LIMIT ?2)",
@@ -843,6 +943,12 @@ impl Store {
 #[cfg(test)]
 const SCANNABLE: &[&str] = &["folders", "rules"];
 
+/// Statements that group what an index range yields, and so sort it: the Explorer's, over the rollups of a range of
+/// hours. Their cost is the rollup rows of those hours (the variety of the traffic), not the size of the history; the
+/// gate checks that they start with that range search.
+#[cfg(test)]
+const GROUPS_IN_RANGE: &[&str] = &["explore."];
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
@@ -885,6 +991,50 @@ pub struct Recorded {
     pub seq: i64,
     pub exe: u32,
     pub host: u32,
+}
+
+/// An hour, in ms: rollups are kept per hour.
+pub const HOUR_MS: u64 = 3_600_000;
+
+/// What the Explorer groups by and narrows with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dimension {
+    Exe,
+    Host,
+    Port,
+    Uid,
+}
+
+impl Dimension {
+    /// Its number in `rollups_by`.
+    const fn number(self) -> i64 {
+        match self {
+            Self::Exe => 1,
+            Self::Host => 2,
+            Self::Port => 3,
+            Self::Uid => 4,
+        }
+    }
+
+    const fn column(self) -> &'static str {
+        match self {
+            Self::Exe => "exe",
+            Self::Host => "host",
+            Self::Port => "port",
+            Self::Uid => "uid",
+        }
+    }
+}
+
+/// One group of the Explorer: its key (a string id for programs and hosts, 0 for no host; the number otherwise) and
+/// its connections and bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Explored {
+    pub key: i64,
+    pub allowed: u64,
+    pub blocked: u64,
+    pub bytes_out: u64,
+    pub bytes_in: u64,
 }
 
 /// A recorded connection, as read back.
@@ -1144,8 +1294,35 @@ impl Store {
                     event.rule.map(db_id),
                     event.cookie.map(db_id),
                 ])?;
+            let seq = self.connection.last_insert_rowid();
+            self.connection
+                .prepare_cached(sql("rollups.add")?)?
+                .execute(params![
+                    db_id(event.time_ms / HOUR_MS),
+                    exe,
+                    host.unwrap_or(0),
+                    event.port,
+                    event.protocol,
+                    event.uid,
+                    action_code(event.action),
+                    1,
+                    0,
+                    0,
+                ])?;
+            add_by(
+                &self.connection,
+                event.time_ms / HOUR_MS,
+                [
+                    exe,
+                    host.unwrap_or(0),
+                    i64::from(event.port),
+                    i64::from(event.uid),
+                ],
+                action_code(event.action),
+                (1, 0, 0),
+            )?;
             recorded.push(Recorded {
-                seq: self.connection.last_insert_rowid(),
+                seq,
                 exe: u32::try_from(exe).unwrap_or(0),
                 host: host.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
             });
@@ -1262,13 +1439,117 @@ impl Store {
     pub fn record_bytes(&mut self, counts: &[(u64, u64, u64)]) -> Result<(), Error> {
         let transaction = self.connection.unchecked_transaction()?;
         {
-            let mut statement = self.connection.prepare_cached(sql("events.bytes")?)?;
+            let mut find = self.connection.prepare_cached(sql("events.by_cookie")?)?;
+            let mut update = self.connection.prepare_cached(sql("events.bytes_of")?)?;
+            let mut rollup = self.connection.prepare_cached(sql("rollups.add")?)?;
             for &(cookie, sent, read) in counts {
-                statement.execute(params![db_id(cookie), db_id(sent), db_id(read)])?;
+                // The socket's newest event, and its bytes so far: the rollup gets the difference.
+                let event = find
+                    .query_row(params![db_id(cookie)], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            [
+                                row.get::<_, i64>(1)? / i64::try_from(HOUR_MS).unwrap_or(i64::MAX),
+                                row.get(2)?,
+                                row.get(3)?,
+                                row.get(4)?,
+                                row.get(5)?,
+                                row.get(6)?,
+                                row.get(7)?,
+                            ],
+                            row.get::<_, i64>(8)?,
+                            row.get::<_, i64>(9)?,
+                        ))
+                    })
+                    .optional()?;
+                let Some((seq, key, old_out, old_in)) = event else {
+                    continue;
+                };
+                let (sent, read) = (db_id(sent), db_id(read));
+                update.execute(params![seq, sent, read])?;
+                let [hour, exe, host, port, protocol, uid, action] = key;
+                let (out, inn) = ((sent - old_out).max(0), (read - old_in).max(0));
+                add_by(
+                    &self.connection,
+                    u64::try_from(hour).unwrap_or(0),
+                    [exe, host, port, uid],
+                    u8::try_from(action).unwrap_or(0),
+                    (0, out, inn),
+                )?;
+                rollup.execute(params![
+                    hour,
+                    exe,
+                    host,
+                    port,
+                    protocol,
+                    uid,
+                    action,
+                    0,
+                    (sent - old_out).max(0),
+                    (read - old_in).max(0),
+                ])?;
             }
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    /// Groups the rollups of hours [`from_hour`, `to_hour`) by `group`, optionally of one value of another dimension,
+    /// busiest first, at most `limit` groups.
+    pub fn explore(
+        &self,
+        from_hour: u64,
+        to_hour: u64,
+        group: Dimension,
+        filter: Option<(Dimension, i64)>,
+        limit: u32,
+    ) -> Result<Vec<Explored>, Error> {
+        let name = match (group, filter.map(|(d, _)| d)) {
+            (_, None) => "explore.by".to_owned(),
+            (g, Some(f)) if g != f => format!("explore.{}.{}", g.column(), f.column()),
+            _ => return Ok(Vec::new()),
+        };
+        let statement_sql = STATEMENTS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, sql)| *sql)
+            .ok_or(Error::NotFound("explore statement", 0))?;
+        let mut statement = self.connection.prepare_cached(statement_sql)?;
+        let row = |row: &rusqlite::Row<'_>| {
+            Ok(Explored {
+                key: row.get(0)?,
+                allowed: id_of(row.get(1)?),
+                blocked: id_of(row.get(2)?),
+                bytes_out: id_of(row.get(3)?),
+                bytes_in: id_of(row.get(4)?),
+            })
+        };
+        let (from, to) = (db_id(from_hour), db_id(to_hour));
+        let rows = match filter {
+            None => statement.query_map(params![from, to, limit, group.number()], row)?,
+            Some((_, value)) => statement.query_map(params![from, to, limit, value], row)?,
+        };
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The id of a string, if the history has it.
+    pub fn string_id(&self, kind: StringKind, value: &str) -> Result<Option<i64>, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("strings.find")?)?
+            .query_row(params![kind as u8, value], |row| row.get(0))
+            .optional()?)
+    }
+
+    /// Deletes the rollups of the hours before `before_ms`.
+    pub fn prune_rollups(&mut self, before_ms: u64) -> Result<usize, Error> {
+        let hour = db_id(before_ms / HOUR_MS);
+        let mut by = self.connection.prepare_cached(sql("rollups_by.prune")?)?;
+        for dimension in 1..=4 {
+            by.execute(params![dimension, hour])?;
+        }
+        let mut statement = self.connection.prepare_cached(sql("rollups.prune")?)?;
+        Ok(statement.execute(params![hour])?)
     }
 
     /// Deletes up to `limit` of the events older than `before_ms`; returns how many. Called in small chunks, so pruning
@@ -1282,6 +1563,30 @@ impl Store {
     fn connection(&self) -> &Connection {
         &self.connection
     }
+}
+
+/// Adds to the per-dimension rollups of an hour: `keys` are the program, host, port and user; `counts` the
+/// connections and bytes out and in.
+fn add_by(
+    connection: &Connection,
+    hour: u64,
+    keys: [i64; 4],
+    action: u8,
+    counts: (i64, i64, i64),
+) -> Result<(), Error> {
+    let mut statement = connection.prepare_cached(sql("rollups_by.add")?)?;
+    for (dimension, key) in (1..).zip(keys) {
+        statement.execute(params![
+            dimension,
+            db_id(hour),
+            key,
+            action,
+            counts.0,
+            counts.1,
+            counts.2
+        ])?;
+    }
+    Ok(())
 }
 
 /// The id of a string, adding it if new. Cached, so repeated strings cost no query.
@@ -1403,6 +1708,8 @@ fn id_of(id: i64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write as _;
+
     use std::net::IpAddr;
     use std::sync::Arc;
 
@@ -1521,6 +1828,108 @@ mod tests {
             notes: String::new(),
             conditions: vec![Condition::Port(vec![(443, 443)])],
         }
+    }
+
+    #[test]
+    fn rollups_follow_events_and_their_bytes() {
+        let mut store = Store::in_memory().unwrap();
+        let mut curl = event(1, "/usr/bin/curl", Some("example.com"));
+        curl.cookie = Some(7);
+        let mut wget = event(2, "/usr/bin/wget", Some("example.com"));
+        wget.action = Action::Deny;
+        let mut recorded = Vec::new();
+        store
+            .record(
+                &[curl.clone(), event(3, "/usr/bin/curl", None), wget],
+                &mut recorded,
+            )
+            .unwrap();
+        store.record_bytes(&[(7, 500, 9000)]).unwrap();
+        // Counted again: only the difference reaches the rollup.
+        store.record_bytes(&[(7, 600, 9000)]).unwrap();
+        let by_exe = store
+            .explore(0, u64::MAX / HOUR_MS, Dimension::Exe, None, 10)
+            .unwrap();
+        let curl_id = i64::from(recorded[0].exe);
+        let curl_row = by_exe.iter().find(|r| r.key == curl_id).unwrap();
+        assert_eq!((curl_row.allowed, curl_row.blocked), (2, 0));
+        assert_eq!((curl_row.bytes_out, curl_row.bytes_in), (600, 9000));
+        assert_eq!(by_exe[0].key, curl_id, "busiest first");
+        // Drill-down: the hosts of wget's connections, blocked.
+        let wget_id = i64::from(recorded[2].exe);
+        let hosts = store
+            .explore(
+                0,
+                u64::MAX / HOUR_MS,
+                Dimension::Host,
+                Some((Dimension::Exe, wget_id)),
+                10,
+            )
+            .unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!((hosts[0].allowed, hosts[0].blocked), (0, 1));
+        assert_eq!(store.prune_rollups(u64::MAX / 2).unwrap(), 3);
+    }
+
+    /// The Explorer over a month of a million connections: `mise run perf` (release, `--ignored`).
+    #[test]
+    #[ignore = "a million events: run with mise run perf"]
+    fn explore_stays_fast_over_a_million_events() {
+        let mut store = Store::in_memory().unwrap();
+        let programs: Vec<String> = (0..200)
+            .map(|i| format!("/usr/lib/p{i}/bin/p{i}"))
+            .collect();
+        let hosts: Vec<String> = (0..2000).map(|i| format!("s{i}.example.com")).collect();
+        let month = 30 * 24 * HOUR_MS;
+        let mut recorded = Vec::new();
+        for chunk in 0..1000_u64 {
+            let events: Vec<Event> = (0..1000_u64)
+                .map(|i| {
+                    let n = chunk * 1000 + i;
+                    let mut e = event(
+                        n,
+                        &programs[usize::try_from(n * 7 % 200).unwrap()],
+                        Some(&hosts[usize::try_from(n * 13 % 2000).unwrap()]),
+                    );
+                    e.time_ms = n * month / 1_000_000;
+                    e.port = [443, 80, 53][usize::try_from(n % 3).unwrap()];
+                    e
+                })
+                .collect();
+            store.record(&events, &mut recorded).unwrap();
+        }
+        let started = std::time::Instant::now();
+        let by_program = store
+            .explore(0, month / HOUR_MS + 1, Dimension::Exe, None, 1000)
+            .unwrap();
+        let grouped = started.elapsed();
+        let program = by_program[0].key;
+        let started = std::time::Instant::now();
+        let hosts_of_one = store
+            .explore(
+                0,
+                month / HOUR_MS + 1,
+                Dimension::Host,
+                Some((Dimension::Exe, program)),
+                100,
+            )
+            .unwrap();
+        let drilled = started.elapsed();
+        let total: u64 = by_program.iter().map(|r| r.allowed + r.blocked).sum();
+        assert_eq!(total, 1_000_000);
+        assert_ne!(hosts_of_one.len(), 0);
+        let _ = writeln!(
+            std::io::stderr(),
+            "a month of a million connections: by program {grouped:?}, one program's hosts {drilled:?}"
+        );
+        assert!(
+            grouped < std::time::Duration::from_millis(500),
+            "{grouped:?}"
+        );
+        assert!(
+            drilled < std::time::Duration::from_millis(500),
+            "{drilled:?}"
+        );
     }
 
     #[test]
@@ -1678,7 +2087,16 @@ mod tests {
                 let scans_growing_table = detail.starts_with("SCAN")
                     && !SCANNABLE.iter().any(|t| detail == &format!("SCAN {t}"));
                 assert!(!scans_growing_table, "{name} scans: {details:?}");
-                assert!(!detail.contains("TEMP B-TREE"), "{name} sorts: {details:?}");
+                let sorts_within_range = GROUPS_IN_RANGE
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix))
+                    && details.first().is_some_and(|first| {
+                        first.starts_with("SEARCH") && first.contains("hour>? AND hour<?")
+                    });
+                assert!(
+                    !detail.contains("TEMP B-TREE") || sorts_within_range,
+                    "{name} sorts: {details:?}"
+                );
             }
         }
     }

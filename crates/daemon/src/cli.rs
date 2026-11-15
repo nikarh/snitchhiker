@@ -63,6 +63,10 @@ Commands:
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
+  explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+                                  Connections of the last n hours (default 24), allowed and blocked, and their bytes,
+                                  grouped by program (default), host, port or user, busiest first; --where narrows
+                                  them to one program, host, port or user
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections
@@ -140,25 +144,8 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         Some("rules") => rules(args, version),
         Some("folders") => folders(args, version),
-        Some("history") => {
-            let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
-            reject_rest(args)?;
-            let mut client = connect(version)?;
-            match client.call(Method::ListChanges(v1::ListChanges { before: 0, limit }))? {
-                v1::response::Result::Changes(page) => {
-                    let mut text = String::new();
-                    for change in &page.changes {
-                        let _ = writeln!(
-                            text,
-                            "{:>6}  batch {:<5} {}  {:<8} {}",
-                            change.id, change.batch, change.time_ms, change.app, change.what
-                        );
-                    }
-                    out(&text)
-                }
-                _ => Err(unexpected()),
-            }
-        }
+        Some("explore") => explore(args, version),
+        Some("history") => history(args, version),
         Some("undo") => {
             let change: u64 = args.free_from_str()?;
             reject_rest(args)?;
@@ -211,6 +198,95 @@ fn print_file(result: v1::response::Result) -> Result<(), Error> {
 }
 
 /// `snitchhiker rules ...`.
+/// `explore`.
+fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let by: String = args
+        .opt_value_from_str("--by")?
+        .unwrap_or_else(|| "program".to_owned());
+    let hours: u64 = args.opt_value_from_str("--hours")?.unwrap_or(24);
+    let filter: Option<String> = args.opt_value_from_str("--where")?;
+    reject_rest(args)?;
+    let dimension = |name: &str| match name {
+        "program" => Ok(v1::Dimension::Program),
+        "host" => Ok(v1::Dimension::Host),
+        "port" => Ok(v1::Dimension::Port),
+        "user" => Ok(v1::Dimension::User),
+        other => Err(Error::Usage(format!(
+            "unknown dimension `{other}` (program, host, port, user)"
+        ))),
+    };
+    let filter = match filter {
+        None => None,
+        Some(text) => {
+            let (name, value) = text
+                .split_once('=')
+                .ok_or_else(|| Error::Usage("--where <dimension>=<value>".to_owned()))?;
+            Some(v1::ExploreFilter {
+                dimension: dimension(name)?.into(),
+                value: value.to_owned(),
+            })
+        }
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let mut client = connect(version)?;
+    match client.call(Method::Explore(v1::Explore {
+        from_ms: now.saturating_sub(hours * 3_600_000),
+        to_ms: now,
+        group_by: dimension(&by)?.into(),
+        filter,
+        limit: 50,
+    }))? {
+        v1::response::Result::Explored(page) => {
+            let mut text = format!(
+                "{:>9} {:>9} {:>11} {:>11}  {by}\n",
+                "allowed", "blocked", "sent", "received"
+            );
+            for row in &page.rows {
+                let _ = writeln!(
+                    text,
+                    "{:>9} {:>9} {:>11} {:>11}  {}",
+                    row.allowed,
+                    row.blocked,
+                    row.bytes_out,
+                    row.bytes_in,
+                    if row.key.is_empty() {
+                        "(no name)"
+                    } else {
+                        &row.key
+                    }
+                );
+            }
+            out(&text)
+        }
+        _ => Err(unexpected()),
+    }
+}
+
+/// `history`.
+fn history(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
+    reject_rest(args)?;
+    let mut client = connect(version)?;
+    match client.call(Method::ListChanges(v1::ListChanges { before: 0, limit }))? {
+        v1::response::Result::Changes(page) => {
+            let mut text = String::new();
+            for change in &page.changes {
+                let _ = writeln!(
+                    text,
+                    "{:>6}  batch {:<5} {}  {:<8} {}",
+                    change.id, change.batch, change.time_ms, change.app, change.what
+                );
+            }
+            out(&text)
+        }
+        _ => Err(unexpected()),
+    }
+}
+
 /// `folders`: list, add, rename and delete folders.
 fn folders(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;

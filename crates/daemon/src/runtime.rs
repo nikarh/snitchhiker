@@ -831,6 +831,9 @@ fn write_loop(
                     break;
                 }
             }
+            if let Err(error) = store.prune_rollups(cutoff) {
+                error!(%error, "pruning rollups");
+            }
         }
     }
 }

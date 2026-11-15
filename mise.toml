@@ -21,6 +21,10 @@ run = ["cargo fmt --all --check", "cargo clippy --locked --all-targets"]
 description = "Run the host-safe tests (unit, property): nothing privileged"
 run = "cargo test --locked"
 
+[tasks.perf]
+description = "The performance checks too heavy for every test run (a million events through the Explorer), in release"
+run = "cargo test --locked --release -p snitchhiker-daemon -- --ignored --nocapture"
+
 [tasks.deny]
 description = "Audit dependencies: advisories, licenses, duplicates, sources"
 run = "cargo deny check"
