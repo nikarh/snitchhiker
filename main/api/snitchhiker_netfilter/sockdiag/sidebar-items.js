@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["encode_destroy"],"struct":["SockDiag","SocketId"]};
+window.SIDEBAR_ITEMS = {"fn":["encode_destroy","encode_dump","state_name"],"struct":["LiveSocket","SockDiag","SocketId"]};
