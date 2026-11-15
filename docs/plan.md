@@ -2055,7 +2055,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
 ### M3. Desktop app
 
 - [ ] **`client` crate (from M2)**
-  - [ ] Reconnect with backoff, resubscribing from the last seq seen.
+  - [x] Reconnect with backoff, resubscribing from the last seq seen (the app's backend).
   - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)) and the query language with its two
         executors.
 - [ ] **App shell**
@@ -2074,13 +2074,18 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] Settings/policy per node; trusted clients; about/diagnostics.
 - [ ] **Import/export**
   - [ ] Native, the OpenSnitch rules + `system-fw.json` importer (with a preview), CSV export.
-- [ ] **Packaging**
-  - [ ] `.desktop` file, icons, the setgid install, a systemd user unit for autostart, the `snitchhiker-ui` package.
-  - [ ] Package hooks: `snitchhikerd trust-client /usr/bin/snitchhiker-ui` after install and upgrade, `untrust-client`
+- [x] **Packaging**
+  - [x] `.desktop` file, icons, the setgid install, a systemd user unit for autostart, the `snitchhiker-ui` package.
+  - [x] Package hooks: `snitchhikerd trust-client /usr/bin/snitchhiker-ui` after install and upgrade, `untrust-client`
         on removal ([decision 0006](decisions/0006-client-trust.md)); the app shows the daemon's refusal reason.
 - [ ] **Docs**
   - [ ] Screenshot pipeline for the desktop app (synthetic history, VM, headless compositor, text check).
   - [ ] Guides: answering prompts, rules and folders, the query language, the Explorer, importing from OpenSnitch.
+Done so far besides: the shell with environment scrubbing; Prompts with desktop notifications and their actions;
+Events with infinite scroll and live events; the Explorer, from hourly rollups (a month of a million connections in
+about 50 ms); the rule editor with its check against history, and history with undo; the OpenSnitch importer (command
+line). Left: as unchecked above.
+
 - **DoD:** the user replaces OpenSnitch on the workstation. Every OpenSnitch rule is imported, prompts are answered in
   the app, and the explorer stays responsive on more than 1M events.
 
