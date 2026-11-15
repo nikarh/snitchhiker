@@ -1,0 +1,14 @@
+[package]
+name = "snitchhiker-core"
+description = "Rule model, matching engine and query language of Snitchhiker, an interactive application firewall"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
