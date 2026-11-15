@@ -90,6 +90,7 @@ pub fn an_answer_decides_and_leaves_a_rule() -> Result<(), String> {
             duration: v1::Duration::Forever.into(),
             suggestion: 0,
             conditions: None,
+            folder: None,
         }))
         .map_err(|e| format!("answering: {e}"))?;
     let first = output(connecting)?;
@@ -130,6 +131,12 @@ pub fn an_answer_decides_and_leaves_a_rule() -> Result<(), String> {
     check(
         rules.contains(&format!(":{port}")),
         "the rule isn't listed",
+        &rules,
+    )?;
+    // python3 is the program: its rule goes in its own folder, Apps/python3.x.
+    check(
+        rules.contains("Apps/python3"),
+        "the rule isn't in the program's folder",
         &rules,
     )
 }
@@ -184,6 +191,7 @@ pub fn the_same_connections_share_a_prompt() -> Result<(), String> {
             duration: v1::Duration::Once.into(),
             suggestion: 0,
             conditions: None,
+            folder: None,
         }))
         .map_err(|e| e.to_string())?;
     let (first, second) = (output(first)?, output(second)?);

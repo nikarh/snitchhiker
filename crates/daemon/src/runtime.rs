@@ -23,7 +23,7 @@ use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
 use tracing::{error, info, warn};
 
-use snitchhiker_core::rule::{Expiry, Rule, RuleId, Tier};
+use snitchhiker_core::rule::{Expiry, FolderId, Rule, RuleId, Tier};
 use snitchhiker_proto::{convert, v1};
 
 use crate::config::{Config, Fail, Mode, Policy};
@@ -217,6 +217,7 @@ impl Daemon {
         duration: v1::Duration,
         suggestion: usize,
         conditions: Option<&v1::Conditions>,
+        folder: Option<FolderId>,
         by: &str,
     ) -> Result<Option<RuleId>, AnswerError> {
         let now = now_ms();
@@ -233,7 +234,7 @@ impl Daemon {
             Some(expiry) => Some(
                 self.shared
                     .broker
-                    .peek(id, |pending| -> Result<Rule, AnswerError> {
+                    .peek(id, |pending| -> Result<(Rule, String), AnswerError> {
                         let (label, spec) = match conditions {
                             Some(conditions) => (
                                 "Answer to a prompt".to_owned(),
@@ -255,7 +256,14 @@ impl Daemon {
                                 "the answer's rule has no conditions".to_owned(),
                             ));
                         }
-                        Ok(Rule {
+                        let program = pending
+                            .prompt
+                            .exe
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned();
+                        let rule = Rule {
                             id: 0,
                             folder: None,
                             name: label,
@@ -266,10 +274,24 @@ impl Daemon {
                             log: true,
                             notes: String::new(),
                             conditions,
-                        })
+                        };
+                        Ok((rule, program))
                     })
                     .ok_or(AnswerError::NotFound)??,
             ),
+        };
+        // Into the chosen folder, or the program's own; a folder that can't take it leaves the prompt waiting.
+        let rule = match rule {
+            Some((mut rule, program)) => {
+                crate::placement::place(&mut self.store(), &mut rule, folder, &program).map_err(
+                    |e| match e {
+                        crate::placement::Error::Store(e) => AnswerError::Runtime(Error::from(e)),
+                        other => AnswerError::Invalid(other.to_string()),
+                    },
+                )?;
+                Some(rule)
+            }
+            None => None,
         };
         let pending = self.shared.broker.take(id).ok_or(AnswerError::NotFound)?;
         let rule_id = match rule {

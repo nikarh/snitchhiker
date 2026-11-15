@@ -37,7 +37,8 @@ Commands:
   prompts                         The connections waiting for an answer
   prompts watch                   Print prompts as they open and close (until interrupted)
   prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|12h|forever>]
-                                  Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default)
+                [--folder <id>]   Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default),
+                                  in the program's folder (Apps/<program>) or the folder given
   audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
                                   and whether step-up authorized them
   version                         Print the version
@@ -239,6 +240,7 @@ fn prompts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             let id: u64 = args.free_from_str()?;
             let action = action(&args.free_from_str::<String>()?)?;
             let suggestion: u32 = args.opt_value_from_str("--suggestion")?.unwrap_or(0);
+            let folder: Option<u64> = args.opt_value_from_str("--folder")?;
             let duration = match args
                 .opt_value_from_str::<_, String>("--duration")?
                 .as_deref()
@@ -257,6 +259,7 @@ fn prompts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 duration: duration.into(),
                 suggestion,
                 conditions: None,
+                folder,
             }))?;
             out(&format!("answered prompt {id}\n"))
         }
@@ -320,6 +323,25 @@ fn format_status(status: &v1::Status) -> String {
     )
 }
 
+/// `Apps/curl/`: the folders a rule is in, from the top.
+fn folder_path(list: &v1::RuleList, folder: Option<u64>) -> String {
+    let mut names = Vec::new();
+    let mut next = folder;
+    for _ in 0..list.folders.len() {
+        let Some(found) = next.and_then(|id| list.folders.iter().find(|f| f.id == id)) else {
+            break;
+        };
+        names.push(found.name.as_str());
+        next = found.parent;
+    }
+    names.reverse();
+    names.iter().fold(String::new(), |mut path, name| {
+        path.push_str(name);
+        path.push('/');
+        path
+    })
+}
+
 fn format_rules(list: &v1::RuleList) -> String {
     let mut text = String::new();
     for rule in &list.rules {
@@ -329,7 +351,7 @@ fn format_rules(list: &v1::RuleList) -> String {
             .map_or_else(Conditions::default, convert::conditions_from);
         let _ = writeln!(
             text,
-            "{:>5}  {:<7} {:<8} {}{}{}  {}",
+            "{:>5}  {:<7} {:<8} {}{}{}{}  {}",
             if rule.locked {
                 "-".to_owned()
             } else {
@@ -339,6 +361,7 @@ fn format_rules(list: &v1::RuleList) -> String {
             format!("{:?}", rule.tier()).to_lowercase(),
             if rule.enabled { "" } else { "(disabled) " },
             if rule.locked { "(locked) " } else { "" },
+            folder_path(list, rule.folder),
             rule.name,
             toml::to_string(&spec)
                 .unwrap_or_default()

@@ -350,7 +350,7 @@ pub fn loopback_is_allowed_by_default() -> Result<(), String> {
         &rules,
     )?;
     check(
-        rules.contains("(locked) Loopback"),
+        rules.contains("(locked) System/Loopback"),
         "the default rule isn't listed as locked",
         &rules,
     )
@@ -376,7 +376,7 @@ pub fn managed_rules_apply_and_are_locked() -> Result<(), String> {
     daemon.stop()?;
     check(connected, "a managed rule didn't apply", &rules)?;
     check(
-        rules.contains("(locked) python to the test port"),
+        rules.contains("(locked) Baseline/python to the test port"),
         "the managed rule isn't listed as locked",
         &rules,
     )?;

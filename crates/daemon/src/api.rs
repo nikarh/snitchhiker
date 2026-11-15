@@ -469,6 +469,7 @@ fn answer_prompt(
         answer.duration(),
         suggestion,
         answer.conditions.as_ref(),
+        answer.folder,
         app,
     ) {
         Ok(_) => v1::response::Result::Done(v1::Done {}),

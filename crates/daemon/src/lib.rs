@@ -10,6 +10,7 @@ pub mod learn;
 pub mod managed;
 pub mod notify;
 pub mod peer;
+pub mod placement;
 pub mod process;
 pub mod prompts;
 pub mod runtime;
