@@ -161,7 +161,9 @@ pub enum BlockError {
     Width(u16, u16, usize),
     #[error("column {0} is missing")]
     Missing(u16),
-    #[error("rows span more than a block can: seq or time beyond u32 of the first row")]
+    #[error(
+        "rows span more than a block can: seq beyond u32 of the first row, or times beyond u32 of the earliest"
+    )]
     Span,
 }
 
@@ -190,6 +192,8 @@ struct Entry {
 pub fn encode_events(rows: &[EventRow], out: &mut Vec<u8>) -> Result<(), BlockError> {
     out.clear();
     let first = rows.first().copied().unwrap_or_default();
+    // Times are offsets from the earliest: the clock may have stepped back between two rows (a later row earlier).
+    let base_time = rows.iter().map(|r| r.time_ms).min().unwrap_or(0);
     let count = u32::try_from(rows.len()).map_err(|_| BlockError::Span)?;
     let columns = Column::ALL;
     out.extend_from_slice(&EVENT_MAGIC);
@@ -198,7 +202,7 @@ pub fn encode_events(rows: &[EventRow], out: &mut Vec<u8>) -> Result<(), BlockEr
     out.extend_from_slice(&count.to_le_bytes());
     out.extend_from_slice(&0_u32.to_le_bytes());
     out.extend_from_slice(&first.seq.to_le_bytes());
-    out.extend_from_slice(&first.time_ms.to_le_bytes());
+    out.extend_from_slice(&base_time.to_le_bytes());
     let mut offset = HEADER + columns.len() * DIRECTORY_ENTRY;
     for column in columns {
         let entry = Entry {
@@ -212,7 +216,7 @@ pub fn encode_events(rows: &[EventRow], out: &mut Vec<u8>) -> Result<(), BlockEr
     out.reserve(offset - out.len());
     for column in columns {
         for row in rows {
-            write_value(out, column, row, &first)?;
+            write_value(out, column, row, &first, base_time)?;
         }
     }
     Ok(())
@@ -224,6 +228,7 @@ fn write_value(
     column: Column,
     row: &EventRow,
     first: &EventRow,
+    base_time: u64,
 ) -> Result<(), BlockError> {
     let delta = |value: u64, base: u64| {
         u32::try_from(value.wrapping_sub(base)).map_err(|_| BlockError::Span)
@@ -232,7 +237,7 @@ fn write_value(
         Column::Seq => out.extend_from_slice(
             &delta(row.seq.cast_unsigned(), first.seq.cast_unsigned())?.to_le_bytes(),
         ),
-        Column::Time => out.extend_from_slice(&delta(row.time_ms, first.time_ms)?.to_le_bytes()),
+        Column::Time => out.extend_from_slice(&delta(row.time_ms, base_time)?.to_le_bytes()),
         Column::Exe => out.extend_from_slice(&row.exe.to_le_bytes()),
         Column::Host => out.extend_from_slice(&row.host.to_le_bytes()),
         Column::Uid => out.extend_from_slice(&row.uid.to_le_bytes()),
@@ -451,6 +456,16 @@ mod tests {
             EventBlock::parse(b"nope, not a block at all, really......").err(),
             Some(BlockError::Magic)
         );
+    }
+
+    #[test]
+    fn a_clock_stepped_back_still_encodes() {
+        let mut earlier = row(2);
+        earlier.time_ms = row(1).time_ms - 5_000;
+        let mut block = Vec::new();
+        encode_events(&[row(1), earlier], &mut block).unwrap();
+        let rows: Vec<EventRow> = EventBlock::parse(&block).unwrap().rows().collect();
+        assert_eq!(rows, vec![row(1), earlier]);
     }
 
     #[test]
