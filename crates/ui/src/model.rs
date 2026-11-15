@@ -228,6 +228,29 @@ pub enum Changed {
 }
 
 impl Model {
+    fn apply_connection(&mut self, update: Update) -> Changed {
+        match update {
+            Update::Connected(welcome) => {
+                self.node = Some(welcome);
+                self.disconnected = None;
+                // The subscription sends every prompt waiting: the list starts again from those.
+                self.prompts.clear();
+                Changed::Prompts
+            }
+            Update::Disconnected(reason) => {
+                self.disconnected = Some(reason);
+                // Prompts of a lost connection can't be answered; the node sends those still waiting on reconnecting.
+                if self.prompts.is_empty() {
+                    Changed::Status
+                } else {
+                    self.prompts.clear();
+                    Changed::Prompts
+                }
+            }
+            _ => Changed::Nothing,
+        }
+    }
+
     fn apply_alert(&mut self, update: Update) -> Changed {
         match update {
             Update::Alerts(alerts, open) => {
@@ -256,16 +279,8 @@ impl Model {
 
     pub fn apply(&mut self, update: Update) -> Changed {
         match update {
-            Update::Connected(welcome) => {
-                self.node = Some(welcome);
-                self.disconnected = None;
-                // The subscription sends every prompt waiting: the list starts again from those.
-                self.prompts.clear();
-                Changed::Prompts
-            }
-            Update::Disconnected(reason) => {
-                self.disconnected = Some(reason);
-                Changed::Status
+            update @ (Update::Connected(_) | Update::Disconnected(_)) => {
+                self.apply_connection(update)
             }
             Update::Status(status) => {
                 self.status = Some(status);
@@ -424,6 +439,18 @@ mod tests {
         assert_eq!(seqs(&events), vec![7, 5]);
         assert!(events.add_page(&[], Vec::new(), 0, "port:443"));
         assert_eq!(events.next_page(), None, "nothing older");
+    }
+
+    #[test]
+    fn losing_the_node_drops_its_prompts() {
+        let mut model = Model::default();
+        model.apply(Update::Prompt(v1::Prompt {
+            id: 7,
+            ..v1::Prompt::default()
+        }));
+        let changed = model.apply(Update::Disconnected("gone".to_owned()));
+        assert_eq!(changed, Changed::Prompts);
+        assert!(model.prompts.is_empty());
     }
 
     #[test]

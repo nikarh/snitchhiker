@@ -20,6 +20,7 @@ mod queue;
 mod stepup;
 mod subscriptions;
 mod tamper;
+mod tray;
 mod util;
 
 /// A scenario: a name and a function that fails with a message.
@@ -247,6 +248,15 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--tray"), Some(log)) = (args.get(1).map(String::as_str), args.get(2)) {
+        return match tray::serve(log) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                let _ = writeln!(io::stderr(), "tray: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
     }
     if let (Some("--click"), Some(x), Some(y)) = (
         args.get(1).map(String::as_str),

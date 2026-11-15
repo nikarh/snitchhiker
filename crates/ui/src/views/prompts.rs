@@ -164,7 +164,7 @@ impl Prompts {
             .child(
                 v_flex()
                     .gap_1()
-                    .child(div().text_lg().child(prompt.exe.clone()))
+                    .child(div().text_lg().child(program_name(prompt)))
                     .child(div().text_color(theme.muted_foreground).child(format!(
                         "{user} → {destination}:{} ({}), {} waiting",
                         prompt.port,
@@ -208,5 +208,15 @@ impl Render for Prompts {
                 )
             })
             .children(cards)
+    }
+}
+
+/// The prompt's program, or what to say when it isn't known: a socket older than the daemon, or a process gone
+/// before it was seen.
+fn program_name(prompt: &v1::Prompt) -> String {
+    if prompt.exe.is_empty() {
+        "An unknown program".to_owned()
+    } else {
+        prompt.exe.clone()
     }
 }

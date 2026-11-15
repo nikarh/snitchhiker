@@ -6,6 +6,7 @@ mod backend;
 mod env;
 mod model;
 mod notify;
+mod tray;
 mod views;
 
 use std::path::PathBuf;

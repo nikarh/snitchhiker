@@ -19,6 +19,7 @@ fail() { echo "FAIL  desktop/$1: $2"; echo "$3" | sed 's/^/      /'; failed=1; }
 
 # 1. A prompt answered in the app: Allow on its card leaves a rule in the program's folder.
 scripts/ui-vm.sh "${shots}/prompt" '
+pkill -x curl || true
 snitchhiker rules >/dev/null
 runuser -u mallory -- curl -s -m 20 http://198.51.100.7:443 >/dev/null 2>&1 &
 sleep 2
@@ -53,6 +54,7 @@ fi
 
 # 3. A notification's "Allow once": the waiting connection is allowed, and no rule is made.
 scripts/ui-vm.sh "${shots}/notification" '
+pkill -x curl || true
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 runuser -u mallory -- curl -s -m 20 http://198.51.100.9:443 >/dev/null 2>&1 &
 sleep 2
@@ -66,6 +68,32 @@ if grep -q "allow  uid 1001   /usr/bin/curl -> 198.51.100.9:443" <<<"${out}" && 
   pass notification-allows-once
 else
   fail notification-allows-once "the connection wasn't allowed, or a rule was left" "${out}"
+fi
+
+# 4. The tray icon: it registers with a tray that starts after the app, and asks for attention while a prompt waits.
+scripts/ui-vm.sh "${shots}/tray" '
+pkill -x curl || true
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+# The VM'"'"'s own background traffic (NTP, the resolver) mustn'"'"'t be waiting too.
+snitchhiker rules add allow --exe "glob:/usr/lib/systemd/**" --name "systemd" >/dev/null
+systemctl restart snitchhikerd && sleep 6
+bus=$(cat /run/user/$uid/bus-address)
+rm -f /tmp/tray.log && install -m 666 /dev/null /tmp/tray.log
+runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$bus /tmp/snitchhiker-e2e-ui --tray /tmp/tray.log </dev/null >/dev/null 2>&1 &
+sleep 2
+item=$(head -1 /tmp/tray.log)
+property() { runuser -u mallory -- busctl --address="$bus" get-property "$item" /StatusNotifierItem org.kde.StatusNotifierItem "$1"; }
+before=$(property Status)
+runuser -u mallory -- curl -s -m 20 http://198.51.100.10:443 >/dev/null 2>&1 &
+sleep 2
+echo "item $item before $(echo $before) during $(property Status) title $(property Title)" > /tmp/desktop-result.txt
+pkill -f "snitchhiker-e2e-ui --tray" || true' "${ask}" >/dev/null 2>&1
+out=$(result)
+if grep -q 'item org.kde.StatusNotifierItem-' <<<"${out}" && grep -q 'before s "Active" during s "NeedsAttention"' <<<"${out}" \
+  && grep -q 'a connection is waiting' <<<"${out}"; then
+  pass tray-shows-waiting-prompts
+else
+  fail tray-shows-waiting-prompts "the tray item didn't register, or didn't ask for attention" "${out}"
 fi
 
 echo "screenshots in ${shots}"

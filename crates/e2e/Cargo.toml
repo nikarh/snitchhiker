@@ -22,3 +22,4 @@ snitchhiker-netfilter = { version = "0.1.0", path = "../netfilter" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
 wayland-client = "0.31.15"
 wayland-protocols-wlr = { version = "0.3.12", features = ["client"] }
+zbus = "6.3.0"

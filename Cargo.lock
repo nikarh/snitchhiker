@@ -6531,6 +6531,7 @@ dependencies = [
  "snitchhiker-proto",
  "wayland-client",
  "wayland-protocols-wlr",
+ "zbus 6.3.0",
 ]
 
 [[package]]

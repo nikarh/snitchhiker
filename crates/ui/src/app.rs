@@ -93,6 +93,7 @@ impl App {
             )
         });
         Self::explain_on_double_click(&events, window, cx);
+        let tray = crate::tray::start(updates_sender.clone());
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
         for request in [
@@ -108,7 +109,7 @@ impl App {
             cx.new(|cx| RulesPage::new(model.clone(), requests.clone(), rules.clone(), window, cx));
         let events_page = cx
             .new(|cx| EventsPage::new(model.clone(), requests.clone(), events.clone(), window, cx));
-        Self::fold_updates(updates, requests, notices, cx);
+        Self::fold_updates(updates, requests, notices, tray, cx);
         Self {
             model,
             page: Page::Events,
@@ -133,6 +134,7 @@ impl App {
         updates: async_channel::Receiver<Update>,
         requests: mpsc::Sender<Request>,
         notices: async_channel::Sender<Notice>,
+        tray: crate::tray::Tray,
         cx: &mut Context<Self>,
     ) {
         cx.spawn(async move |this, cx| {
@@ -154,6 +156,7 @@ impl App {
                     for id in before.iter().filter(|id| !prompts.contains_key(id)) {
                         let _ = notices.try_send(Notice::Close(*id));
                     }
+                    tray.set(u32::try_from(prompts.len()).unwrap_or(u32::MAX));
                     match changed {
                         Changed::RulesOnNode => {
                             let _ = requests.send(Request::Rules);

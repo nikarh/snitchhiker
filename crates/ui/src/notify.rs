@@ -74,14 +74,22 @@ pub fn start(
 /// The text of a prompt's notification: (summary, body).
 #[must_use]
 pub fn text(prompt: &v1::Prompt) -> (String, String) {
-    let program = prompt.exe.rsplit('/').next().unwrap_or(&prompt.exe);
+    let program = if prompt.exe.is_empty() {
+        "An unknown program"
+    } else {
+        prompt.exe.rsplit('/').next().unwrap_or(&prompt.exe)
+    };
     let destination = prompt.hosts.first().cloned().unwrap_or_else(|| {
         snitchhiker_proto::convert::address_from(&prompt.address)
             .map_or_else(String::new, |a| a.to_string())
     });
     (
         format!("{program} wants to connect"),
-        format!("to {destination}:{}\n{}", prompt.port, prompt.exe),
+        if prompt.exe.is_empty() {
+            format!("to {destination}:{}", prompt.port)
+        } else {
+            format!("to {destination}:{}\n{}", prompt.port, prompt.exe)
+        },
     )
 }
 
