@@ -44,6 +44,25 @@ jobs:
         env:
           PROTO_BASE: ${{ github.event_name == 'pull_request' && 'origin/main' || 'HEAD~1' }}
 
+  android:
+    name: android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The app's Rust core, for the phone (arm64) and the emulator (x86_64).
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: android
+      # The JDK, Gradle, the SDK's command-line tools and cargo-ndk.
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install_args: java gradle http:android-cmdline-tools cargo:cargo-ndk
+      - run: mise run android:sdk
+      # ktlint, Android Lint, the JVM tests and a debug build.
+      - run: mise run android:check
+
   deny:
     name: dependency audit
     runs-on: ubuntu-24.04

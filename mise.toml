@@ -17,6 +17,8 @@ gradle = "9.8.1"
 [env]
 ANDROID_HOME = "{{config_root}}/.android-sdk"
 ANDROID_SDK_ROOT = "{{config_root}}/.android-sdk"
+# The NDK `mise run android:sdk` installs, for cargo-ndk.
+ANDROID_NDK_HOME = "{{config_root}}/.android-sdk/ndk/30.0.16248370"
 
 [tasks."android:sdk"]
 description = "Install the pinned Android SDK packages and the NDK into .android-sdk"
