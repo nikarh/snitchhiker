@@ -174,3 +174,142 @@ pub fn a_device_connects_through_the_relay() -> Result<(), String> {
         &found,
     )
 }
+
+/// `snitchhiker-e2e --remote-device <link>`: pairs a new device with the link's node and asks it for its status;
+/// prints `connected <daemon version>` or the error. Run inside the client's network namespace.
+pub fn device(link: &str) -> std::process::ExitCode {
+    use std::io::Write as _;
+    let result = (|| -> Result<String, String> {
+        let link: PairLink = link.parse()?;
+        let key = Key::generate();
+        let options = Options::default();
+        pair(&key, &link, "behind nat", &options).map_err(|e| format!("pairing: {e}"))?;
+        let mut client = connect(&key, &link.node, &options, "e2e", "0")
+            .map_err(|e| format!("connecting: {e}"))?;
+        Ok(status(&mut client)?.daemon_version)
+    })();
+    let mut out = std::io::stdout().lock();
+    match result {
+        Ok(version) => {
+            let _ = writeln!(out, "connected {version}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _ = writeln!(out, "error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Network namespaces: a client behind a NAT router; the node and the relay on the "internet" side.
+struct Nat;
+
+const NAT_SETUP: &str = "
+set -e
+ip netns add sh-router
+ip netns add sh-client
+ip link add sh-up type veth peer name sh-r-up
+ip link set sh-r-up netns sh-router
+ip addr add 10.200.0.1/24 dev sh-up
+ip link set sh-up up
+ip -n sh-router addr add 10.200.0.2/24 dev sh-r-up
+ip -n sh-router link set sh-r-up up
+ip -n sh-router link set lo up
+ip link add sh-r-in netns sh-router type veth peer name sh-c-out netns sh-client
+ip -n sh-router addr add 10.201.0.1/24 dev sh-r-in
+ip -n sh-router link set sh-r-in up
+ip -n sh-client addr add 10.201.0.2/24 dev sh-c-out
+ip -n sh-client link set sh-c-out up
+ip -n sh-client link set lo up
+ip -n sh-client route add default via 10.201.0.1
+ip -n sh-router route add default via 10.200.0.1
+ip netns exec sh-router sysctl -qw net.ipv4.ip_forward=1
+ip netns exec sh-router nft -f - <<NFT
+table ip nat {
+  chain postrouting { type nat hook postrouting priority srcnat; oifname \"sh-r-up\" masquerade; }
+}
+NFT
+";
+
+impl Nat {
+    fn start() -> Result<Self, String> {
+        Self::remove();
+        crate::util::run("bash", &["-c", NAT_SETUP])?;
+        Ok(Self)
+    }
+
+    fn remove() {
+        let _ = crate::util::run("ip", &["netns", "del", "sh-client"]);
+        let _ = crate::util::run("ip", &["netns", "del", "sh-router"]);
+        let _ = crate::util::run("ip", &["link", "del", "sh-up"]);
+    }
+}
+
+impl Drop for Nat {
+    fn drop(&mut self) {
+        Self::remove();
+    }
+}
+
+/// A device behind NAT reaches a node that drops unsolicited inbound traffic (its system firewall), through the
+/// node's relay or a path punched through both.
+pub fn a_device_behind_nat_reaches_a_firewalled_node() -> Result<(), String> {
+    let _nat = Nat::start()?;
+    let relay_url = "http://10.200.0.1:3340";
+    let relay = {
+        let dir = "/tmp/snitchhiker-relay-test";
+        let _ = std::fs::create_dir_all(dir);
+        std::fs::write(
+            format!("{dir}/relay.toml"),
+            "http_bind = \"10.200.0.1:3340\"\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let child = std::process::Command::new("snitchhiker-relay")
+            .args(["--config", &format!("{dir}/relay.toml")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        thread::sleep(Duration::from_secs(1));
+        Relay(child)
+    };
+    let daemon = Running::start(
+        "remote-nat",
+        &format!("mode = \"monitor\"\nremote = true\nrelays = [\"{relay_url}/\"]\n"),
+    )?;
+    // Inbound dropped but for SSH (the harness's way in) and the relay (here on the same machine; a deployment's is
+    // elsewhere), as OpenSnitch's file says it.
+    crate::util::run(
+        "bash",
+        &[
+            "-c",
+            "printf '%s' '{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"filter_input\", \"Family\": \"inet\", \"Type\": \"filter\", \"Hook\": \"input\", \"Policy\": \"drop\", \"Rules\": [{\"Enabled\": true, \"Description\": \"SSH\", \"Expressions\": [{\"Statement\": {\"Op\": \"\", \"Name\": \"tcp\", \"Values\": [{\"Key\": \"dport\", \"Value\": \"22\"}]}}], \"Target\": \"accept\"}, {\"Enabled\": true, \"Description\": \"the relay\", \"Expressions\": [{\"Statement\": {\"Op\": \"\", \"Name\": \"tcp\", \"Values\": [{\"Key\": \"dport\", \"Value\": \"3340\"}]}}], \"Target\": \"accept\"}]}]}]}' | snitchhiker system import-opensnitch /dev/stdin",
+        ],
+    )?;
+    let firewall = daemon.cli(&["system"])?;
+    let link = link(&daemon, "")?;
+    let reached = crate::util::run(
+        "ip",
+        &[
+            "netns",
+            "exec",
+            "sh-client",
+            "snitchhiker-e2e",
+            "--remote-device",
+            &link.to_string(),
+        ],
+    );
+    let _ = daemon.cli(&["system", "off"]);
+    drop(relay);
+    let found = format!("link: {link}\n{firewall}\nreached: {reached:?}");
+    check(
+        firewall.contains("system firewall on, input drop"),
+        "the node's system firewall isn't dropping inbound traffic",
+        &found,
+    )?;
+    check(
+        reached.as_ref().is_ok_and(|r| r.starts_with("connected ")),
+        "the device behind NAT didn't reach the node",
+        &found,
+    )
+}

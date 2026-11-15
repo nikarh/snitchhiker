@@ -150,6 +150,10 @@ const SCENARIOS: &[Scenario] = &[
         "remote/a-device-connects-through-the-relay",
         remote::a_device_connects_through_the_relay,
     ),
+    (
+        "remote/a-device-behind-nat-reaches-a-firewalled-node",
+        remote::a_device_behind_nat_reaches_a_firewalled_node,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",
@@ -309,6 +313,9 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--remote-device"), Some(link)) = (args.get(1).map(String::as_str), args.get(2)) {
+        return remote::device(link);
     }
     if let (Some("--approve"), Some(socket), Some(id)) =
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
