@@ -1994,32 +1994,34 @@ the security model, and the GUI framework are proven before the bulk of feature 
 ### M2. Protocol, local security, prompts
 
 - [ ] **Protocol**
-  - [ ] `proto/` v1 messages: hello, RPC, subscriptions, errors, pagination cursors.
+  - [x] `proto/` v1 messages: hello, RPC, subscriptions, errors, pagination cursors.
   - [ ] Versioning at every layer ([§8.6](#86-protocol-versioning)): transport preamble and ALPN, `Hello` with
         major/minor and capabilities, block format versions, clear mismatch errors.
   - [ ] Conformance vectors in `proto/vectors/`, decoded in CI; the protocol specification page written alongside
         the code, not after it.
-  - [ ] Framing, version negotiation, limits.
+  - [x] Framing, version negotiation, limits.
   - [ ] Columnar bulk blocks with zero-copy decoding, per-node string dictionary, streaming zstd, batched live
         events ([§11.5](#115-efficient-wire-format)).
   - [ ] Spike: benchmark the columnar blocks against FlatBuffers and rkyv on size, encode and decode cost.
   - [ ] `buf breaking` (or an equivalent) in CI.
 - [ ] **API server**
-  - [ ] `client.sock` (group) and `admin.sock` (root).
-  - [ ] Every M1 capability exposed as RPC.
+  - [x] `client.sock` (group) and `admin.sock` (root).
+  - [x] Every M1 capability exposed as RPC.
   - [ ] Subscriptions with sequence numbers and resume.
 - [ ] **Local auth**
   - [ ] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
+        Items 1–3 done; 4 (the client checks the daemon's socket and credentials) is left.
   - [ ] Trusted-client registry and the `trust-client` command.
   - [ ] Session lifecycle bound to the pidfd and logind session.
 - [ ] **Step-up**
   - [ ] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions.
 - [ ] **Prompt broker**
-  - [ ] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
+  - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
   - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
         every admin client can answer regardless of notification.
-  - [ ] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement.
-  - [ ] The CLI `prompts --watch` for testing before any GUI exists.
+  - [ ] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement. All but folder
+        placement done.
+  - [x] The CLI `prompts --watch` for testing before any GUI exists.
 - [ ] **`client` crate**
   - [ ] Unix socket transport, reconnect, resubscribe from watermarks, typed API.
   - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)): per-node store, coverage sets for
@@ -2029,11 +2031,12 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] The `desktop` topology; every "disabling the firewall or changing rules" attempt, with positive controls
         through a trusted test client; results generate the docs' attacker table. Required on every PR from here on.
 - [ ] **Docs site** ([§10.7](#107-documentation-site))
-  - [ ] `site/` scaffold, `docs.yml` and `docs-publish.sh` from barbican, versions, link checking, custom domain.
+  - [x] `site/` scaffold, `docs.yml` and `docs-publish.sh` from barbican, versions, link checking. Served from
+        nikarh.github.io/snitchhiker/, no custom domain.
   - [ ] Generators and their CI drift check: protocol, command line, configuration, matchers and query keys, defaults;
-        rustdoc publishing.
-  - [ ] Pages for what exists so far: introduction, both quick starts, install, configuration, CLI, the security
-        model, how it works, writing the docs.
+        rustdoc publishing. The protocol schema is read from `proto/` at build time; the rest are left.
+  - [x] Pages for what exists so far: introduction, both quick starts, install, configuration, CLI, the security
+        model, how it works, writing the docs. (One quick start: the remote one waits for M5.)
 - [ ] **Go public**
   - [ ] `public-github-project` settings, Dependabot, release bot, first `0.1.0` release of daemon + CLI.
 - **DoD:** a test client (CLI) authenticates as setgid, receives prompts and answers them, and everything an
