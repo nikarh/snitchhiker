@@ -34,7 +34,8 @@ pub struct ProcessInfo {
 /// The host's namespaces, to tell containers and other namespaces from the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostNamespaces {
-    pub mnt: u64,
+    pub pid: u64,
+    pub user: u64,
     pub net: u64,
 }
 
@@ -42,7 +43,8 @@ impl HostNamespaces {
     /// The namespaces of process 1, the host's init.
     pub fn read() -> std::io::Result<Self> {
         Ok(Self {
-            mnt: fs::metadata("/proc/1/ns/mnt")?.ino(),
+            pid: fs::metadata("/proc/1/ns/pid")?.ino(),
+            user: fs::metadata("/proc/1/ns/user")?.ino(),
             net: fs::metadata("/proc/1/ns/net")?.ino(),
         })
     }
@@ -176,9 +178,14 @@ fn context_of(pid: u32, host: HostNamespaces) -> ContextKind {
             .ok()
             .map(|m| m.ino())
     };
-    match (ns("mnt"), ns("net")) {
-        (Some(mnt), _) if mnt != host.mnt => ContextKind::Container,
-        (_, Some(net)) if net != host.net => ContextKind::Netns,
+    // A container has a process namespace of its own, or a user namespace (a rootless one, or anything a user made
+    // with unshare: in one, a user can mount another binary over an allowed path). A mount namespace alone is no
+    // container: making one takes privileges outside a user namespace, and systemd gives its sandboxed services one
+    // (ProtectSystem, PrivateTmp); they are the host's.
+    match (ns("pid"), ns("user"), ns("net")) {
+        (Some(pid), _, _) if pid != host.pid => ContextKind::Container,
+        (_, Some(user), _) if user != host.user => ContextKind::Container,
+        (_, _, Some(net)) if net != host.net => ContextKind::Netns,
         _ => ContextKind::Host,
     }
 }
@@ -251,7 +258,11 @@ mod tests {
 
     #[test]
     fn reads_this_process_once_and_checks_its_start_time() {
-        let host = HostNamespaces::read().unwrap_or(HostNamespaces { mnt: 0, net: 0 });
+        let host = HostNamespaces::read().unwrap_or(HostNamespaces {
+            pid: 0,
+            user: 0,
+            net: 0,
+        });
         let mut cache = ProcessCache::new(host);
         let pid = std::process::id();
         let start = start_time(pid).unwrap() * NANOS_PER_TICK;

@@ -42,7 +42,7 @@ The daemon looks up a queued packet's flow in that map, then reads the process's
 
 A flow the programs didn't see (another protocol, or one opened before the daemon started) has no owner. It is decided with what is certain, the user that owns the socket, and recorded with an unknown program. Rules that name a program don't match it. Nothing is attributed by timing or likelihood.
 
-**Context.** A process whose mount namespace isn't the host's is in a container; one with the host's mounts but another network namespace is in a network namespace. Rules apply to the host only unless they say otherwise ([Rules](/guides/rules/#context)).
+**Context.** A process whose process or user namespace isn't the host's is in a container; one with the host's but another network namespace is in a network namespace. A mount namespace of its own doesn't make a process a container: systemd gives one to the services it sandboxes, and making one takes privileges outside a user namespace. Rules apply to the host only unless they say otherwise ([Rules](/guides/rules/#context)).
 
 ## Names
 

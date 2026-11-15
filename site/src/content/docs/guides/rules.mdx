@@ -74,7 +74,7 @@ A `net` value is an address, a CIDR range, or an alias:
 
 ### Context
 
-A rule without a `context` condition applies to processes on the host only. Allowing `/usr/bin/curl` then doesn't allow every `curl` in every container. `context = "container"` (a process in another mount namespace), `"netns"` (same mounts, another network namespace) or `"any"` widens it.
+A rule without a `context` condition applies to processes on the host only. Allowing `/usr/bin/curl` then doesn't allow every `curl` in every container. `context = "container"` (a process in another process or user namespace), `"netns"` (the host's, but another network namespace) or `"any"` widens it.
 
 ## Folders
 
@@ -84,9 +84,17 @@ A rule applies only while it and every folder above it are enabled. Switching a 
 
 ## Finding and changing many rules
 
+![The Rules page: the folder tree beside the rules, searched with the query language](../../../assets/screenshots/rules-light.png)
+
 The desktop app's Rules page shows the folder tree beside the rules of the folder chosen (and the folders below it). The search box takes the [query language](/reference/query-language/#keys-for-rules) and filters as you type: `curl`, `host:example.com action:deny`, `enabled:no`, `folder:Apps/*`.
 
 Rules are picked with their check boxes (Shift picks a range) and changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted. One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. Deleting more than 20 rules at once is a [dangerous action](/reference/configuration/#step_up). From the command line: `snitchhiker rules edit 12,13,14 disable`.
+
+## Editing a rule
+
+![The rule editor, with its check against the history loaded](../../../assets/screenshots/rule-editor-light.png)
+
+A rule's *Edit* (or a double-click on it) opens the editor: name, action, tier, folder and conditions. *Check against history* runs the rule as written over the connections the app has loaded and says how many it matches, before anything is saved.
 
 ## Checking the rules
 

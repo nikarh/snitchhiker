@@ -220,6 +220,51 @@ pub fn allowed_path_in_a_private_mount_namespace() -> Result<(), String> {
     )
 }
 
+/// A service systemd sandboxes (a mount namespace of its own, made by root, as `ProtectSystem` and `PrivateTmp` make
+/// one) is the host's: host rules apply to it.
+pub fn sandboxed_service_is_the_host() -> Result<(), String> {
+    let (_target, port) = tcp_listener("127.0.0.1")?;
+    let daemon = Running::start("sandboxed", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "glob:/usr/bin/python3*",
+        "--port",
+        &port.to_string(),
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let script = format!(
+        "import socket\ntry:\n    socket.create_connection(('127.0.0.1', {port}), timeout=2)\n    print('connected')\nexcept OSError as e:\n    print('failed', e)"
+    );
+    let output = Command::new("unshare")
+        .args([
+            "--mount",
+            "--propagation",
+            "private",
+            "runuser",
+            "-u",
+            "mallory",
+            "--",
+            "python3",
+            "-c",
+            &script,
+        ])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let out = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    check(
+        out.contains("connected"),
+        "a process in a mount namespace root made (as a systemd sandbox) didn't get the host's rule",
+        &out,
+    )
+}
+
 pub fn non_dumpable_process_is_not_root() -> Result<(), String> {
     let (_target, port) = tcp_listener("127.0.0.1")?;
     let daemon = Running::start("non-dumpable", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
