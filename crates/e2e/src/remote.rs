@@ -546,3 +546,39 @@ pub fn a_device_pairs_by_code_on_the_lan() -> Result<(), String> {
         &found,
     )
 }
+
+/// A client of another major version of the protocol is refused at the handshake (its ALPN), before anything else.
+pub fn another_major_version_is_refused() -> Result<(), String> {
+    let daemon = Running::start("remote-version", "mode = \"monitor\"\nremote = true\n")?;
+    let device = Key::generate();
+    let link = link(&daemon, "")?;
+    pair(&device, &link, "old", &Options::default()).map_err(|e| e.to_string())?;
+    let other =
+        snitchhiker_remote::connect(&device, &link.node, &Options::default(), b"snitchhiker/2")
+            .and_then(|mut c| {
+                use std::io::{Read as _, Write as _};
+                c.stream.write_all(b"SNHK\x02\x00")?;
+                let mut buffer = [0; 1];
+                c.stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+                match c.stream.read(&mut buffer)? {
+                    0 => Err(std::io::Error::other("closed")),
+                    _ => Ok(()),
+                }
+            });
+    let same =
+        connect(&device, &link.node, &Options::default(), "e2e", "0").map_err(|e| e.to_string());
+    let found = format!(
+        "other: {other:?}\nsame: {:?}",
+        same.as_ref().map(|_| "connected")
+    );
+    check(
+        other.is_err(),
+        "a client of another major version was served",
+        &found,
+    )?;
+    check(
+        same.is_ok(),
+        "a client of this version wasn't served",
+        &found,
+    )
+}

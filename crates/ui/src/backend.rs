@@ -218,7 +218,11 @@ fn connect(target: &Target) -> Result<Client, ClientError> {
         Target::Remote { node, key } => snitchhiker_client::remote::connect(
             key,
             node,
-            &snitchhiker_remote::Options::default(),
+            // The node's relays (from its address), and its address looked up on the local network too.
+            &snitchhiker_remote::Options {
+                lan: true,
+                ..snitchhiker_remote::Options::default()
+            },
             APP,
             env!("CARGO_PKG_VERSION"),
         ),

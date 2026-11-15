@@ -151,6 +151,10 @@ const SCENARIOS: &[Scenario] = &[
         remote::a_device_pairs_by_code_on_the_lan,
     ),
     (
+        "remote/another-major-version-is-refused",
+        remote::another_major_version_is_refused,
+    ),
+    (
         "remote/a-device-connects-through-the-relay",
         remote::a_device_connects_through_the_relay,
     ),
