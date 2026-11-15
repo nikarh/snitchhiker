@@ -5,3 +5,4 @@ pub mod destination;
 pub mod engine;
 pub mod pattern;
 pub mod rule;
+pub mod spec;
