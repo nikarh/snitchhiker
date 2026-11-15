@@ -32,6 +32,7 @@ use snitchhiker_proto::columns::{self, EventRow};
 pub const RUN_DIR: &str = "/run/snitchhiker";
 pub const CLIENT_SOCKET: &str = "/run/snitchhiker/client.sock";
 pub const ADMIN_SOCKET: &str = "/run/snitchhiker/admin.sock";
+pub const AGENT_SOCKET: &str = "/run/snitchhiker/agent.sock";
 
 static CONNECTIONS: AtomicU64 = AtomicU64::new(0);
 static OPEN: AtomicU64 = AtomicU64::new(0);
@@ -62,10 +63,18 @@ pub fn spawn(daemon: &Arc<Daemon>) -> std::io::Result<()> {
             .spawn(move || accept(&daemon, &client, &access))?;
     }
     let admin = bind(ADMIN_SOCKET, 0o600, Some(0))?;
+    {
+        let daemon = Arc::clone(daemon);
+        thread::Builder::new()
+            .name("api-admin".to_owned())
+            .spawn(move || accept(&daemon, &admin, &Access::Admin))?;
+    }
+    // Anyone may open it: the agent role changes nothing (decision 0008).
+    let agent = bind(AGENT_SOCKET, 0o666, Some(0))?;
     let daemon = Arc::clone(daemon);
     thread::Builder::new()
-        .name("api-admin".to_owned())
-        .spawn(move || accept(&daemon, &admin, &Access::Admin))?;
+        .name("api-agent".to_owned())
+        .spawn(move || accept(&daemon, &agent, &Access::Agent))?;
     Ok(())
 }
 
@@ -96,6 +105,8 @@ enum Access {
         group: u32,
     },
     Admin,
+    /// Any local process, as an agent.
+    Agent,
 }
 
 fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
@@ -144,6 +155,8 @@ struct Caller {
     pid: u32,
     /// A client's process, for step-up (root's connections need none).
     pidfd: Option<OwnedFd>,
+    /// On the agent socket: the agent behind the MCP server.
+    agent: Option<crate::agents::Agent>,
 }
 
 /// Who a connection is, or why it is refused. For a client, also its process's pidfd: the connection ends when that
@@ -163,6 +176,7 @@ fn admit(
                     uid: 0,
                     pid: u32::try_from(credentials.pid()).unwrap_or(0),
                     pidfd: None,
+                    agent: None,
                 };
                 Ok((caller, None))
             } else {
@@ -179,6 +193,19 @@ fn admit(
                 uid: peer.uid,
                 pid: peer.pid,
                 pidfd: Some(pidfd.try_clone().map_err(|e| e.to_string())?),
+                agent: None,
+            };
+            Ok((caller, Some(pidfd)))
+        }
+        Access::Agent => {
+            let (peer, pidfd) = identify(stream).map_err(|e| e.to_string())?;
+            let agent = crate::agents::identify(&peer, &config.agent_programs)?;
+            let caller = Caller {
+                role: v1::Role::Agent,
+                uid: peer.uid,
+                pid: peer.pid,
+                pidfd: None,
+                agent: Some(agent),
             };
             Ok((caller, Some(pidfd)))
         }
@@ -334,10 +361,25 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListAlerts(_)
             | Method::ListAlertRules(_)
     );
+    let agents = matches!(
+        method,
+        Method::GetStatus(_)
+            | Method::CheckConnection(_)
+            | Method::RecentBlocked(_)
+            | Method::ProposeRules(_)
+            | Method::GetProposal(_)
+            | Method::WithdrawProposal(_)
+            | Method::AnnotatePending(_)
+    );
+    let reads = reads || matches!(method, Method::ListProposals(_));
     match role {
-        v1::Role::Root | v1::Role::Admin => true,
+        // The agent role's requests are about the caller's own agent: a person's client has none.
+        v1::Role::Root | v1::Role::Admin => {
+            !agents || matches!(method, Method::GetStatus(_) | Method::GetProposal(_))
+        }
         v1::Role::Viewer => reads,
-        v1::Role::Agent | v1::Role::Unspecified => false,
+        v1::Role::Agent => agents,
+        v1::Role::Unspecified => false,
     }
 }
 
@@ -401,6 +443,14 @@ fn handle(
             Err(e) => internal(e),
         },
         Method::SetSystemFirewall(set) => set_system_firewall(daemon, caller, app, &set),
+        Method::CheckConnection(check) => check_connection(daemon, caller, &check),
+        Method::RecentBlocked(_) => recent_blocked(daemon, caller),
+        Method::ProposeRules(propose) => propose_rules(daemon, caller, &propose),
+        Method::GetProposal(get) => get_proposal(daemon, caller, get.id),
+        Method::WithdrawProposal(withdraw) => withdraw_proposal(daemon, caller, withdraw.id),
+        Method::AnnotatePending(annotate) => annotate_pending(daemon, caller, &annotate),
+        Method::ListProposals(list) => list_proposals(daemon, list),
+        Method::DecideProposal(decide) => decide_proposal(daemon, caller, app, &decide),
         Method::ConfirmSystemFirewall(_) => {
             if daemon.confirm_system() {
                 R::Done(v1::Done {})
@@ -1597,6 +1647,16 @@ fn subscribe(
     let columnar = subscribe.columnar && topic == v1::Topic::Events;
     let backfill = || -> Option<Vec<Outgoing>> {
         match (topic, subscribe.after) {
+            (v1::Topic::Proposals, _) => Some(
+                daemon
+                    .store()
+                    .proposals(Some(v1::ProposalState::Pending), 100)
+                    .inspect_err(|error| warn!(%error, "reading proposals for a subscription"))
+                    .ok()?
+                    .into_iter()
+                    .map(|p| Outgoing::Notice(v1::notice::Body::Proposal(Box::new(p))))
+                    .collect(),
+            ),
             (v1::Topic::Prompts, _) => Some(
                 daemon
                     .shared
@@ -1775,6 +1835,517 @@ fn kill_connection(daemon: &Daemon, kill: &v1::KillConnection) -> v1::response::
         ),
         Err(e) => internal(e),
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Agents (decision 0008)
+
+fn agent_of(caller: &Caller) -> Result<&crate::agents::Agent, v1::response::Result> {
+    caller.agent.as_ref().ok_or_else(|| {
+        error(
+            v1::ErrorCode::Forbidden,
+            "only an agent has its own processes",
+        )
+    })
+}
+
+fn check_connection(
+    daemon: &Daemon,
+    caller: &Caller,
+    check: &v1::CheckConnection,
+) -> v1::response::Result {
+    use snitchhiker_core::engine::Facts;
+    let agent = match agent_of(caller) {
+        Ok(agent) => agent,
+        Err(e) => return e,
+    };
+    let Ok(port) = u16::try_from(check.port) else {
+        return error(v1::ErrorCode::Invalid, "a port is 0-65535");
+    };
+    let protocol = match check.protocol.as_str() {
+        "" | "tcp" => 6,
+        "udp" => 17,
+        other => return error(v1::ErrorCode::Invalid, format!("`{other}`: tcp or udp")),
+    };
+    let host = check.host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let address: std::net::IpAddr = host
+        .parse()
+        .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let hosts: Vec<Arc<str>> = if host.parse::<std::net::IpAddr>().is_ok() || host.is_empty() {
+        Vec::new()
+    } else {
+        vec![Arc::from(host.as_str())]
+    };
+    let home = crate::process::home_of(caller.uid);
+    let lineage = [agent.anchor];
+    let facts = Facts {
+        exe: &check.exe,
+        apps: &[],
+        cmdline: "",
+        ancestors: &[],
+        lineage: &lineage,
+        uid: caller.uid,
+        home: home.as_deref(),
+        hosts: &hosts,
+        address,
+        port,
+        protocol,
+        context: snitchhiker_core::rule::ContextKind::Host,
+        now_ms: now_ms(),
+    };
+    let rules = daemon.shared.rules.load();
+    if let Some(decision) = rules.decide(&facts) {
+        let name = daemon
+            .store()
+            .rule(decision.rule)
+            .ok()
+            .flatten()
+            .map_or_else(String::new, |r| r.name);
+        return v1::response::Result::Checked(v1::CheckedConnection {
+            action: convert::action(decision.action).into(),
+            rule: name,
+            asked: false,
+        });
+    }
+    let policy = daemon.shared.policy.load();
+    let asked = policy.no_match == crate::config::Policy::Ask;
+    v1::response::Result::Checked(v1::CheckedConnection {
+        action: if asked {
+            v1::Action::Unspecified
+        } else {
+            convert::action(crate::runtime::policy_action(
+                policy.no_match,
+                policy.no_client,
+            ))
+        }
+        .into(),
+        rule: String::new(),
+        asked,
+    })
+}
+
+fn recent_blocked(daemon: &Daemon, caller: &Caller) -> v1::response::Result {
+    let agent = match agent_of(caller) {
+        Ok(agent) => agent,
+        Err(e) => return e,
+    };
+    let blocked = daemon.shared.blocked.of(agent.anchor, now_ms());
+    let broker = &daemon.shared.broker;
+    v1::response::Result::Blocked(v1::BlockedList {
+        connections: crate::agents::summarize(&blocked, &|id| broker.is_open(id)),
+    })
+}
+
+fn publish_proposal(daemon: &Daemon, proposal: &v1::Proposal) {
+    daemon.shared.hub.publish(
+        v1::Topic::Proposals,
+        &v1::notice::Body::Proposal(Box::new(proposal.clone())),
+    );
+}
+
+fn propose_rules(
+    daemon: &Daemon,
+    caller: &Caller,
+    propose: &v1::ProposeRules,
+) -> v1::response::Result {
+    use crate::agents::{MAX_JUSTIFICATION, MAX_PENDING, MAX_RULES};
+    let agent = match agent_of(caller) {
+        Ok(agent) => agent,
+        Err(e) => return e,
+    };
+    if propose.rules.is_empty() {
+        return error(v1::ErrorCode::Invalid, "no rules proposed");
+    }
+    if propose.rules.len() > MAX_RULES {
+        return error(
+            v1::ErrorCode::Invalid,
+            format!("at most {MAX_RULES} rules a proposal"),
+        );
+    }
+    if propose.justification.chars().count() > MAX_JUSTIFICATION {
+        return error(
+            v1::ErrorCode::Invalid,
+            format!("a justification is at most {MAX_JUSTIFICATION} characters"),
+        );
+    }
+    if propose.justification.trim().is_empty() {
+        return error(
+            v1::ErrorCode::Invalid,
+            "say why: the person approving reads it",
+        );
+    }
+    let now = now_ms();
+    let blocked = daemon.shared.blocked.of(agent.anchor, now);
+    let rules = daemon.shared.rules.load();
+    let broker = &daemon.shared.broker;
+    let mut shaped = Vec::new();
+    for (index, proposed) in propose.rules.iter().enumerate() {
+        match crate::agents::shape(
+            &crate::agents::proposed(proposed),
+            &blocked,
+            &|id| broker.is_open(id),
+            &|b, _| crate::agents::decide_again(&rules, b, now),
+        ) {
+            Ok(rule) => shaped.push(rule),
+            Err(refusal) => {
+                return error(
+                    v1::ErrorCode::Invalid,
+                    format!("rule {}: refused: {refusal}", index + 1),
+                );
+            }
+        }
+    }
+    let key = agent.anchor.to_string();
+    let pending = match daemon
+        .store()
+        .agent_proposals(&key, v1::ProposalState::Pending)
+    {
+        Ok(pending) => pending,
+        Err(e) => return internal(e),
+    };
+    // The same rules proposed again: the pending proposal is the answer.
+    let conditions =
+        |p: &[v1::ShapedRule]| p.iter().map(|r| r.conditions.clone()).collect::<Vec<_>>();
+    if let Some(same) = pending
+        .iter()
+        .find(|p| conditions(&p.rules) == conditions(&shaped))
+    {
+        return v1::response::Result::Proposal(Box::new(same.clone()));
+    }
+    if pending.len() >= MAX_PENDING {
+        return error(
+            v1::ErrorCode::Invalid,
+            format!(
+                "{MAX_PENDING} proposals already wait for an answer: wait for them, or withdraw some"
+            ),
+        );
+    }
+    let broad = shaped
+        .iter()
+        .any(|r| !r.risks.is_empty() && !r.already_allowed);
+    let mut proposal = v1::Proposal {
+        id: 0,
+        created_ms: now,
+        state: v1::ProposalState::Pending.into(),
+        provenance: Some(agent.provenance.clone()),
+        justification: propose.justification.clone(),
+        rules: shaped,
+        broad,
+        ..v1::Proposal::default()
+    };
+    if proposal.rules.iter().all(|r| r.already_allowed) {
+        // Nothing to ask anyone: today's rules allow it all.
+        return v1::response::Result::Proposal(Box::new(proposal));
+    }
+    let stored = daemon.store().insert_proposal(&proposal, &key);
+    match stored {
+        Ok(id) => proposal.id = id,
+        Err(e) => return internal(e),
+    }
+    daemon.watch_agents([agent.anchor]);
+    info!(id = proposal.id, agent = %agent.provenance.agent_exe, cwd = %agent.provenance.cwd, "an agent proposed rules");
+    publish_proposal(daemon, &proposal);
+    v1::response::Result::Proposal(Box::new(proposal))
+}
+
+/// A proposal the caller may see: an agent sees only its own.
+fn visible_proposal(
+    daemon: &Daemon,
+    caller: &Caller,
+    id: u64,
+) -> Result<v1::Proposal, v1::response::Result> {
+    let found = daemon.store().proposal(id).map_err(internal)?;
+    let proposal =
+        found.ok_or_else(|| error(v1::ErrorCode::NotFound, format!("no proposal {id}")))?;
+    if let Some(agent) = &caller.agent {
+        let own = proposal.provenance.as_ref().is_some_and(|p| {
+            p.agent_pid == agent.anchor.pid && p.agent_start == agent.anchor.start
+        });
+        if !own {
+            return Err(error(v1::ErrorCode::NotFound, format!("no proposal {id}")));
+        }
+    }
+    Ok(proposal)
+}
+
+fn get_proposal(daemon: &Daemon, caller: &Caller, id: u64) -> v1::response::Result {
+    match visible_proposal(daemon, caller, id) {
+        Ok(proposal) => v1::response::Result::Proposal(Box::new(proposal)),
+        Err(e) => e,
+    }
+}
+
+fn withdraw_proposal(daemon: &Daemon, caller: &Caller, id: u64) -> v1::response::Result {
+    let mut proposal = match visible_proposal(daemon, caller, id) {
+        Ok(proposal) => proposal,
+        Err(e) => return e,
+    };
+    if proposal.state() != v1::ProposalState::Pending {
+        return error(v1::ErrorCode::Invalid, "it was answered already");
+    }
+    proposal.state = v1::ProposalState::Withdrawn.into();
+    proposal.decided_ms = now_ms();
+    let updated = daemon.store().update_proposal(&proposal);
+    if let Err(e) = updated {
+        return internal(e);
+    }
+    publish_proposal(daemon, &proposal);
+    v1::response::Result::Proposal(Box::new(proposal))
+}
+
+fn annotate_pending(
+    daemon: &Daemon,
+    caller: &Caller,
+    annotate: &v1::AnnotatePending,
+) -> v1::response::Result {
+    let agent = match agent_of(caller) {
+        Ok(agent) => agent,
+        Err(e) => return e,
+    };
+    if annotate.note.chars().count() > crate::agents::MAX_NOTE {
+        return error(
+            v1::ErrorCode::Invalid,
+            format!("a note is at most {} characters", crate::agents::MAX_NOTE),
+        );
+    }
+    // Only a prompt the agent's own process opened or joined.
+    let own = daemon
+        .shared
+        .blocked
+        .of(agent.anchor, now_ms())
+        .iter()
+        .any(|b| b.prompt == Some(annotate.prompt));
+    if !own {
+        return error(
+            v1::ErrorCode::NotFound,
+            format!(
+                "no prompt {} of this agent's processes waits",
+                annotate.prompt
+            ),
+        );
+    }
+    match daemon
+        .shared
+        .broker
+        .annotate(annotate.prompt, annotate.note.trim())
+    {
+        Some(prompt) => {
+            daemon
+                .shared
+                .hub
+                .publish(v1::Topic::Prompts, &v1::notice::Body::Prompt(prompt));
+            v1::response::Result::Done(v1::Done {})
+        }
+        None => error(
+            v1::ErrorCode::NotFound,
+            format!("prompt {} was answered", annotate.prompt),
+        ),
+    }
+}
+
+fn list_proposals(daemon: &Daemon, list: v1::ListProposals) -> v1::response::Result {
+    let limit = if list.limit == 0 {
+        100
+    } else {
+        list.limit.min(1000)
+    };
+    let state = list.pending_only.then_some(v1::ProposalState::Pending);
+    match daemon.store().proposals(state, limit) {
+        Ok(proposals) => v1::response::Result::Proposals(v1::ProposalList { proposals }),
+        Err(e) => internal(e),
+    }
+}
+
+fn decide_proposal(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    decide: &v1::DecideProposal,
+) -> v1::response::Result {
+    let mut proposal = match visible_proposal(daemon, caller, decide.id) {
+        Ok(proposal) => proposal,
+        Err(e) => return e,
+    };
+    if proposal.state() != v1::ProposalState::Pending {
+        return error(
+            v1::ErrorCode::Invalid,
+            "it was answered, withdrawn or expired already",
+        );
+    }
+    if decide.reason.chars().count() > crate::agents::MAX_JUSTIFICATION {
+        return error(v1::ErrorCode::Invalid, "the reason is too long");
+    }
+    let now = now_ms();
+    decide.reason.trim().clone_into(&mut proposal.reason);
+    proposal.decided_ms = now;
+    if !decide.approve {
+        proposal.state = v1::ProposalState::Denied.into();
+        let updated = daemon.store().update_proposal(&proposal);
+        if let Err(e) = updated {
+            return internal(e);
+        }
+        publish_proposal(daemon, &proposal);
+        return v1::response::Result::Proposal(Box::new(proposal));
+    }
+    approve(daemon, caller, app, decide, proposal, now)
+}
+
+/// The rules approving `proposal` makes, with their indexes in it: as edited (shaped again, so their risks are
+/// today's), or as proposed.
+fn chosen_rules(
+    daemon: &Daemon,
+    decide: &v1::DecideProposal,
+    proposal: &v1::Proposal,
+    anchor: snitchhiker_core::rule::ProcessRef,
+    now: u64,
+) -> Result<Vec<(usize, v1::ShapedRule)>, v1::response::Result> {
+    let blocked = daemon.shared.blocked.of(anchor, now);
+    let rules_now = daemon.shared.rules.load();
+    let broker = &daemon.shared.broker;
+    let mut chosen: Vec<(usize, v1::ShapedRule)> = Vec::new();
+    if decide.rules.is_empty() {
+        chosen.extend(
+            proposal
+                .rules
+                .iter()
+                .enumerate()
+                .filter(|(_, r)| !r.already_allowed)
+                .map(|(i, r)| (i, r.clone())),
+        );
+    } else {
+        for edited in &decide.rules {
+            let index = edited.index as usize;
+            if index >= proposal.rules.len() {
+                return Err(error(
+                    v1::ErrorCode::Invalid,
+                    format!("no rule {index} in the proposal"),
+                ));
+            }
+            let Some(conditions) = &edited.conditions else {
+                return Err(error(
+                    v1::ErrorCode::Invalid,
+                    "an edited rule without conditions",
+                ));
+            };
+            match crate::agents::shape(
+                &crate::agents::proposed_from(conditions),
+                &blocked,
+                &|id| broker.is_open(id),
+                &|b, _| crate::agents::decide_again(&rules_now, b, now),
+            ) {
+                Ok(shaped) => chosen.push((index, shaped)),
+                Err(refusal) => {
+                    return Err(error(
+                        v1::ErrorCode::Invalid,
+                        format!("rule {}: {refusal}", index + 1),
+                    ));
+                }
+            }
+        }
+    }
+    Ok(chosen)
+}
+
+/// Approves `proposal` as `decide` says: makes its rules (as edited) in its agent's folder.
+fn approve(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    decide: &v1::DecideProposal,
+    mut proposal: v1::Proposal,
+    now: u64,
+) -> v1::response::Result {
+    let Some(provenance) = proposal.provenance.clone() else {
+        return internal("a proposal without provenance");
+    };
+    let anchor = snitchhiker_core::rule::ProcessRef {
+        pid: provenance.agent_pid,
+        start: provenance.agent_start,
+    };
+    let duration = match decide.duration() {
+        v1::ProposalDuration::Unspecified => v1::ProposalDuration::Session,
+        other => other,
+    };
+    if duration == v1::ProposalDuration::Session && !crate::agents::alive(anchor) {
+        return error(
+            v1::ErrorCode::Invalid,
+            "the agent ended: its session's rules would never apply",
+        );
+    }
+    let chosen = match chosen_rules(daemon, decide, &proposal, anchor, now) {
+        Ok(chosen) => chosen,
+        Err(e) => return e,
+    };
+    if chosen.is_empty() {
+        return error(v1::ErrorCode::Invalid, "no rule to make");
+    }
+    // A marked rule (broad, or one nothing the agent tried matches) takes step-up.
+    let mut risky: Vec<String> = chosen
+        .iter()
+        .flat_map(|(_, r)| r.risks.iter().map(|r| r.description.clone()))
+        .collect();
+    risky.dedup();
+    if !risky.is_empty()
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "approve agent proposal {}, which allows {}",
+                proposal.id,
+                risky.join(", ")
+            ),
+        )
+    {
+        return refused;
+    }
+    let made = change(daemon, app, |store, batch| {
+        let folder = crate::agents::folder(store, batch, &provenance)?;
+        let mut ids = Vec::new();
+        for (_, shaped) in &chosen {
+            let conditions = convert::conditions_from(
+                shaped
+                    .conditions
+                    .as_ref()
+                    .unwrap_or(&v1::Conditions::default()),
+            );
+            let rule = crate::agents::rule(&conditions, folder, duration, anchor, proposal.id, now)
+                .map_err(|e| StoreError::Corrupt {
+                    what: "a proposed rule",
+                    error: e.to_string(),
+                })?;
+            ids.push(store.put_rule(&rule, batch)?);
+        }
+        let path = store.folder_path(folder)?;
+        Ok((ids, path))
+    });
+    let (ids, path) = match made {
+        Ok(made) => made,
+        Err(e) => return e,
+    };
+    for (index, shaped) in &chosen {
+        if let Some(rule) = proposal.rules.get_mut(*index) {
+            *rule = v1::ShapedRule {
+                included: true,
+                ..shaped.clone()
+            };
+        }
+    }
+    proposal.state = v1::ProposalState::Approved.into();
+    proposal.duration = duration.into();
+    proposal.rule_ids = ids;
+    proposal.folder = path;
+    let updated = daemon.store().update_proposal(&proposal);
+    if let Err(e) = updated {
+        return internal(e);
+    }
+    info!(
+        id = proposal.id,
+        rules = proposal.rule_ids.len(),
+        "an agent's proposal was approved"
+    );
+    publish_proposal(daemon, &proposal);
+    v1::response::Result::Proposal(Box::new(proposal))
 }
 
 #[cfg(test)]

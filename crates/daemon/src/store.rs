@@ -15,6 +15,7 @@ use crate::policy::Overrides;
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
 use snitchhiker_core::system::Firewall;
 use snitchhiker_proto::columns::EventRow;
+use snitchhiker_proto::v1;
 
 /// The schema, applied in order; the index of the last one applied is kept in `PRAGMA user_version`.
 const MIGRATIONS: &[&str] = &[
@@ -188,6 +189,19 @@ CREATE TABLE node (
 );
 INSERT INTO node (id, epoch) VALUES (1, abs(random()));
 ",
+    // Agents' proposals (the protocol's Proposal, encoded), and the agent (pid@start) each came from.
+    r"
+CREATE TABLE proposals (
+    id INTEGER PRIMARY KEY,
+    created_ms INTEGER NOT NULL,
+    state INTEGER NOT NULL,
+    agent TEXT NOT NULL,
+    body BLOB NOT NULL
+);
+CREATE INDEX proposals_state ON proposals(state, id);
+CREATE INDEX proposals_agent ON proposals(agent, state);
+CREATE INDEX proposals_time ON proposals(created_ms);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -292,6 +306,25 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("alerts.prune", "DELETE FROM alerts WHERE time_ms < ?1"),
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
+    (
+        "proposals.insert",
+        "INSERT INTO proposals (created_ms, state, agent, body) VALUES (?1, ?2, ?3, ?4)",
+    ),
+    ("proposals.update", "UPDATE proposals SET state = ?2, body = ?3 WHERE id = ?1"),
+    ("proposals.get", "SELECT id, body FROM proposals WHERE id = ?1"),
+    (
+        "proposals.page",
+        "SELECT id, body FROM proposals WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    (
+        "proposals.in_state",
+        "SELECT id, body FROM proposals WHERE state = ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    (
+        "proposals.of_agent",
+        "SELECT id, body FROM proposals WHERE agent = ?1 AND state = ?2 ORDER BY id",
+    ),
+    ("proposals.prune", "DELETE FROM proposals WHERE created_ms < ?1 AND state != ?2"),
     ("alert_rules.insert", "INSERT INTO alert_rules (rule) VALUES (?1)"),
     ("alert_rules.update", "UPDATE alert_rules SET rule = ?2 WHERE id = ?1"),
     ("alert_rules.delete", "DELETE FROM alert_rules WHERE id = ?1"),
@@ -1280,6 +1313,25 @@ impl Store {
         })
     }
 
+    /// A folder's path from the top (`Agents/claude/project`).
+    pub fn folder_path(&self, id: FolderId) -> Result<String, Error> {
+        let folders = self.folders()?;
+        let mut names = Vec::new();
+        let mut next = Some(id);
+        while let Some(current) = next {
+            let Some(folder) = folders.iter().find(|f| f.id == current) else {
+                break;
+            };
+            if names.len() > folders.len() {
+                break;
+            }
+            names.push(folder.name.clone());
+            next = folder.parent;
+        }
+        names.reverse();
+        Ok(names.join("/"))
+    }
+
     pub fn folders(&self) -> Result<Vec<Folder>, Error> {
         let mut statement = self.connection.prepare_cached(sql("folders.all")?)?;
         let rows = statement.query_map([], |row| {
@@ -1640,6 +1692,96 @@ impl Store {
             .connection
             .prepare_cached(sql("alerts.prune")?)?
             .execute(params![db_id(before_ms)])?)
+    }
+
+    /// Stores a new proposal (its id is ignored) from `agent` (`pid@start`); returns its id.
+    pub fn insert_proposal(&self, proposal: &v1::Proposal, agent: &str) -> Result<u64, Error> {
+        use snitchhiker_proto::prost::Message as _;
+        self.connection
+            .prepare_cached(sql("proposals.insert")?)?
+            .execute(params![
+                db_id(proposal.created_ms),
+                proposal.state,
+                agent,
+                proposal.encode_to_vec(),
+            ])?;
+        Ok(id_of(self.connection.last_insert_rowid()))
+    }
+
+    pub fn update_proposal(&self, proposal: &v1::Proposal) -> Result<(), Error> {
+        use snitchhiker_proto::prost::Message as _;
+        let changed = self
+            .connection
+            .prepare_cached(sql("proposals.update")?)?
+            .execute(params![
+                db_id(proposal.id),
+                proposal.state,
+                proposal.encode_to_vec()
+            ])?;
+        if changed == 0 {
+            return Err(Error::NotFound("proposal", proposal.id));
+        }
+        Ok(())
+    }
+
+    fn proposal_rows(
+        &self,
+        name: &'static str,
+        params: impl rusqlite::Params,
+    ) -> Result<Vec<v1::Proposal>, Error> {
+        use snitchhiker_proto::prost::Message as _;
+        let mut statement = self.connection.prepare_cached(sql(name)?)?;
+        let rows = statement.query_map(params, |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?;
+        let mut proposals = Vec::new();
+        for row in rows {
+            let (id, body) = row?;
+            let mut proposal =
+                v1::Proposal::decode(body.as_slice()).map_err(|e| Error::Corrupt {
+                    what: "a proposal",
+                    error: e.to_string(),
+                })?;
+            proposal.id = id_of(id);
+            proposals.push(proposal);
+        }
+        Ok(proposals)
+    }
+
+    pub fn proposal(&self, id: u64) -> Result<Option<v1::Proposal>, Error> {
+        Ok(self
+            .proposal_rows("proposals.get", params![db_id(id)])?
+            .into_iter()
+            .next())
+    }
+
+    /// The newest proposals (only those in `state`, if given).
+    pub fn proposals(
+        &self,
+        state: Option<v1::ProposalState>,
+        limit: u32,
+    ) -> Result<Vec<v1::Proposal>, Error> {
+        match state {
+            Some(state) => self.proposal_rows("proposals.in_state", params![state as i32, limit]),
+            None => self.proposal_rows("proposals.page", params![i64::MAX, limit]),
+        }
+    }
+
+    /// The proposals of `agent` (`pid@start`) in `state`, oldest first.
+    pub fn agent_proposals(
+        &self,
+        agent: &str,
+        state: v1::ProposalState,
+    ) -> Result<Vec<v1::Proposal>, Error> {
+        self.proposal_rows("proposals.of_agent", params![agent, state as i32])
+    }
+
+    /// Forgets decided proposals made before `before_ms`.
+    pub fn prune_proposals(&self, before_ms: u64) -> Result<usize, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("proposals.prune")?)?
+            .execute(params![db_id(before_ms), v1::ProposalState::Pending as i32])?)
     }
 
     pub fn alert_rules(&self) -> Result<Vec<AlertRule>, Error> {

@@ -81,8 +81,36 @@ pub enum Condition {
     /// IP protocol numbers.
     Protocol(Vec<u8>),
     Context(ContextKind),
+    /// A process or anything it started (an agent's session, decision 0008).
+    Session(Vec<ProcessRef>),
     /// The opposite of the inner condition.
     Not(Box<Condition>),
+}
+
+/// A process, as the kernel knows it for its whole life: its pid and when it started (clock ticks since boot), so a
+/// pid reused by a later process never counts as it. Written `pid@start`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ProcessRef {
+    pub pid: u32,
+    pub start: u64,
+}
+
+impl std::fmt::Display for ProcessRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}@{}", self.pid, self.start)
+    }
+}
+
+impl std::str::FromStr for ProcessRef {
+    type Err = ();
+
+    fn from_str(text: &str) -> Result<Self, ()> {
+        let (pid, start) = text.trim().split_once('@').ok_or(())?;
+        Ok(Self {
+            pid: pid.parse().map_err(|_| ())?,
+            start: start.parse().map_err(|_| ())?,
+        })
+    }
 }
 
 /// Whether a rule with these conditions (its own, and its folders' scopes) allows every program to reach anywhere: an

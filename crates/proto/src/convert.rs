@@ -85,6 +85,7 @@ pub fn conditions(spec: &Conditions) -> v1::Conditions {
             .context
             .map_or(v1::Context::Unspecified, context)
             .into(),
+        session: spec.session.clone(),
     }
 }
 
@@ -101,6 +102,7 @@ pub fn conditions_from(wire: &v1::Conditions) -> Conditions {
         port: wire.port.clone(),
         protocol: wire.protocol.clone(),
         context: context_from(wire.context()),
+        session: wire.session.clone(),
     }
 }
 

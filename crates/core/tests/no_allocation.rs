@@ -71,6 +71,7 @@ mod tests {
             apps: &apps,
             cmdline: "",
             ancestors: &ancestors,
+            lineage: &[],
             uid: 1000,
             home: Some("/home/ada"),
             hosts: &hosts,

@@ -113,6 +113,14 @@ Commands:
   prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|12h|forever>]
                 [--folder <id>]   Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default),
                                   in the program's folder (Apps/<program>) or the folder given
+  proposals [--all]               Agents' proposals waiting for an answer (--all: the newest 50 of every state)
+  proposals show <id>             A proposal: who made it, the agent's words, its rules, their marks and evidence
+  proposals approve <id> [--duration <session|hour|12h|forever>] [--reason <text>]
+                                  Make its rules (for the agent's session by default), in Agents/<agent>/<project>
+  proposals deny <id> [--reason <text>]
+                                  Deny it; the agent is told the reason
+  mcp                             An MCP server on stdin and stdout, for coding agents (run as the user, by the
+                                  agent: `claude mcp add snitchhiker -- snitchhiker mcp`)
   audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
                                   and whether step-up authorized them
   version                         Print the version
@@ -180,6 +188,11 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("rules") => rules(args, version),
         Some("policy") => policy(args, version),
         Some("system") => system(args, version),
+        Some("proposals") => proposals(args, version),
+        Some("mcp") => {
+            reject_rest(args)?;
+            crate::mcp::serve(version).map_err(Error::Stdout)
+        }
         Some("alerts") => alerts(args, version),
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
@@ -1394,6 +1407,176 @@ fn format_resolved(resolved: &v1::PromptResolved) -> String {
             format!(" by {}", resolved.by)
         }
     )
+}
+
+fn proposals(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let mut client = connect(version)?;
+    let get = |client: &mut Client, id: u64| -> Result<v1::Proposal, Error> {
+        match client.call(Method::GetProposal(v1::GetProposal { id }))? {
+            v1::response::Result::Proposal(proposal) => Ok(*proposal),
+            _ => Err(unexpected()),
+        }
+    };
+    match command.as_deref() {
+        None | Some("--all") => {
+            let all = command.is_some() || args.contains("--all");
+            reject_rest(args)?;
+            match client.call(Method::ListProposals(v1::ListProposals {
+                pending_only: !all,
+                limit: 50,
+            }))? {
+                v1::response::Result::Proposals(list) => {
+                    let mut text = String::new();
+                    for p in &list.proposals {
+                        text.push_str(&format_proposal_line(p));
+                    }
+                    if list.proposals.is_empty() {
+                        text.push_str(if all {
+                            "no proposals\n"
+                        } else {
+                            "no proposals wait\n"
+                        });
+                    }
+                    out(&text)
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some("show") => {
+            let id: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            out(&format_proposal(&get(&mut client, id)?))
+        }
+        Some(verb @ ("approve" | "deny")) => {
+            let id: u64 = args.free_from_str()?;
+            let reason: String = args.opt_value_from_str("--reason")?.unwrap_or_default();
+            let duration: Option<String> = args.opt_value_from_str("--duration")?;
+            reject_rest(args)?;
+            let duration = match duration.as_deref() {
+                None | Some("session") => v1::ProposalDuration::Session,
+                Some("hour") => v1::ProposalDuration::Hour,
+                Some("12h") => v1::ProposalDuration::TwelveHours,
+                Some("forever") => v1::ProposalDuration::Forever,
+                Some(other) => return Err(Error::Usage(format!("unknown duration `{other}`"))),
+            };
+            match client.call(Method::DecideProposal(v1::DecideProposal {
+                id,
+                approve: verb == "approve",
+                reason,
+                duration: duration.into(),
+                rules: Vec::new(),
+            }))? {
+                v1::response::Result::Proposal(proposal) => out(&format_proposal(&proposal)),
+                _ => Err(unexpected()),
+            }
+        }
+        Some(other) => Err(Error::Usage(format!("unknown proposals command `{other}`"))),
+    }
+}
+
+fn proposal_state(state: v1::ProposalState) -> &'static str {
+    match state {
+        v1::ProposalState::Pending => "pending",
+        v1::ProposalState::Approved => "approved",
+        v1::ProposalState::Denied => "denied",
+        v1::ProposalState::Withdrawn => "withdrawn",
+        v1::ProposalState::Expired => "expired",
+        v1::ProposalState::Unspecified => "?",
+    }
+}
+
+fn format_proposal_line(p: &v1::Proposal) -> String {
+    let provenance = p.provenance.clone().unwrap_or_default();
+    format!(
+        "proposal {}: {} {} rule(s){} from {} in {} (user {})\n",
+        p.id,
+        proposal_state(p.state()),
+        p.rules.len(),
+        if p.broad { ", marked" } else { "" },
+        provenance.agent_exe,
+        provenance.cwd,
+        provenance.user,
+    )
+}
+
+/// A proposal for people; the agent's words are quoted and marked as such.
+fn format_proposal(p: &v1::Proposal) -> String {
+    let provenance = p.provenance.clone().unwrap_or_default();
+    let mut text = format_proposal_line(p);
+    let _ = writeln!(
+        text,
+        "  agent: pid {} {} {}{}",
+        provenance.agent_pid,
+        provenance.agent_exe,
+        provenance.agent_cmdline,
+        if provenance.known_agent {
+            " (a known agent)"
+        } else {
+            ""
+        }
+    );
+    let _ = writeln!(
+        text,
+        "  MCP server: pid {} {}",
+        provenance.server_pid, provenance.server_exe
+    );
+    let _ = writeln!(text, "  the agent says (unverified):");
+    for line in p.justification.lines() {
+        let _ = writeln!(
+            text,
+            "  | {}",
+            line.chars().filter(|c| !c.is_control()).collect::<String>()
+        );
+    }
+    for (index, rule) in p.rules.iter().enumerate() {
+        let conditions = convert::conditions_from(
+            rule.conditions
+                .as_ref()
+                .unwrap_or(&v1::Conditions::default()),
+        );
+        let _ = writeln!(
+            text,
+            "  {}. {}{}",
+            index + 1,
+            toml::to_string(&conditions)
+                .unwrap_or_default()
+                .trim()
+                .replace('\n', " "),
+            if rule.already_allowed {
+                "  (already allowed)"
+            } else if rule.included {
+                "  (made)"
+            } else {
+                ""
+            }
+        );
+        for risk in &rule.risks {
+            let _ = writeln!(text, "     marked: {}", risk.description);
+        }
+        for e in &rule.evidence {
+            let _ = writeln!(
+                text,
+                "     refused: {} → {}:{} ×{}",
+                e.exe,
+                if e.host.is_empty() {
+                    convert::address_from(&e.address).map_or_else(String::new, |a| a.to_string())
+                } else {
+                    e.host.clone()
+                },
+                e.port,
+                e.count
+            );
+        }
+    }
+    if !p.reason.is_empty() {
+        let _ = writeln!(text, "  reason: {}", p.reason);
+    }
+    if !p.folder.is_empty() {
+        let _ = writeln!(text, "  rules {:?} in {}", p.rule_ids, p.folder);
+    }
+    text
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 use std::time::Instant;
 
+mod agents;
 mod attribution;
 mod daemon;
 mod escape;
@@ -131,6 +132,10 @@ const SCENARIOS: &[Scenario] = &[
     (
         "step-up/allow-everything-needs-authorization",
         stepup::allow_everything_needs_authorization,
+    ),
+    (
+        "agents/a-proposal-is-approved-for-the-session",
+        agents::a_proposal_is_approved_for_the_session,
     ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (

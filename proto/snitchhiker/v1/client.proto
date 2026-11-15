@@ -114,6 +114,14 @@ message Request {
     ListAlertRules list_alert_rules = 44;
     PutAlertRule put_alert_rule = 45;
     DeleteAlertRule delete_alert_rule = 46;
+    CheckConnection check_connection = 47;
+    RecentBlocked recent_blocked = 48;
+    ProposeRules propose_rules = 49;
+    GetProposal get_proposal = 50;
+    WithdrawProposal withdraw_proposal = 51;
+    AnnotatePending annotate_pending = 52;
+    ListProposals list_proposals = 53;
+    DecideProposal decide_proposal = 54;
   }
 }
 
@@ -142,6 +150,10 @@ message Response {
     SystemFirewall system_firewall = 33;
     AlertPage alerts = 34;
     AlertRules alert_rules = 35;
+    CheckedConnection checked = 36;
+    BlockedList blocked = 37;
+    Proposal proposal = 38;
+    ProposalList proposals = 39;
   }
 }
 
@@ -248,6 +260,9 @@ message Conditions {
   repeated string protocol = 9;
   // Unspecified: the host only.
   Context context = 10;
+  // Processes (`pid@start`: the pid and its start time in clock ticks since boot) the rule is limited to, with
+  // everything they start: an agent's session.
+  repeated string session = 11;
 }
 
 message Rule {
@@ -461,6 +476,8 @@ enum Topic {
   TOPIC_RULES = 3;
   // Alerts as they are raised, and when alerts are acknowledged.
   TOPIC_ALERTS = 4;
+  // Agents' proposals as they are made and as they change state.
+  TOPIC_PROPOSALS = 5;
 }
 
 message Subscribe {
@@ -491,6 +508,7 @@ message Notice {
     EventBlock event_block = 7;
     Alert alert = 8;
     AlertsChanged alerts_changed = 9;
+    Proposal proposal = 10;
   }
   // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
   // resubscribes from the last event it saw, or lists prompts or rules again.
@@ -524,6 +542,8 @@ message Prompt {
   repeated Suggestion suggestions = 15;
   // The executable is writable by a user other than root: any process of that user could replace it.
   bool exe_writable = 16;
+  // What the agent whose process opened the connection says about it (agent_note): untrusted text, shown as such.
+  string agent_note = 17;
 }
 
 message Suggestion {
@@ -972,4 +992,195 @@ message Explanation {
   // The history keeps no command lines and parent programs: rules with those conditions are checked as if they
   // didn't hold.
   bool partial = 3;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Agents (decision 0008). An agent (an MCP server, on the agent socket) checks connections, sees what its own
+// processes were refused, and proposes rules; a person approves them. Its "own processes" are the agent's: the
+// process that started the MCP server, and everything it started.
+
+// How a connection would be decided, by today's rules. Nothing is changed.
+message CheckConnection {
+  // The program's path.
+  string exe = 1;
+  string host = 2;
+  uint32 port = 3;
+  // tcp (default) or udp.
+  string protocol = 4;
+}
+
+message CheckedConnection {
+  // The rule's action; unspecified when no rule decides it.
+  Action action = 1;
+  // The rule that decides it.
+  string rule = 2;
+  // No rule decides it and a person is asked.
+  bool asked = 3;
+}
+
+// The connections of the agent's own processes the node didn't allow, over the last hour.
+message RecentBlocked {}
+
+enum BlockedOutcome {
+  BLOCKED_OUTCOME_UNSPECIFIED = 0;
+  // A rule or the policy refused it.
+  BLOCKED_OUTCOME_DENIED = 1;
+  // A person was asked (`prompt` is set while the prompt waits).
+  BLOCKED_OUTCOME_ASKED = 2;
+}
+
+message BlockedConnection {
+  uint64 last_ms = 1;
+  string exe = 2;
+  // The host name, if one is known.
+  string host = 3;
+  bytes address = 4;
+  uint32 port = 5;
+  uint32 protocol = 6;
+  Context context = 7;
+  uint32 count = 8;
+  BlockedOutcome outcome = 9;
+  optional uint64 prompt = 10;
+}
+
+message BlockedList {
+  repeated BlockedConnection connections = 1;
+}
+
+// A rule as an agent proposes it: empty lists are "any".
+message ProposedRule {
+  string exe = 1;
+  // Names (`*.` and a name for its subdomains), addresses or networks.
+  repeated string hosts = 2;
+  repeated string ports = 3;
+  string protocol = 4;
+  Context context = 5;
+}
+
+message ProposeRules {
+  // Why: shown to the person as the agent's words.
+  string justification = 1;
+  repeated ProposedRule rules = 2;
+}
+
+enum ProposalState {
+  PROPOSAL_STATE_UNSPECIFIED = 0;
+  PROPOSAL_STATE_PENDING = 1;
+  PROPOSAL_STATE_APPROVED = 2;
+  PROPOSAL_STATE_DENIED = 3;
+  PROPOSAL_STATE_WITHDRAWN = 4;
+  // The agent ended before anyone answered.
+  PROPOSAL_STATE_EXPIRED = 5;
+}
+
+enum ProposalDuration {
+  PROPOSAL_DURATION_UNSPECIFIED = 0;
+  // While the agent runs: the rules match only its processes, and go when it ends.
+  PROPOSAL_DURATION_SESSION = 1;
+  PROPOSAL_DURATION_HOUR = 2;
+  PROPOSAL_DURATION_TWELVE_HOURS = 3;
+  PROPOSAL_DURATION_FOREVER = 4;
+}
+
+// Who proposed, as the kernel says.
+message Provenance {
+  uint32 uid = 1;
+  string user = 2;
+  // The agent: the process that started the MCP server.
+  uint32 agent_pid = 3;
+  uint64 agent_start = 4;
+  string agent_exe = 5;
+  string agent_cmdline = 6;
+  // The agent's working directory: the project.
+  string cwd = 7;
+  // The login session (audit session id).
+  uint32 session = 8;
+  // Executables of the agent's ancestors, nearest first.
+  repeated string ancestors = 9;
+  // The MCP server.
+  uint32 server_pid = 10;
+  string server_exe = 11;
+  // The agent's program is one of the node's agent_programs.
+  bool known_agent = 12;
+}
+
+message Risk {
+  // any_host, public_suffix, any_program, any_port, wide_network, sensitive_alias, writable_binary, speculative.
+  string kind = 1;
+  string description = 2;
+}
+
+message ShapedRule {
+  Conditions conditions = 1;
+  // Why it is broad: approving it takes step-up.
+  repeated Risk risks = 2;
+  // The agent's refused connections it would let through.
+  repeated BlockedConnection evidence = 3;
+  // Today's rules allow it already: nothing to approve.
+  bool already_allowed = 4;
+  // Approved: it was kept (a person may drop rules).
+  bool included = 5;
+}
+
+message Proposal {
+  uint64 id = 1;
+  uint64 created_ms = 2;
+  ProposalState state = 3;
+  Provenance provenance = 4;
+  // The agent's words: untrusted text.
+  string justification = 5;
+  repeated ShapedRule rules = 6;
+  // The person's reason, which the agent is told.
+  string reason = 7;
+  uint64 decided_ms = 8;
+  // The rules approving made.
+  repeated uint64 rule_ids = 9;
+  ProposalDuration duration = 10;
+  // Approving it takes step-up (a rule is broad).
+  bool broad = 11;
+  // The folder its rules go in.
+  string folder = 12;
+}
+
+// The agent: only its own proposals.
+message GetProposal {
+  uint64 id = 1;
+}
+
+message WithdrawProposal {
+  uint64 id = 1;
+}
+
+// A note for a prompt the agent's own process opened, shown with the prompt.
+message AnnotatePending {
+  uint64 prompt = 1;
+  string note = 2;
+}
+
+message ListProposals {
+  bool pending_only = 1;
+  // 0: 100.
+  uint32 limit = 2;
+}
+
+message ProposalList {
+  repeated Proposal proposals = 1;
+}
+
+// A rule of a proposal as the person edited it.
+message EditedRule {
+  // Its index in the proposal's rules.
+  uint32 index = 1;
+  Conditions conditions = 2;
+}
+
+message DecideProposal {
+  uint64 id = 1;
+  bool approve = 2;
+  // Told to the agent.
+  string reason = 3;
+  // Approving; unspecified: the session.
+  ProposalDuration duration = 4;
+  // Approving: the rules to make, edited. Empty: every rule as proposed (but those already allowed).
+  repeated EditedRule rules = 5;
 }

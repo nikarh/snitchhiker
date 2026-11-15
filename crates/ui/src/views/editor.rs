@@ -227,6 +227,7 @@ impl RuleEditor {
                 apps: &[],
                 cmdline: "",
                 ancestors: &[],
+                lineage: &[],
                 uid: row.uid,
                 home: None,
                 hosts: &hosts,

@@ -240,6 +240,7 @@ fn view<'a>(rule: &'a v1::Rule, folder: &'a str) -> RuleView<'a> {
         port: Vec::new(),
         protocol: Vec::new(),
         context: 0,
+        session: Vec::new(),
     };
     let c = rule.conditions.as_ref().unwrap_or(&EMPTY);
     RuleView {

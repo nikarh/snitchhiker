@@ -76,6 +76,14 @@ Commands:
   prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|12h|forever>]
                 [--folder <id>]   Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default),
                                   in the program's folder (Apps/<program>) or the folder given
+  proposals [--all]               Agents' proposals waiting for an answer (--all: the newest 50 of every state)
+  proposals show <id>             A proposal: who made it, the agent's words, its rules, their marks and evidence
+  proposals approve <id> [--duration <session|hour|12h|forever>] [--reason <text>]
+                                  Make its rules (for the agent's session by default), in Agents/<agent>/<project>
+  proposals deny <id> [--reason <text>]
+                                  Deny it; the agent is told the reason
+  mcp                             An MCP server on stdin and stdout, for coding agents (run as the user, by the
+                                  agent: `claude mcp add snitchhiker -- snitchhiker mcp`)
   audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
                                   and whether step-up authorized them
   version                         Print the version

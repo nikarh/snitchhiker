@@ -70,12 +70,16 @@ pub struct Broker {
 }
 
 /// What became of a held packet.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "made once per held packet and matched right away"
+)]
 #[derive(Debug, PartialEq)]
 pub enum Hold {
     /// It opened a prompt (to publish).
     Opened(v1::Prompt),
-    /// It joined an open prompt.
-    Joined,
+    /// It joined the open prompt with this id.
+    Joined(u64),
 }
 
 impl Broker {
@@ -120,7 +124,7 @@ impl Broker {
         {
             pending.packets.push(packet);
             pending.prompt.waiting = u32::try_from(pending.packets.len()).unwrap_or(u32::MAX);
-            return Hold::Joined;
+            return Hold::Joined(pending.prompt.id);
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let NewPrompt {
@@ -153,6 +157,20 @@ impl Broker {
     /// Looks at an open prompt without taking it; `None` when there is none with that id.
     pub fn peek<R>(&self, id: u64, look: impl FnOnce(&Pending) -> R) -> Option<R> {
         self.lock().pending.get(&id).map(look)
+    }
+
+    /// Sets an agent's note on an open prompt; the prompt as it is now, or `None` when it isn't open.
+    pub fn annotate(&self, id: u64, note: &str) -> Option<v1::Prompt> {
+        let mut state = self.lock();
+        let pending = state.pending.get_mut(&id)?;
+        note.clone_into(&mut pending.prompt.agent_note);
+        Some(pending.prompt.clone())
+    }
+
+    /// Whether a prompt is open.
+    #[must_use]
+    pub fn is_open(&self, id: u64) -> bool {
+        self.lock().pending.contains_key(&id)
     }
 
     /// Takes a prompt to answer it; `None` when it was answered already (or timed out).
@@ -276,7 +294,7 @@ mod tests {
         assert_eq!((prompt.created_ms, prompt.expires_ms), (1000, 31_000));
         assert_eq!(
             broker.hold(key(443), Held { queue: 1, id: 2 }, 1001, new_prompt),
-            Hold::Joined
+            Hold::Joined(prompt.id)
         );
         assert!(matches!(
             broker.hold(key(80), Held { queue: 0, id: 3 }, 1002, new_prompt),

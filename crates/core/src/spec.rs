@@ -45,6 +45,9 @@ pub struct Conditions {
     pub protocol: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ContextKind>,
+    /// Processes (`pid@start`) whose session the rule is limited to: they and what they start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub session: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +93,8 @@ pub enum SpecError {
     Port(String),
     #[error("invalid protocol `{0}`: tcp, udp, icmp, icmpv6 or a number")]
     Protocol(String),
+    #[error("invalid session `{0}`: pid@start")]
+    Session(String),
     #[error("rule `{0}` has no conditions: it would match every connection")]
     NoConditions(String),
 }
@@ -194,6 +199,14 @@ impl Conditions {
         if let Some(context) = self.context {
             conditions.push(Condition::Context(context));
         }
+        if !self.session.is_empty() {
+            let roots = self
+                .session
+                .iter()
+                .map(|s| s.parse().map_err(|()| SpecError::Session(s.clone())))
+                .collect::<Result<_, _>>()?;
+            conditions.push(Condition::Session(roots));
+        }
         Ok(conditions)
     }
 
@@ -225,6 +238,9 @@ impl Conditions {
                     n => n.to_string(),
                 })),
                 Condition::Context(c) => spec.context = Some(*c),
+                Condition::Session(roots) => {
+                    spec.session.extend(roots.iter().map(ToString::to_string));
+                }
                 Condition::Not(_) => {}
             }
         }

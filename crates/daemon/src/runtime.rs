@@ -4,7 +4,7 @@
 //! the rules (an immutable set, swapped atomically on change) → verdict, and an event to the writer's queue. Nothing
 //! on it waits for the database, and a full event queue drops the event (counted), never the verdict.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
@@ -14,7 +14,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use arc_swap::ArcSwap;
 use snitchhiker_core::engine::{Facts, RuleSet};
-use snitchhiker_core::rule::{Action, Condition, ContextKind};
+use snitchhiker_core::rule::{Action, Condition, ContextKind, ProcessRef};
 use snitchhiker_ebpf::{Attribution, FlowKey};
 use snitchhiker_netfilter::netlink::{Socket, Writer};
 use snitchhiker_netfilter::nftables::{Table, encode_get_table, encode_install, encode_remove};
@@ -102,6 +102,10 @@ pub struct Shared {
     pub broker: Broker,
     /// The policy in effect: daemon.toml's, with what clients changed.
     pub policy: ArcSwap<Effective>,
+    /// The connections not allowed over the last hour, with their processes' lineage, for agents.
+    pub blocked: crate::agents::Ring,
+    /// Agents with session rules or proposals waiting: when one ends, so do they.
+    pub agents: Mutex<HashSet<ProcessRef>>,
 }
 
 /// The daemon, running. Shared by the signal handler and the API's threads.
@@ -129,8 +133,10 @@ impl Daemon {
             std::fs::create_dir_all(parent)?;
         }
         let store = Store::open(&config.database)?;
-        let rules = compile(&config, &store)?;
+        let (rules, mut agents) = compile(&config, &store)?;
         info!(rules = rules.len(), "rules loaded");
+        // Agents whose proposals wait, to expire them if the agent ends.
+        agents.extend(waiting_agents(&store)?);
         // The programs first: from the moment the table is in place, every new flow's owner must be known.
         let attribution = Attribution::load()?;
         let table = Table {
@@ -171,6 +177,8 @@ impl Daemon {
             broker,
             alert_rules_changed: AtomicU64::new(0),
             policy: ArcSwap::from_pointee(policy),
+            blocked: crate::agents::Ring::default(),
+            agents: Mutex::new(agents),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -216,7 +224,118 @@ impl Daemon {
         });
         daemon.spawn_prompt_timeouts()?;
         daemon.spawn_table_watch()?;
+        daemon.spawn_agent_watch()?;
         Ok(daemon)
+    }
+
+    /// Watches `agents` too: their session rules and waiting proposals end with them.
+    pub fn watch_agents(&self, agents: impl IntoIterator<Item = ProcessRef>) {
+        self.shared
+            .agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .extend(agents);
+    }
+
+    /// Every two seconds, checks whether the agents watched still run (the same processes: pid and start time).
+    fn spawn_agent_watch(self: &Arc<Self>) -> std::io::Result<()> {
+        let daemon = Arc::clone(self);
+        thread::Builder::new()
+            .name("agent-watch".to_owned())
+            .spawn(move || {
+                loop {
+                    daemon.end_agents();
+                    thread::sleep(AGENT_WATCH_EVERY);
+                }
+            })?;
+        Ok(())
+    }
+
+    /// Ends what the agents that exited left: their session rules are removed (one batch of the history) and their
+    /// waiting proposals expire.
+    fn end_agents(&self) {
+        let ended: Vec<ProcessRef> = {
+            let mut agents = self
+                .shared
+                .agents
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            let ended: Vec<ProcessRef> = agents
+                .iter()
+                .copied()
+                .filter(|a| !crate::agents::alive(*a))
+                .collect();
+            for agent in &ended {
+                agents.remove(agent);
+            }
+            ended
+        };
+        if ended.is_empty() {
+            return;
+        }
+        let now = now_ms();
+        let removed = {
+            let mut store = self.store();
+            let rules = store.rules();
+            rules.and_then(|rules| {
+                let gone: Vec<RuleId> = rules
+                    .iter()
+                    .filter(|r| {
+                        crate::agents::sessions(r).is_some_and(|roots| {
+                            roots
+                                .iter()
+                                .all(|a| ended.contains(a) || !crate::agents::alive(*a))
+                        })
+                    })
+                    .map(|r| r.id)
+                    .collect();
+                if gone.is_empty() {
+                    return Ok(0);
+                }
+                let batch = store.batch("snitchhikerd (an agent's session ended)", now)?;
+                store.atomically(|store| {
+                    for id in &gone {
+                        store.remove_rule(*id, &batch)?;
+                    }
+                    Ok(gone.len())
+                })
+            })
+        };
+        match removed {
+            Ok(0) => {}
+            Ok(count) => {
+                info!(count, "an agent ended: its session's rules are removed");
+                if let Err(error) = self.reload_rules() {
+                    error!(%error, "reloading the rules");
+                }
+            }
+            Err(error) => error!(%error, "removing an ended agent's rules"),
+        }
+        let pending = self
+            .store()
+            .proposals(Some(v1::ProposalState::Pending), 1000);
+        for mut proposal in pending.unwrap_or_default() {
+            let Some(p) = &proposal.provenance else {
+                continue;
+            };
+            let agent = ProcessRef {
+                pid: p.agent_pid,
+                start: p.agent_start,
+            };
+            if !ended.contains(&agent) {
+                continue;
+            }
+            proposal.state = v1::ProposalState::Expired.into();
+            proposal.decided_ms = now;
+            let updated = self.store().update_proposal(&proposal);
+            match updated {
+                Ok(()) => self.shared.hub.publish(
+                    v1::Topic::Proposals,
+                    &v1::notice::Body::Proposal(Box::new(proposal)),
+                ),
+                Err(error) => error!(%error, "expiring a proposal"),
+            }
+        }
     }
 
     /// Every few seconds, checks that the tables are still there: one removed by someone else is put back, with an alert.
@@ -393,6 +512,7 @@ impl Daemon {
             apps: &[],
             cmdline: "",
             ancestors: &[],
+            lineage: &[],
             uid: stored.uid,
             home: home.as_deref(),
             hosts: &hosts,
@@ -685,10 +805,11 @@ impl Daemon {
     }
 
     pub fn reload_rules(&self) -> Result<usize, Error> {
-        let rules = {
+        let (rules, agents) = {
             let store = self.store.lock();
             compile(&self.shared.config, &store)?
         };
+        self.watch_agents(agents);
         let count = rules.len();
         self.shared.rules.store(Arc::new(rules));
         self.shared.hub.publish(
@@ -718,14 +839,34 @@ impl Daemon {
     }
 }
 
-/// The rules in effect: the stored ones, the System folder and the managed files.
-fn compile(config: &Config, store: &Store) -> Result<RuleSet, Error> {
+/// The agents whose proposals wait for an answer.
+fn waiting_agents(store: &Store) -> Result<Vec<ProcessRef>, Error> {
+    Ok(store
+        .proposals(Some(v1::ProposalState::Pending), 1000)?
+        .iter()
+        .filter_map(|p| p.provenance.as_ref())
+        .map(|p| ProcessRef {
+            pid: p.agent_pid,
+            start: p.agent_start,
+        })
+        .collect())
+}
+
+/// The rules in effect: the stored ones, the System folder and the managed files; and the agents whose sessions
+/// rules are limited to.
+fn compile(config: &Config, store: &Store) -> Result<(RuleSet, HashSet<ProcessRef>), Error> {
     let managed = crate::managed::Managed::load(config.default_rules, &config.rules_dir)?;
     let mut folders = store.folders()?;
     folders.extend(managed.folders);
     let mut rules = store.rules()?;
+    let agents = rules
+        .iter()
+        .filter_map(crate::agents::sessions)
+        .flatten()
+        .copied()
+        .collect();
     rules.extend(managed.rules);
-    Ok(RuleSet::compile(&folders, &rules)?)
+    Ok((RuleSet::compile(&folders, &rules)?, agents))
 }
 
 fn install(table: &Table) -> std::io::Result<()> {
@@ -854,7 +995,7 @@ fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u6
 
 /// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
 /// listens for prompts.
-fn asks(shared: &Shared) -> bool {
+pub fn asks(shared: &Shared) -> bool {
     let policy = shared.policy.load();
     policy.no_match == Policy::Ask
         && policy.mode == Mode::Enforce
@@ -862,7 +1003,8 @@ fn asks(shared: &Shared) -> bool {
 }
 
 /// What a policy does without asking (`ask` falls back to `no_client`).
-fn policy_action(policy: Policy, no_client: Action) -> Action {
+#[must_use]
+pub fn policy_action(policy: Policy, no_client: Action) -> Action {
     match policy {
         Policy::Allow => Action::Allow,
         Policy::Deny => Action::Deny,
@@ -910,6 +1052,7 @@ fn decide(
         apps: empty,
         cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
+        lineage: process.as_ref().map_or(&[], |p| p.lineage.as_slice()),
         uid,
         home: home.as_deref(),
         hosts: &hosts,
@@ -928,7 +1071,7 @@ fn decide(
         (decision.action, Source::Rule, Some(decision.rule))
     } else {
         if asks(shared) {
-            hold(
+            let prompt = hold(
                 shared,
                 &facts,
                 &event,
@@ -937,6 +1080,7 @@ fn decide(
                     id: queued.id,
                 },
             );
+            remember(shared, &facts, &event, Some(prompt));
             return (None, None);
         }
         let policy = shared.policy.load();
@@ -954,6 +1098,9 @@ fn decide(
             source,
         ),
     };
+    if action != Action::Allow {
+        remember(shared, &facts, &event, None);
+    }
     event.action = action;
     event.source = source;
     event.rule = rule;
@@ -972,8 +1119,28 @@ fn decide(
     (Some(verdict), reject)
 }
 
-/// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open.
-fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) {
+/// Remembers a connection not allowed, with its process's lineage, for agents (see `agents`).
+fn remember(shared: &Shared, facts: &Facts<'_>, event: &Event, prompt: Option<u64>) {
+    if facts.lineage.is_empty() {
+        return;
+    }
+    shared.blocked.record(crate::agents::Blocked {
+        time_ms: facts.now_ms,
+        lineage: facts.lineage.to_vec(),
+        exe: Arc::clone(&event.exe),
+        host: facts.hosts.first().map(ToString::to_string),
+        address: facts.address,
+        port: facts.port,
+        protocol: facts.protocol,
+        uid: facts.uid,
+        context: facts.context,
+        prompt,
+    });
+}
+
+/// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open; the
+/// prompt's id.
+fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 {
     let destination = facts
         .hosts
         .first()
@@ -1021,10 +1188,15 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) {
             event: event.clone(),
         }
     });
-    if let Hold::Opened(prompt) = opened {
-        shared
-            .hub
-            .publish(v1::Topic::Prompts, &v1::notice::Body::Prompt(prompt));
+    match opened {
+        Hold::Opened(prompt) => {
+            let id = prompt.id;
+            shared
+                .hub
+                .publish(v1::Topic::Prompts, &v1::notice::Body::Prompt(prompt));
+            id
+        }
+        Hold::Joined(id) => id,
     }
 }
 
@@ -1131,6 +1303,8 @@ fn config_marker(config: &Config) -> std::path::PathBuf {
 
 /// How often the tables are checked.
 const TABLE_WATCH_EVERY: Duration = Duration::from_secs(10);
+/// How often agents being watched are checked.
+const AGENT_WATCH_EVERY: Duration = Duration::from_secs(2);
 /// How often the counters of what was lost are checked.
 const LOSS_CHECK_EVERY: Duration = Duration::from_secs(60);
 
@@ -1270,6 +1444,9 @@ fn write_loop(shared: &Shared, store: &crate::locked::Locked, events: &Receiver<
             }
             if let Err(error) = store.prune_alerts(cutoff) {
                 error!(%error, "pruning alerts");
+            }
+            if let Err(error) = store.prune_proposals(cutoff) {
+                error!(%error, "pruning proposals");
             }
             if let Err(error) = store.prune_rollups(cutoff) {
                 error!(%error, "pruning rollups");

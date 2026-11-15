@@ -8,6 +8,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .bytes([".snitchhiker.v1.EventBlock.columns"])
         // An explanation carries a whole event: boxed, so every response isn't the size of one.
         .boxed(".snitchhiker.v1.Response.result.explanation")
+        // So is a proposal (with its provenance).
+        .boxed(".snitchhiker.v1.Response.result.proposal")
+        .boxed(".snitchhiker.v1.Notice.body.proposal")
         .compile_fds(descriptors)?;
     Ok(())
 }

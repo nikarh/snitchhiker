@@ -22,6 +22,8 @@ use snitchhiker_proto::{MINOR, frame, v1};
 /// The node's sockets.
 pub const CLIENT_SOCKET: &str = "/run/snitchhiker/client.sock";
 pub const ADMIN_SOCKET: &str = "/run/snitchhiker/admin.sock";
+/// Any local process may connect here, as an agent (decision 0008).
+pub const AGENT_SOCKET: &str = "/run/snitchhiker/agent.sock";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

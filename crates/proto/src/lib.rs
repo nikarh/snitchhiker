@@ -6,6 +6,9 @@ pub mod convert;
 pub mod frame;
 pub mod system;
 
+/// For encoding messages outside frames (a node keeps some as they are).
+pub use prost;
+
 /// The generated messages of major version 1.
 #[allow(
     clippy::all,

@@ -15,3 +15,4 @@ database = "/var/lib/snitchhiker/state.db"
 default_rules = true
 rules_dir = "/etc/snitchhiker/rules.d"
 retention_days = 30
+agent_programs = []

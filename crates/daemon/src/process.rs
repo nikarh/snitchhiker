@@ -10,7 +10,7 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
 use std::sync::Arc;
 
-use snitchhiker_core::rule::ContextKind;
+use snitchhiker_core::rule::{ContextKind, ProcessRef};
 
 /// The unit of the start time in `/proc/<pid>/stat`: clock ticks of `USER_HZ`, 100 on Linux (fixed for
 /// userspace whatever the kernel's tick rate).
@@ -28,6 +28,8 @@ pub struct ProcessInfo {
     pub cmdline: String,
     /// Executables of the ancestors, nearest first.
     pub ancestors: Vec<String>,
+    /// The process and its ancestors, nearest first.
+    pub lineage: Vec<ProcessRef>,
     pub context: ContextKind,
 }
 
@@ -86,7 +88,7 @@ impl ProcessCache {
         if start_time(pid)? != start {
             return None;
         }
-        let info = Arc::new(self.read(pid)?);
+        let info = Arc::new(self.read(pid, start)?);
         if self.entries.len() >= CAPACITY {
             self.evict();
         }
@@ -103,7 +105,7 @@ impl ProcessCache {
             .clone()
     }
 
-    fn read(&self, pid: u32) -> Option<ProcessInfo> {
+    fn read(&self, pid: u32, start: u64) -> Option<ProcessInfo> {
         let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
         let exe = Arc::from(exe.to_string_lossy());
         let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_or_else(
@@ -117,11 +119,14 @@ impl ProcessCache {
                     .join(" ")
             },
         );
+        let (ancestors, mut lineage) = ancestors(pid);
+        lineage.insert(0, ProcessRef { pid, start });
         Some(ProcessInfo {
             pid,
             exe,
             cmdline,
-            ancestors: ancestors(pid),
+            ancestors,
+            lineage,
             context: context_of(pid, self.host),
         })
     }
@@ -136,11 +141,13 @@ impl ProcessCache {
 }
 
 /// The process's start time (field 22 of `/proc/<pid>/stat`, in clock ticks since boot).
-fn start_time(pid: u32) -> Option<u64> {
+#[must_use]
+pub fn start_time(pid: u32) -> Option<u64> {
     stat_field(pid, 22)
 }
 
-fn parent(pid: u32) -> Option<u32> {
+#[must_use]
+pub fn parent(pid: u32) -> Option<u32> {
     stat_field(pid, 4).and_then(|ppid| u32::try_from(ppid).ok())
 }
 
@@ -156,20 +163,29 @@ fn stat_field(pid: u32, field: usize) -> Option<u64> {
         .ok()
 }
 
-fn ancestors(pid: u32) -> Vec<String> {
+/// The executables of `pid`'s ancestors, and the ancestors themselves, nearest first.
+#[must_use]
+pub fn lineage(pid: u32) -> (Vec<String>, Vec<ProcessRef>) {
+    ancestors(pid)
+}
+
+fn ancestors(pid: u32) -> (Vec<String>, Vec<ProcessRef>) {
     let mut chain = Vec::new();
+    let mut lineage = Vec::new();
     let mut current = pid;
-    while chain.len() < MAX_ANCESTORS {
+    while lineage.len() < MAX_ANCESTORS {
         let Some(ppid) = parent(current) else { break };
         if ppid == 0 || ppid == current {
             break;
         }
+        let Some(start) = start_time(ppid) else { break };
+        lineage.push(ProcessRef { pid: ppid, start });
         if let Ok(exe) = fs::read_link(format!("/proc/{ppid}/exe")) {
             chain.push(exe.to_string_lossy().into_owned());
         }
         current = ppid;
     }
-    chain
+    (chain, lineage)
 }
 
 fn context_of(pid: u32, host: HostNamespaces) -> ContextKind {
@@ -206,8 +222,13 @@ pub fn user_of(uid: u32) -> Option<String> {
 /// group or others may write it.
 #[must_use]
 pub fn writable_by_others(pid: u32) -> bool {
-    fs::metadata(format!("/proc/{pid}/exe"))
-        .is_ok_and(|meta| meta.uid() != 0 || meta.mode() & 0o022 != 0)
+    writable_by_others_path(&format!("/proc/{pid}/exe"))
+}
+
+/// Whether a user other than root can replace the file at `path` (it is theirs, or group or world writable).
+#[must_use]
+pub fn writable_by_others_path(path: &str) -> bool {
+    fs::metadata(path).is_ok_and(|meta| meta.uid() != 0 || meta.mode() & 0o022 != 0)
 }
 
 /// The home directory of `uid`, from the password database.

@@ -6526,6 +6526,7 @@ name = "snitchhiker-e2e"
 version = "0.1.0"
 dependencies = [
  "hickory-proto",
+ "serde_json",
  "snitchhiker-client",
  "snitchhiker-core",
  "snitchhiker-daemon",

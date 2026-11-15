@@ -111,6 +111,12 @@ Clients are better registered with [`snitchhikerd trust-client`](/reference/cli/
 
 What confirms a dangerous action a client asks for, such as a rule that allows every program to connect anywhere ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
 
+## Agents
+
+### `agent_programs`
+
+Programs allowed to propose rules on the agent socket ([Agents and MCP](/guides/agents/)), as patterns rules use (`glob:{home}/.local/share/claude/versions/*`). Default none: any program may propose, as any can trip a prompt; a person approves either way. With a list, an MCP server started by any other program is refused, and proposals show their agent as a known one.
+
 ## Queues and storage
 
 ### `queue`, `queues`

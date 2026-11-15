@@ -85,6 +85,9 @@ pub struct Config {
     pub rules_dir: PathBuf,
     /// How long connection history is kept.
     pub retention_days: u32,
+    /// Programs that may propose rules on the agent socket (patterns as rules write them). Empty: any program, its
+    /// proposals marked as not from a known agent.
+    pub agent_programs: Vec<String>,
 }
 
 impl Default for Config {
@@ -106,6 +109,7 @@ impl Default for Config {
             default_rules: true,
             rules_dir: PathBuf::from("/etc/snitchhiker/rules.d"),
             retention_days: 30,
+            agent_programs: Vec::new(),
         }
     }
 }

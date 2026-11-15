@@ -195,7 +195,8 @@ fn destinations(
 
 /// Whether the observed connection `o` is one the shaped rule (`conditions`, and the program the agent named, if
 /// any) would have let through.
-fn grounds(o: &Observation, conditions: &Conditions, exe: &str) -> bool {
+#[must_use]
+pub fn grounds(o: &Observation, conditions: &Conditions, exe: &str) -> bool {
     let host_ok = conditions.host.is_empty() && conditions.net.is_empty()
         || o.host.as_deref().is_some_and(|h| {
             conditions.host.iter().any(|p| {
@@ -257,15 +258,22 @@ pub fn shape(
         p @ ("tcp" | "udp") => conditions.protocol.push(p.to_owned()),
         other => return Err(Refusal::Invalid(format!("`{other}`: tcp or udp"))),
     }
-    // The program: what the kernel saw for these destinations, before what the agent says.
-    let grounded: Vec<&Observation> = observed
+    // The program: what the kernel saw for these destinations, before what the agent says (which may be a symlink
+    // or a launcher of the program that connected). The agent's program decides only between several seen.
+    let to_these: Vec<&Observation> = observed
         .iter()
-        .filter(|o| grounds(o, &conditions, &proposed.exe))
+        .filter(|o| grounds(o, &conditions, ""))
         .collect();
-    let exe = grounded
-        .first()
-        .map_or_else(|| proposed.exe.trim().to_owned(), |o| o.exe.clone());
-    if grounded.is_empty() {
+    let named = proposed.exe.trim();
+    let mut programs: Vec<&str> = to_these.iter().map(|o| o.exe.as_str()).collect();
+    programs.sort_unstable();
+    programs.dedup();
+    let exe = if let [only] = programs.as_slice() {
+        (*only).to_owned()
+    } else {
+        named.to_owned()
+    };
+    if !to_these.iter().any(|o| o.exe == exe) {
         risks.push(Risk::Speculative);
     }
     if exe.is_empty() {
@@ -327,6 +335,30 @@ mod tests {
             vec!["static.crates.io", "crates.io"]
         );
         assert_eq!(shaped.risks, vec![]);
+    }
+
+    #[test]
+    fn the_program_is_the_one_the_kernel_saw() {
+        // A symlink (or a launcher) named: the program that connected is used.
+        let observed = [seen("/usr/bin/python3.13", "pypi.org", 443)];
+        let shaped = shape(
+            &proposed("/usr/bin/python3", &["pypi.org"], &["443"]),
+            &observed,
+            NEVER,
+        )
+        .unwrap();
+        assert_eq!(shaped.conditions.exe, vec!["/usr/bin/python3.13"]);
+        assert_eq!(shaped.risks, vec![]);
+        // Two programs reached it: the agent's word picks one of them, never a third.
+        let observed = [
+            seen("/usr/bin/curl", "pypi.org", 443),
+            seen("/usr/bin/python3.13", "pypi.org", 443),
+        ];
+        let pick =
+            |exe: &str| shape(&proposed(exe, &["pypi.org"], &["443"]), &observed, NEVER).unwrap();
+        assert_eq!(pick("/usr/bin/curl").conditions.exe, vec!["/usr/bin/curl"]);
+        assert_eq!(pick("/usr/bin/curl").risks, vec![]);
+        assert_eq!(pick("/usr/bin/wget").risks, vec![Risk::Speculative]);
     }
 
     #[test]

@@ -16,7 +16,9 @@ use ipnet::IpNet;
 
 use crate::destination::{ALIASES, HostPattern, Network};
 use crate::pattern::{Pattern, PatternError};
-use crate::rule::{Action, Condition, ContextKind, Expiry, Folder, FolderId, Rule, RuleId, Tier};
+use crate::rule::{
+    Action, Condition, ContextKind, Expiry, Folder, FolderId, ProcessRef, Rule, RuleId, Tier,
+};
 
 /// What is known about a connection when it is decided. Everything is borrowed: building one allocates nothing.
 #[derive(Debug, Clone, Copy)]
@@ -27,6 +29,8 @@ pub struct Facts<'a> {
     pub cmdline: &'a str,
     /// Executables of the ancestor processes, nearest first.
     pub ancestors: &'a [String],
+    /// The process and its ancestors, nearest first, for `session` conditions.
+    pub lineage: &'a [ProcessRef],
     pub uid: u32,
     /// The user's home directory, for `{home}` patterns.
     pub home: Option<&'a str>,
@@ -77,6 +81,7 @@ enum Compiled {
     Port(Vec<(u16, u16)>),
     Protocol(Vec<u8>),
     Context(ContextKind),
+    Session(Vec<ProcessRef>),
     Not(Box<Compiled>),
 }
 
@@ -302,6 +307,7 @@ fn condition_matches(condition: &Compiled, facts: &Facts<'_>) -> bool {
         Compiled::Protocol(protocols) => protocols.contains(&facts.protocol),
         Compiled::Context(ContextKind::Any) => true,
         Compiled::Context(kind) => *kind == facts.context,
+        Compiled::Session(roots) => facts.lineage.iter().any(|p| roots.contains(p)),
         Compiled::Not(inner) => !condition_matches(inner, facts),
     }
 }
@@ -353,6 +359,7 @@ fn compile_condition(condition: &Condition) -> Result<Compiled, PatternError> {
         Condition::Port(ranges) => Compiled::Port(ranges.clone()),
         Condition::Protocol(protocols) => Compiled::Protocol(protocols.clone()),
         Condition::Context(kind) => Compiled::Context(*kind),
+        Condition::Session(roots) => Compiled::Session(roots.clone()),
         Condition::Not(inner) => Compiled::Not(Box::new(compile_condition(inner)?)),
     })
 }
@@ -381,7 +388,7 @@ fn specificity(condition: &Compiled) -> u32 {
             .unwrap_or(0),
         Compiled::Port(_) | Compiled::Uid(_) => 5,
         Compiled::Protocol(_) => 1,
-        Compiled::Context(_) | Compiled::Not(_) => 0,
+        Compiled::Context(_) | Compiled::Session(_) | Compiled::Not(_) => 0,
     }
 }
 
@@ -445,6 +452,7 @@ mod tests {
             apps: &[],
             cmdline: "",
             ancestors: &[],
+            lineage: &[],
             uid: 1000,
             home: Some("/home/ada"),
             hosts: names(hosts),
