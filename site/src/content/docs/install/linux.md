@@ -26,6 +26,29 @@ sudo pacman -U "snitchhiker-$(uname -m).pkg.tar.zst"
 sudo systemctl enable --now snitchhikerd
 ```
 
+## The desktop app
+
+The desktop app is a package of its own, `snitchhiker-ui`, at the same version as the daemon's:
+
+```bash
+arch=$(dpkg --print-architecture)
+curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-ui_${arch}.deb"
+sudo apt install "./snitchhiker-ui_${arch}.deb"
+```
+
+```bash
+curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-ui-$(uname -m).pkg.tar.zst"
+sudo pacman -U "snitchhiker-ui-$(uname -m).pkg.tar.zst"
+```
+
+Installing it makes `/usr/bin/snitchhiker-ui` setgid to the `snitchhiker-ui` group and registers it as a trusted client of the daemon, pinned to its digest (`snitchhikerd trust-client`); every upgrade registers the new version, and removing the package unregisters it. That is what lets the app, and nothing else of your user, use the daemon's client socket ([Security](/internals/security/#clients)).
+
+It starts from the application menu. To start it with the session, so prompts are answered from the start:
+
+```bash
+systemctl --user enable --now snitchhiker-ui
+```
+
 ## What the package installs
 
 | Path | What |

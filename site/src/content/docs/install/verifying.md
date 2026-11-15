@@ -25,7 +25,9 @@ Asset names never change, so `https://github.com/nikarh/snitchhiker/releases/lat
 | --- | --- |
 | `snitchhiker_{amd64,arm64}.deb` | The Debian and Ubuntu package |
 | `snitchhiker-{x86_64,aarch64}.pkg.tar.zst` | The Arch Linux package |
+| `snitchhiker-ui_{amd64,arm64}.deb`, `snitchhiker-ui-{x86_64,aarch64}.pkg.tar.zst` | The desktop app's packages |
 | `snitchhikerd-{x86_64,aarch64}-linux-gnu` | The daemon alone (also the command line, when run as `snitchhiker`) |
+| `snitchhiker-ui-{x86_64,aarch64}-linux-gnu` | The desktop app alone: it has to be installed setgid and registered, as its package does |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums of all of the above and their detached GPG signature |
 
 Builds of `main` are published as the `latest` pre-release, with the same files. Their version ends in `-dev+<commit>`.
