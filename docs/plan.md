@@ -2240,7 +2240,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] `container.*`, `vm.*`, `netns` conditions (they imply their context); `context` semantics; [ ] id-bound rules
         expiring on removal.
   - [x] Suggestion ladder for containers (service, any program in it, image, this container) and VMs; prompts per
-        container. [ ] Compose-service folders.
+        container; answers' rules in `Containers/<service>` and `VMs/<name>` folders.
 - [x] **Clients**
   - [x] Context shown with the program (history, live, prompts) and a Container pivot in the Explorer; Containers & VMs
         page on desktop and Android; `snitchhiker contexts`.

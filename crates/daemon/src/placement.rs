@@ -1,8 +1,10 @@
 //! Where a rule made by answering a prompt goes: the folder the client chose, or the program's own folder.
 //!
 //! A program's folder is `Apps/<program>`, scoped to the program (its `exe` condition), so its rules hold only their
-//! destinations. If an enabled folder already scopes exactly this program, the rule goes there; otherwise the folder is
-//! made. A rule that names no program (any program → this host) stays at the top level.
+//! destinations. A container's is `Containers/<Compose service, name or image>`, scoped to that, so its rules hold
+//! only its programs and destinations; a VM's is `VMs/<name>`. If an enabled folder already scopes exactly that, the
+//! rule goes there; otherwise the folder is made. A rule that names none of them (any program → this host) stays at
+//! the top level.
 
 use snitchhiker_core::rule::{Condition, Folder, FolderId, Rule};
 
@@ -11,6 +13,10 @@ use crate::store::{Batch, Error as StoreError, Store};
 
 /// The folder programs' folders are made in.
 pub const APPS: &str = "Apps";
+/// The folder containers' folders (one per Compose service, container name or image) are made in.
+pub const CONTAINERS: &str = "Containers";
+/// The folder VMs' folders are made in.
+pub const VMS: &str = "VMs";
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -50,50 +56,76 @@ pub fn place(
         strip_scopes(rule, &folders, id);
         return Ok(());
     }
-    let Some(exe) = rule
-        .conditions
-        .iter()
-        .find(|c| matches!(c, Condition::Exe(_)))
-        .cloned()
-    else {
-        return Ok(());
-    };
-    let scope = vec![exe];
-    let id = if let Some(folder) = folders.iter().find(|f| f.enabled && f.scope == scope) {
-        folder.id
+    // A container's or a VM's rule goes to its folder; a program's, to the program's.
+    let identity = rule.conditions.iter().find_map(|c| match c {
+        Condition::ContainerCompose(p)
+        | Condition::ContainerName(p)
+        | Condition::ContainerImage(p) => {
+            Some((CONTAINERS, c.clone(), p.first().map(ToString::to_string)))
+        }
+        Condition::VmName(p) => Some((VMS, c.clone(), p.first().map(ToString::to_string))),
+        _ => None,
+    });
+    let (root, scope, name) = if let Some((root, condition, name)) = identity {
+        (root, condition, name.unwrap_or_default())
     } else {
-        let apps = match folders
+        let Some(exe) = rule
+            .conditions
             .iter()
-            .find(|f| f.parent.is_none() && f.name == APPS && f.scope.is_empty())
-        {
-            Some(apps) => apps.id,
-            None => store.put_folder(
-                &Folder {
-                    id: 0,
-                    parent: None,
-                    name: APPS.to_owned(),
-                    enabled: true,
-                    scope: Vec::new(),
-                },
-                batch,
-            )?,
+            .find(|c| matches!(c, Condition::Exe(_)))
+            .cloned()
+        else {
+            return Ok(());
         };
-        let name = free_name(&folders, apps, program);
-        store.put_folder(
-            &Folder {
-                id: 0,
-                parent: Some(apps),
-                name,
-                enabled: true,
-                scope,
-            },
-            batch,
-        )?
+        (APPS, exe, program.to_owned())
     };
+    let id = folder_for(store, batch, &folders, root, vec![scope], &name)?;
     rule.folder = Some(id);
     let folders = store.folders()?;
     strip_scopes(rule, &folders, id);
     Ok(())
+}
+
+/// The enabled folder scoped exactly by `scope`, or a new one named `name` under the top-level folder `root` (made
+/// too if needed).
+fn folder_for(
+    store: &Store,
+    batch: &Batch,
+    folders: &[Folder],
+    root: &str,
+    scope: Vec<Condition>,
+    name: &str,
+) -> Result<FolderId, Error> {
+    if let Some(folder) = folders.iter().find(|f| f.enabled && f.scope == scope) {
+        return Ok(folder.id);
+    }
+    let parent = match folders
+        .iter()
+        .find(|f| f.parent.is_none() && f.name == root && f.scope.is_empty())
+    {
+        Some(parent) => parent.id,
+        None => store.put_folder(
+            &Folder {
+                id: 0,
+                parent: None,
+                name: root.to_owned(),
+                enabled: true,
+                scope: Vec::new(),
+            },
+            batch,
+        )?,
+    };
+    let name = free_name(folders, parent, name);
+    Ok(store.put_folder(
+        &Folder {
+            id: 0,
+            parent: Some(parent),
+            name,
+            enabled: true,
+            scope,
+        },
+        batch,
+    )?)
 }
 
 /// `program`, or `program 2`, `program 3`, ... : a name no folder under `parent` has.

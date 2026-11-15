@@ -262,6 +262,11 @@ pub fn a_containers_prompt_names_it_and_its_answer_holds_for_its_service() -> Re
         "the first suggestion isn't for the container's service",
         &found,
     )?;
+    check(
+        rules.contains("Containers/shop/api/"),
+        "the answer's rule isn't in the service's folder",
+        &rules,
+    )?;
     let service: Vec<&String> = decided
         .iter()
         .filter(|l| l.contains("[docker shop/api]"))
