@@ -128,6 +128,10 @@ const SCENARIOS: &[Scenario] = &[
     ),
     ("escape/spoofed-process-name", escape::spoofed_process_name),
     (
+        "escape/non-dumpable-process-is-not-root",
+        escape::non_dumpable_process_is_not_root,
+    ),
+    (
         "escape/allowed-path-in-a-private-mount-namespace",
         escape::allowed_path_in_a_private_mount_namespace,
     ),

@@ -26,8 +26,6 @@ pub struct ProcessInfo {
     pub pid: u32,
     pub exe: Arc<str>,
     pub cmdline: String,
-    pub uid: u32,
-    pub home: Option<String>,
     /// Executables of the ancestors, nearest first.
     pub ancestors: Vec<String>,
     pub context: ContextKind,
@@ -51,11 +49,15 @@ impl HostNamespaces {
 }
 
 /// Process facts by (pid, start time), with home directories by uid.
+///
+/// The user isn't among the facts: it comes from the attribution programs, as it was when the connection was opened.
+/// The owner of `/proc/<pid>` is no substitute: the kernel makes it root for any process that isn't dumpable, and a
+/// process can make itself so.
 #[derive(Debug)]
 pub struct ProcessCache {
     host: HostNamespaces,
     entries: HashMap<(u32, u64), (u64, Arc<ProcessInfo>)>,
-    homes: HashMap<u32, Option<String>>,
+    homes: HashMap<u32, Option<Arc<str>>>,
     clock: u64,
 }
 
@@ -91,7 +93,15 @@ impl ProcessCache {
         Some(info)
     }
 
-    fn read(&mut self, pid: u32) -> Option<ProcessInfo> {
+    /// The home directory of `uid`, from the password database (remembered: users don't move often).
+    pub fn home(&mut self, uid: u32) -> Option<Arc<str>> {
+        self.homes
+            .entry(uid)
+            .or_insert_with(|| home_of(uid).map(Arc::from))
+            .clone()
+    }
+
+    fn read(&self, pid: u32) -> Option<ProcessInfo> {
         let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
         let exe = Arc::from(exe.to_string_lossy());
         let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_or_else(
@@ -105,18 +115,10 @@ impl ProcessCache {
                     .join(" ")
             },
         );
-        let uid = fs::metadata(format!("/proc/{pid}")).ok()?.uid();
-        let home = self
-            .homes
-            .entry(uid)
-            .or_insert_with(|| home_of(uid))
-            .clone();
         Some(ProcessInfo {
             pid,
             exe,
             cmdline,
-            uid,
-            home,
             ancestors: ancestors(pid),
             context: context_of(pid, self.host),
         })

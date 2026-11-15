@@ -526,12 +526,10 @@ fn decide(
     let owner = shared.attribution.owner(&key);
     let process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
     let now = now_ms();
-    let uid = process
-        .as_ref()
-        .map(|p| p.uid)
-        .or(owner.map(|o| o.uid))
-        .or(queued.uid)
-        .unwrap_or(u32::MAX);
+    // The user as the kernel recorded it when the socket was opened (the queue's uid is the socket's owner, for
+    // packets the attribution programs didn't see).
+    let uid = owner.map(|o| o.uid).or(queued.uid).unwrap_or(u32::MAX);
+    let home = process.as_ref().and_then(|_| processes.home(uid));
     let pid = owner.map_or(0, |o| o.pid);
     let hosts = shared
         .names
@@ -545,7 +543,7 @@ fn decide(
         cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
         uid,
-        home: process.as_ref().and_then(|p| p.home.as_deref()),
+        home: home.as_deref(),
         hosts: &hosts,
         address: headers.destination,
         port: headers.destination_port,

@@ -219,3 +219,36 @@ pub fn allowed_path_in_a_private_mount_namespace() -> Result<(), String> {
         &out,
     )
 }
+
+pub fn non_dumpable_process_is_not_root() -> Result<(), String> {
+    let (_target, port) = tcp_listener("127.0.0.1")?;
+    let daemon = Running::start("non-dumpable", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    // A rule for root's connections; the kernel makes /proc/<pid> root's for a process that isn't dumpable.
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--uid",
+        "0",
+        "--port",
+        &port.to_string(),
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let root = std::net::TcpStream::connect_timeout(
+        &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_secs(2),
+    );
+    let out = python(&format!(
+        "import ctypes, socket\nctypes.CDLL(None).prctl(4, 0, 0, 0, 0)\ntry:\n    socket.create_connection(('127.0.0.1', {port}), timeout=2)\n    print('connected')\nexcept OSError as e:\n    print('failed', e)"
+    ))?;
+    check(
+        root.is_ok(),
+        "root's control connection failed",
+        &format!("{root:?}"),
+    )?;
+    check(
+        !out.contains("connected"),
+        "a non-dumpable process passed for root",
+        &out,
+    )
+}
