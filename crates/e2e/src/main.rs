@@ -154,6 +154,10 @@ const SCENARIOS: &[Scenario] = &[
         "remote/a-device-behind-nat-reaches-a-firewalled-node",
         remote::a_device_behind_nat_reaches_a_firewalled_node,
     ),
+    (
+        "remote/a-devices-dangerous-request-waits-for-approval",
+        remote::a_devices_dangerous_request_waits_for_approval,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",

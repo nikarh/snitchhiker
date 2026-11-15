@@ -125,6 +125,8 @@ message Request {
     StartPairing start_pairing = 55;
     ListDevices list_devices = 56;
     RemoveDevice remove_device = 57;
+    ListApprovals list_approvals = 58;
+    DecideApproval decide_approval = 59;
   }
 }
 
@@ -159,6 +161,7 @@ message Response {
     ProposalList proposals = 39;
     Pairing pairing = 40;
     DeviceList devices = 41;
+    ApprovalList approvals = 42;
   }
 }
 
@@ -483,6 +486,8 @@ enum Topic {
   TOPIC_ALERTS = 4;
   // Agents' proposals as they are made and as they change state.
   TOPIC_PROPOSALS = 5;
+  // Dangerous actions remote devices asked for, waiting for a local approval, and their outcomes.
+  TOPIC_APPROVALS = 6;
 }
 
 message Subscribe {
@@ -514,6 +519,8 @@ message Notice {
     Alert alert = 8;
     AlertsChanged alerts_changed = 9;
     Proposal proposal = 10;
+    Approval approval = 11;
+    ApprovalResolved approval_resolved = 12;
   }
   // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
   // resubscribes from the last event it saw, or lists prompts or rules again.
@@ -1252,4 +1259,36 @@ message PairResponse {
   string error = 1;
   string node_name = 2;
   Role role = 3;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Step-up from another device. A remote device has no local process for polkit to check: a dangerous action it asks
+// for waits (up to two minutes) for a local admin client to approve it, with that client's own step-up, or for root.
+
+message Approval {
+  uint64 id = 1;
+  // What the device asks to do, for people ("add the rule …, which allows every program to connect anywhere").
+  string action = 2;
+  // The device's name and fingerprint.
+  string device = 3;
+  string fingerprint = 4;
+  uint64 requested_ms = 5;
+  uint64 expires_ms = 6;
+}
+
+message ApprovalResolved {
+  uint64 id = 1;
+  bool approved = 2;
+}
+
+message ListApprovals {}
+
+message ApprovalList {
+  repeated Approval approvals = 1;
+}
+
+// Only a local client (or root) decides: approving needs the decider's own step-up.
+message DecideApproval {
+  uint64 id = 1;
+  bool approve = 2;
 }

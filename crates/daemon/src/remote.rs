@@ -114,6 +114,7 @@ fn serve(daemon: &Arc<Daemon>, accepted: &Accepted) {
         pid: 0,
         pidfd: None,
         agent: None,
+        device: Some((device.name.clone(), device.id.clone())),
     };
     info!(device = %device.name, "a paired device connected");
     if let Err(error) = crate::api::serve(daemon, &accepted.stream, &caller) {

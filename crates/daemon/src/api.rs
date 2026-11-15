@@ -163,6 +163,8 @@ pub(crate) struct Caller {
     pub(crate) pidfd: Option<OwnedFd>,
     /// On the agent socket: the agent behind the MCP server.
     pub(crate) agent: Option<crate::agents::Agent>,
+    /// A remote device: its name and key.
+    pub(crate) device: Option<(String, String)>,
 }
 
 /// Who a connection is, or why it is refused. For a client, also its process's pidfd: the connection ends when that
@@ -183,6 +185,7 @@ fn admit(
                     pid: u32::try_from(credentials.pid()).unwrap_or(0),
                     pidfd: None,
                     agent: None,
+                    device: None,
                 };
                 Ok((caller, None))
             } else {
@@ -200,6 +203,7 @@ fn admit(
                 pid: peer.pid,
                 pidfd: Some(pidfd.try_clone().map_err(|e| e.to_string())?),
                 agent: None,
+                device: None,
             };
             Ok((caller, Some(pidfd)))
         }
@@ -212,6 +216,7 @@ fn admit(
                 pid: peer.pid,
                 pidfd: None,
                 agent: Some(agent),
+                device: None,
             };
             Ok((caller, Some(pidfd)))
         }
@@ -381,7 +386,11 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::WithdrawProposal(_)
             | Method::AnnotatePending(_)
     );
-    let reads = reads || matches!(method, Method::ListProposals(_) | Method::ListDevices(_));
+    let reads = reads
+        || matches!(
+            method,
+            Method::ListProposals(_) | Method::ListDevices(_) | Method::ListApprovals(_)
+        );
     match role {
         // The agent role's requests are about the caller's own agent: a person's client has none.
         v1::Role::Root | v1::Role::Admin => {
@@ -446,31 +455,22 @@ fn handle(
         Method::ListAlertRules(_) => alert_rules(daemon),
         Method::PutAlertRule(put) => put_alert_rule(daemon, &put),
         Method::DeleteAlertRule(delete) => delete_alert_rule(daemon, delete.id),
-        Method::GetSystemFirewall(_) => match daemon.store().system_firewall() {
-            Ok(firewall) => {
-                R::SystemFirewall(crate::system::wire(&firewall, daemon.system_reverts_at()))
-            }
-            Err(e) => internal(e),
-        },
+        Method::GetSystemFirewall(_) => get_system_firewall(daemon),
         Method::SetSystemFirewall(set) => set_system_firewall(daemon, caller, app, &set),
-        Method::CheckConnection(check) => check_connection(daemon, caller, &check),
-        Method::RecentBlocked(_) => recent_blocked(daemon, caller),
-        Method::ProposeRules(propose) => propose_rules(daemon, caller, &propose),
-        Method::GetProposal(get) => get_proposal(daemon, caller, get),
-        Method::WithdrawProposal(withdraw) => withdraw_proposal(daemon, caller, withdraw.id),
-        Method::AnnotatePending(annotate) => annotate_pending(daemon, caller, &annotate),
-        Method::ListProposals(list) => list_proposals(daemon, list),
-        Method::DecideProposal(decide) => decide_proposal(daemon, caller, app, &decide),
-        Method::StartPairing(start) => start_pairing(daemon, caller, app, &start),
-        Method::ListDevices(_) => crate::remote::list_devices(daemon),
-        Method::RemoveDevice(remove) => crate::remote::remove_device(daemon, &remove.id),
-        Method::ConfirmSystemFirewall(_) => {
-            if daemon.confirm_system() {
-                R::Done(v1::Done {})
-            } else {
-                error(v1::ErrorCode::NotFound, "no change waits to be confirmed")
-            }
-        }
+        method @ (Method::CheckConnection(_)
+        | Method::RecentBlocked(_)
+        | Method::ProposeRules(_)
+        | Method::GetProposal(_)
+        | Method::WithdrawProposal(_)
+        | Method::AnnotatePending(_)
+        | Method::ListProposals(_)
+        | Method::DecideProposal(_)) => agents(daemon, caller, app, method),
+        method @ (Method::StartPairing(_)
+        | Method::ListDevices(_)
+        | Method::RemoveDevice(_)
+        | Method::ListApprovals(_)
+        | Method::DecideApproval(_)) => devices(daemon, caller, app, method),
+        Method::ConfirmSystemFirewall(_) => confirm_system_firewall(daemon),
         Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
             Ok(Some(explanation)) => R::Explanation(Box::new(explanation)),
@@ -500,6 +500,25 @@ fn handle(
         Method::ListAudit(list) => list_audit(daemon, &list),
         Method::ExportRules(_) => export_rules(daemon),
     })
+}
+
+fn get_system_firewall(daemon: &Daemon) -> v1::response::Result {
+    let firewall = daemon.store().system_firewall();
+    match firewall {
+        Ok(firewall) => v1::response::Result::SystemFirewall(crate::system::wire(
+            &firewall,
+            daemon.system_reverts_at(),
+        )),
+        Err(e) => internal(e),
+    }
+}
+
+fn confirm_system_firewall(daemon: &Daemon) -> v1::response::Result {
+    if daemon.confirm_system() {
+        v1::response::Result::Done(v1::Done {})
+    } else {
+        error(v1::ErrorCode::NotFound, "no change waits to be confirmed")
+    }
 }
 
 /// A block's columns and the strings they use.
@@ -1558,6 +1577,13 @@ fn step_up(
     let unchecked = caller.role == v1::Role::Root || daemon.shared.config.step_up == StepUp::Off;
     let outcome = if unchecked {
         v1::AuditOutcome::Unchecked
+    } else if let Some((name, key)) = &caller.device {
+        // A remote device: a local admin approves, or no one does.
+        if approved_locally(daemon, name, key, action) {
+            v1::AuditOutcome::Authorized
+        } else {
+            v1::AuditOutcome::Refused
+        }
     } else {
         let message = format!("Authentication is required to {action}.");
         match caller
@@ -1668,6 +1694,14 @@ fn subscribe(
                     .ok()?
                     .into_iter()
                     .map(|p| Outgoing::Notice(v1::notice::Body::Proposal(Box::new(p))))
+                    .collect(),
+            ),
+            (v1::Topic::Approvals, _) => Some(
+                daemon
+                    .approvals
+                    .list()
+                    .into_iter()
+                    .map(|a| Outgoing::Notice(v1::notice::Body::Approval(a)))
                     .collect(),
             ),
             (v1::Topic::Prompts, _) => Some(
@@ -1852,6 +1886,115 @@ fn kill_connection(daemon: &Daemon, kill: &v1::KillConnection) -> v1::response::
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Agents (decision 0008)
+
+/// The agents' requests, and the proposals'.
+fn agents(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    method: v1::request::Method,
+) -> v1::response::Result {
+    use v1::request::Method;
+    match method {
+        Method::CheckConnection(check) => check_connection(daemon, caller, &check),
+        Method::RecentBlocked(_) => recent_blocked(daemon, caller),
+        Method::ProposeRules(propose) => propose_rules(daemon, caller, &propose),
+        Method::GetProposal(get) => get_proposal(daemon, caller, get),
+        Method::WithdrawProposal(withdraw) => withdraw_proposal(daemon, caller, withdraw.id),
+        Method::AnnotatePending(annotate) => annotate_pending(daemon, caller, &annotate),
+        Method::ListProposals(list) => list_proposals(daemon, list),
+        Method::DecideProposal(decide) => decide_proposal(daemon, caller, app, &decide),
+        _ => error(v1::ErrorCode::Unsupported, "not an agent request"),
+    }
+}
+
+/// The requests about remote devices: pairing, the devices, and their actions waiting for approval.
+fn devices(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    method: v1::request::Method,
+) -> v1::response::Result {
+    use v1::request::Method;
+    match method {
+        Method::StartPairing(start) => start_pairing(daemon, caller, app, &start),
+        Method::ListDevices(_) => crate::remote::list_devices(daemon),
+        Method::RemoveDevice(remove) => crate::remote::remove_device(daemon, &remove.id),
+        Method::ListApprovals(_) => v1::response::Result::Approvals(v1::ApprovalList {
+            approvals: daemon.approvals.list(),
+        }),
+        Method::DecideApproval(decide) => decide_approval(daemon, caller, app, decide),
+        _ => error(v1::ErrorCode::Unsupported, "not a device request"),
+    }
+}
+
+/// A remote device's dangerous action, put to the node's local admins: whether one approved it in time.
+fn approved_locally(daemon: &Daemon, device: &str, key: &str, action: &str) -> bool {
+    let now = now_ms();
+    let approval = daemon.approvals.open(v1::Approval {
+        id: 0,
+        action: action.to_owned(),
+        device: device.to_owned(),
+        fingerprint: snitchhiker_remote::fingerprint(key),
+        requested_ms: now,
+        expires_ms: now + u64::try_from(crate::approvals::WAIT.as_millis()).unwrap_or(u64::MAX),
+    });
+    let id = approval.id;
+    daemon
+        .shared
+        .hub
+        .publish(v1::Topic::Approvals, &v1::notice::Body::Approval(approval));
+    let approved = daemon.approvals.wait(id, crate::approvals::WAIT);
+    daemon.shared.hub.publish(
+        v1::Topic::Approvals,
+        &v1::notice::Body::ApprovalResolved(v1::ApprovalResolved { id, approved }),
+    );
+    approved
+}
+
+/// `DecideApproval`: only a local client decides, and approving takes its own step-up.
+fn decide_approval(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    decide: v1::DecideApproval,
+) -> v1::response::Result {
+    if caller.device.is_some() {
+        return error(
+            v1::ErrorCode::Forbidden,
+            "a remote device can't approve: it takes a client on the node, or root",
+        );
+    }
+    let Some(approval) = daemon
+        .approvals
+        .list()
+        .into_iter()
+        .find(|a| a.id == decide.id)
+    else {
+        return error(
+            v1::ErrorCode::NotFound,
+            format!("no request {} waits", decide.id),
+        );
+    };
+    if decide.approve
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!("let {} {}", approval.device, approval.action),
+        )
+    {
+        return refused;
+    }
+    if daemon.approvals.decide(decide.id, decide.approve) {
+        v1::response::Result::Done(v1::Done {})
+    } else {
+        error(
+            v1::ErrorCode::NotFound,
+            format!("no request {} waits", decide.id),
+        )
+    }
+}
 
 /// `StartPairing`: a dangerous action (a device paired as admin can change everything).
 fn start_pairing(

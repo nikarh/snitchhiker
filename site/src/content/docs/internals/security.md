@@ -74,7 +74,7 @@ The desktop app keeps the history it was sent, so nothing is fetched twice and a
 
 A remote device is its key (Ed25519). The node serves a connection only if the key that TLS proved is one it paired, and refuses everything else before a single request is read. Pairing takes a one-time secret from the node (128 random bits, single use, 10 minutes, compared in constant time); a wrong or used one raises an alert. Unpairing a device closes its connections at once. Starting a pairing is a dangerous action.
 
-The relay, your own, sees which keys connect and how much they send; what they send is encrypted between node and device. The desktop app keeps its key where only the app can read it (`/var/lib/snitchhiker-ui`, as its history cache), so another program of the user's can't use it to reach the user's nodes. A remote device has no local process for polkit to check: dangerous actions need [step-up](#dangerous-actions-need-more-than-a-session) and are refused to it.
+The relay, your own, sees which keys connect and how much they send; what they send is encrypted between node and device. The desktop app keeps its key where only the app can read it (`/var/lib/snitchhiker-ui`, as its history cache), so another program of the user's can't use it to reach the user's nodes. A remote device has no local process for polkit to check: a dangerous action it asks for waits, up to two minutes, for a client on the node (approving with its own [step-up](#dangerous-actions-need-more-than-a-session)) or root (`snitchhiker approvals approve <id>`) to let it go ahead. Another remote device can't approve it. Every outcome is audited.
 
 ## Facts a process can't fake
 

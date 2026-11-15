@@ -173,11 +173,48 @@ impl Prompts {
     }
 }
 
+impl Prompts {
+    /// A remote device's request for a dangerous action: approving asks for the password here.
+    fn approval(&self, approval: &v1::Approval, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let id = approval.id;
+        let decide = |label: &'static str, approve: bool, requests: mpsc::Sender<Request>| {
+            Button::new(SharedString::from(format!("{label}-approval-{id}")))
+                .label(label)
+                .on_click(move |_, _, _| {
+                    let _ = requests.send(Request::DecideApproval { id, approve });
+                })
+        };
+        v_flex()
+            .gap_2()
+            .p_4()
+            .border_1()
+            .border_color(theme.warning)
+            .rounded_md()
+            .child(div().text_lg().child(format!("{} asks", approval.device)))
+            .child(div().child(format!("to {}.", approval.action)))
+            .child(div().text_sm().text_color(theme.muted_foreground).child(format!(
+                "A paired device ({}), over the network. Approving asks for an administrator's password.",
+                approval.fingerprint
+            )))
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(decide("Approve", true, self.requests.clone()).primary())
+                    .child(decide("Deny", false, self.requests.clone())),
+            )
+            .into_any_element()
+    }
+}
+
 impl Render for Prompts {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let prompts: Vec<v1::Prompt> = self.model.read(cx).prompts.values().cloned().collect();
+        let approvals: Vec<v1::Approval> =
+            self.model.read(cx).approvals.values().cloned().collect();
         let muted = cx.theme().muted_foreground;
-        let cards: Vec<AnyElement> = prompts.iter().map(|p| self.card(p, window, cx)).collect();
+        let mut cards: Vec<AnyElement> = approvals.iter().map(|a| self.approval(a, cx)).collect();
+        cards.extend(prompts.iter().map(|p| self.card(p, window, cx)));
         v_flex()
             .size_full()
             .gap_4()

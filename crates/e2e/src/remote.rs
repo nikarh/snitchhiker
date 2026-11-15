@@ -313,3 +313,81 @@ pub fn a_device_behind_nat_reaches_a_firewalled_node() -> Result<(), String> {
         &found,
     )
 }
+
+/// A remote device's dangerous request waits for a local approval: approved, it goes ahead; denied, it is refused.
+pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
+    let daemon = Running::start("remote-approval", "mode = \"monitor\"\nremote = true\n")?;
+    let options = Options::default();
+    let device = Key::generate();
+    let link = link(&daemon, "phone")?;
+    pair(&device, &link, "phone", &options).map_err(|e| e.to_string())?;
+    // An allow rule for any program to anywhere: a dangerous action.
+    let ask = {
+        let device = device.clone();
+        let node = link.node.clone();
+        move || {
+            let mut client = connect(&device, &node, &Options::default(), "e2e", "0")
+                .map_err(|e| e.to_string())?;
+            client
+                .call(v1::request::Method::AddRule(v1::AddRule {
+                    rule: Some(v1::Rule {
+                        name: "anything".to_owned(),
+                        enabled: true,
+                        action: v1::Action::Allow.into(),
+                        tier: v1::Tier::Normal.into(),
+                        conditions: Some(v1::Conditions {
+                            port: vec!["9".to_owned()],
+                            ..v1::Conditions::default()
+                        }),
+                        ..v1::Rule::default()
+                    }),
+                }))
+                .map(|_| "added".to_owned())
+                .map_err(|e| e.to_string())
+        }
+    };
+    let mut outcomes = Vec::new();
+    let mut listed = String::new();
+    for verb in ["approve", "deny"] {
+        let waiting = thread::spawn(ask.clone());
+        let mut id = None;
+        for _ in 0..50 {
+            thread::sleep(Duration::from_millis(200));
+            let list = daemon.cli(&["approvals"])?;
+            id = list.lines().find_map(|l| {
+                l.strip_prefix("request ")?
+                    .split(':')
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            });
+            if id.is_some() {
+                listed.push_str(&list);
+                break;
+            }
+        }
+        let id = id.ok_or_else(|| format!("no request waited\n{listed}"))?;
+        daemon.cli(&["approvals", verb, &id.to_string()])?;
+        outcomes.push(
+            waiting
+                .join()
+                .map_err(|_| "the request panicked")?
+                .unwrap_or_else(|e| e),
+        );
+    }
+    let audit = daemon.cli(&["audit"])?;
+    let found = format!("{listed}\noutcomes: {outcomes:?}\n{audit}");
+    check(
+        listed.contains("phone") && listed.contains("allows every program to connect anywhere"),
+        "the request didn't say which device asked for what",
+        &found,
+    )?;
+    check(
+        outcomes.first().is_some_and(|o| o == "added")
+            && outcomes
+                .get(1)
+                .is_some_and(|o| o.contains("not authorized")),
+        "an approved request didn't go ahead, or a denied one did",
+        &found,
+    )
+}

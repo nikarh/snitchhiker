@@ -4,6 +4,7 @@
 pub mod agents;
 pub mod alerts;
 pub mod api;
+pub mod approvals;
 pub mod cli;
 pub mod config;
 pub mod dns;

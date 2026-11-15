@@ -55,6 +55,10 @@ The app's connections to a remote node are connections like any other program's:
 
 Removing a node from the app's node column (×) only forgets it on this side; unpair it on the node too.
 
+## Dangerous actions from a device
+
+A device can't confirm a dangerous action with a password on the node, as a client there does through polkit. When a device asks for one (a rule for any program to anywhere, pairing another device), the request waits up to two minutes for an approval on the node: a card on the desktop app's **Prompts** page there (approving asks for the administrator's password), or `sudo snitchhiker approvals approve <id>`. Denied, or not answered in time, it is refused. Another remote device can't approve it.
+
 ## Where the keys are
 
 - The node's key: `/var/lib/snitchhiker/node.key`, root's.

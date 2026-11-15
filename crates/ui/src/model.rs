@@ -268,6 +268,8 @@ pub struct Model {
     pub devices: Option<v1::DeviceList>,
     /// The pairing started last, until it is dismissed.
     pub pairing: Option<v1::Pairing>,
+    /// Remote devices' dangerous actions waiting for an approval here.
+    pub approvals: BTreeMap<u64, v1::Approval>,
 }
 
 /// What an update changed, so only those views refresh.
@@ -319,6 +321,32 @@ impl Model {
         }
     }
 
+    /// What pages fetch for themselves: the node's settings, the lint, an explanation.
+    fn apply_settings(&mut self, update: Update) -> Changed {
+        match update {
+            Update::SystemFirewall(firewall) => {
+                self.system = Some(firewall);
+            }
+            Update::Policy(policy) => {
+                self.policy = Some(policy);
+            }
+            Update::CacheSize(size) => {
+                self.cache_size = size;
+            }
+            Update::TrustedClients(clients) => {
+                self.trusted = clients;
+            }
+            Update::Lint(report) => {
+                self.lint = Some(report);
+            }
+            Update::Explanation(explanation) => {
+                self.explanation = Some(*explanation);
+            }
+            _ => {}
+        }
+        Changed::Status
+    }
+
     fn apply_proposal(&mut self, update: Update) -> Changed {
         match update {
             Update::Proposals(list) => {
@@ -334,6 +362,14 @@ impl Model {
             }
             Update::Pairing(pairing) => {
                 self.pairing = Some(pairing);
+                Changed::Status
+            }
+            Update::Approval(approval) => {
+                self.approvals.insert(approval.id, approval);
+                Changed::ShowPrompts
+            }
+            Update::ApprovalResolved(id) => {
+                self.approvals.remove(&id);
                 Changed::Status
             }
             Update::Proposal(proposal) => {
@@ -450,34 +486,18 @@ impl Model {
             | Update::Alert(_)
             | Update::AlertsChanged(_)
             | Update::AlertRules(_)) => self.apply_alert(update),
-            Update::SystemFirewall(firewall) => {
-                self.system = Some(firewall);
-                Changed::Status
-            }
-            Update::Policy(policy) => {
-                self.policy = Some(policy);
-                Changed::Status
-            }
-            Update::CacheSize(size) => {
-                self.cache_size = size;
-                Changed::Status
-            }
-            Update::TrustedClients(clients) => {
-                self.trusted = clients;
-                Changed::Status
-            }
-            Update::Lint(report) => {
-                self.lint = Some(report);
-                Changed::Status
-            }
-            Update::Explanation(explanation) => {
-                self.explanation = Some(*explanation);
-                Changed::Status
-            }
+            update @ (Update::SystemFirewall(_)
+            | Update::Policy(_)
+            | Update::CacheSize(_)
+            | Update::TrustedClients(_)
+            | Update::Lint(_)
+            | Update::Explanation(_)) => self.apply_settings(update),
             update @ (Update::Proposals(_)
             | Update::Proposal(_)
             | Update::Devices(_)
-            | Update::Pairing(_)) => self.apply_proposal(update),
+            | Update::Pairing(_)
+            | Update::Approval(_)
+            | Update::ApprovalResolved(_)) => self.apply_proposal(update),
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::ShowAlerts => Changed::ShowAlerts,
             Update::ShowProposals => Changed::ShowProposals,

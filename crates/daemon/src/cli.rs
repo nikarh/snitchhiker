@@ -124,6 +124,9 @@ Commands:
                                   QR code, valid for one pairing within 10 minutes (needs remote = true)
   devices                         The paired devices, and this node's id
   devices rm <id>                 Unpair a device; its connections close at once
+  approvals                       Dangerous actions remote devices asked for, waiting for an approval here
+  approvals approve <id>, approvals deny <id>
+                                  Let a device do what it asked, or refuse it (it waits up to two minutes)
   mcp                             An MCP server on stdin and stdout, for coding agents (run as the user, by the
                                   agent: `claude mcp add snitchhiker -- snitchhiker mcp`)
   audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
@@ -196,6 +199,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("proposals") => proposals(args, version),
         Some("pair") => pair(args, version),
         Some("devices") => devices(args, version),
+        Some("approvals") => approvals(args, version),
         Some("mcp") => {
             reject_rest(args)?;
             crate::mcp::serve(version).map_err(Error::Stdout)
@@ -1667,6 +1671,51 @@ fn devices(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             out(&format!("unpaired {id}\n"))
         }
         Some(other) => Err(Error::Usage(format!("unknown devices command `{other}`"))),
+    }
+}
+
+fn approvals(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let mut client = connect(version)?;
+    match command.as_deref() {
+        None => {
+            reject_rest(args)?;
+            match client.call(Method::ListApprovals(v1::ListApprovals {}))? {
+                v1::response::Result::Approvals(list) => {
+                    let mut text = String::new();
+                    for a in &list.approvals {
+                        let _ = writeln!(
+                            text,
+                            "request {}: {} ({}) asks to {}",
+                            a.id, a.device, a.fingerprint, a.action
+                        );
+                    }
+                    if list.approvals.is_empty() {
+                        text.push_str("no device's request waits\n");
+                    }
+                    out(&text)
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some(verb @ ("approve" | "deny")) => {
+            let id: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            client.call(Method::DecideApproval(v1::DecideApproval {
+                id,
+                approve: verb == "approve",
+            }))?;
+            out(&format!(
+                "{}d request {id}\n",
+                if verb == "approve" {
+                    "approve"
+                } else {
+                    "denie"
+                }
+            ))
+        }
+        Some(other) => Err(Error::Usage(format!("unknown approvals command `{other}`"))),
     }
 }
 

@@ -90,6 +90,11 @@ pub enum Request {
     Devices,
     StartPairing(v1::Role),
     RemoveDevice(String),
+    /// Lets a remote device do the dangerous action it asked for, or refuses it.
+    DecideApproval {
+        id: u64,
+        approve: bool,
+    },
 }
 
 /// What the node tells the app.
@@ -149,6 +154,10 @@ pub enum Update {
     Devices(v1::DeviceList),
     /// A pairing started: its link.
     Pairing(v1::Pairing),
+    /// A remote device asks for a dangerous action.
+    Approval(v1::Approval),
+    /// A device's request was approved, refused or timed out.
+    ApprovalResolved(u64),
 }
 
 /// Events in one page of history.
@@ -394,6 +403,10 @@ fn method(request: &Request) -> v1::request::Method {
             role: (*role).into(),
         }),
         Request::RemoveDevice(id) => Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }),
+        Request::DecideApproval { id, approve } => Method::DecideApproval(v1::DecideApproval {
+            id: *id,
+            approve: *approve,
+        }),
     }
 }
 
@@ -491,6 +504,7 @@ fn subscribe(
         .and_then(|_| client.subscribe(v1::Topic::Rules))
         .and_then(|_| client.subscribe(v1::Topic::Alerts))
         .and_then(|_| client.subscribe(v1::Topic::Proposals))
+        .and_then(|_| client.subscribe(v1::Topic::Approvals))
         .and_then(|_| client.subscribe_with(v1::Topic::Events, *last_seq, true))
         .map_err(|e| e.to_string())?;
     loop {
@@ -502,6 +516,10 @@ fn subscribe(
             Some(v1::notice::Body::Alert(alert)) => Update::Alert(alert),
             Some(v1::notice::Body::AlertsChanged(changed)) => Update::AlertsChanged(changed.open),
             Some(v1::notice::Body::Proposal(proposal)) => Update::Proposal(proposal),
+            Some(v1::notice::Body::Approval(approval)) => Update::Approval(approval),
+            Some(v1::notice::Body::ApprovalResolved(resolved)) => {
+                Update::ApprovalResolved(resolved.id)
+            }
             Some(v1::notice::Body::EventBlock(event_block)) => {
                 let (rows, strings) = block(&event_block)?;
                 // Every event after the last one seen comes, in order: the cache holds that range whole.

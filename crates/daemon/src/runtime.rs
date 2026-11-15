@@ -119,6 +119,8 @@ pub struct Daemon {
     trial: Mutex<Trial>,
     /// Paired devices over the network.
     pub remote: crate::remote::Remote,
+    /// Dangerous actions of remote devices waiting for a local approval.
+    pub approvals: crate::approvals::Approvals,
 }
 
 /// A system firewall change on trial: reverted to `previous` at `reverts_at_ms` unless confirmed first.
@@ -227,6 +229,7 @@ impl Daemon {
             table,
             trial: Mutex::new(Trial::default()),
             remote: crate::remote::Remote::default(),
+            approvals: crate::approvals::Approvals::default(),
         });
         daemon.spawn_prompt_timeouts()?;
         daemon.spawn_table_watch()?;
