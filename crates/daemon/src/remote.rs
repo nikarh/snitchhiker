@@ -139,6 +139,7 @@ fn serve(daemon: &Arc<Daemon>, accepted: &Accepted) {
         device: Some((device.name.clone(), device.id.clone())),
     };
     info!(device = %device.name, "a paired device connected");
+    daemon.shared.router.push.connected(&device.id);
     if let Err(error) = crate::api::serve(daemon, &accepted.stream, &caller) {
         tracing::debug!(%error, "a device's connection ended");
     }

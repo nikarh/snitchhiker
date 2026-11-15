@@ -9,7 +9,7 @@ use snitchhiker_core::query::{self, EventFilter, EventView};
 use snitchhiker_proto::v1;
 use tracing::warn;
 
-use crate::hub::Hub;
+use crate::runtime::Shared;
 use crate::store::{Event, Recorded, Store};
 
 /// An alert rule, as stored.
@@ -115,11 +115,17 @@ impl StoredAlert {
     }
 }
 
-/// Keeps `alert`, logs it and publishes it to the clients subscribed to alerts.
-pub fn raise(hub: &Hub, store: &Store, alert: &NewAlert) {
+/// Keeps `alert`, logs it and publishes it to the clients subscribed to alerts; devices not connected are woken to
+/// fetch it.
+pub fn raise(shared: &Shared, store: &Store, alert: &NewAlert) {
     warn!(kind = alert.kind, title = %alert.title, body = %alert.body, "alert");
     match store.insert_alert(alert, crate::runtime::now_ms()) {
-        Ok(stored) => hub.publish(v1::Topic::Alerts, &v1::notice::Body::Alert(stored.wire())),
+        Ok(stored) => {
+            shared
+                .hub
+                .publish(v1::Topic::Alerts, &v1::notice::Body::Alert(stored.wire()));
+            shared.router.wake_for_alert(&shared.hub);
+        }
         Err(error) => warn!(%error, "keeping an alert"),
     }
 }

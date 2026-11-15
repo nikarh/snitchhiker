@@ -24,6 +24,17 @@ use crate::hub::{Audience, Hub};
 use crate::prompts::Broker;
 use crate::push::Push;
 
+/// The devices subscribed to `topic` now.
+fn connected_devices(hub: &Hub, topic: v1::Topic) -> HashSet<String> {
+    hub.audiences(topic)
+        .into_iter()
+        .filter_map(|a| match a {
+            Audience::Device { id } => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
 /// What the router needs of the daemon.
 pub struct Router {
     routing: Routing,
@@ -93,16 +104,21 @@ impl Router {
         self.push.wakeable().iter().any(|d| !self.is_muted(d))
     }
 
+    /// Wakes the devices that aren't connected for alerts (muting is about prompts: alerts reach every device).
+    pub fn wake_for_alert(&self, hub: &Hub) {
+        let connected = connected_devices(hub, v1::Topic::Alerts);
+        self.push.wake(
+            self.push
+                .wakeable()
+                .into_iter()
+                .filter(|d| !connected.contains(d))
+                .collect(),
+        );
+    }
+
     /// Wakes the devices (not muted) that aren't connected for prompts.
     fn wake(&self, hub: &Hub) {
-        let connected: HashSet<String> = hub
-            .audiences(v1::Topic::Prompts)
-            .into_iter()
-            .filter_map(|a| match a {
-                Audience::Device { id } => Some(id),
-                _ => None,
-            })
-            .collect();
+        let connected = connected_devices(hub, v1::Topic::Prompts);
         self.push.wake(
             self.push
                 .wakeable()

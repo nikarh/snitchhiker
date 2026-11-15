@@ -431,7 +431,7 @@ impl Daemon {
 
     fn raise_table_removed(&self, which: &str, put_back: &std::io::Result<()>) {
         crate::alerts::raise(
-            &self.shared.hub,
+            &self.shared,
             &self.store(),
             &crate::alerts::NewAlert {
                 kind: "table_removed",
@@ -450,7 +450,7 @@ impl Daemon {
 
     /// Raises an alert from the API's side.
     pub fn raise(&self, alert: &crate::alerts::NewAlert) {
-        crate::alerts::raise(&self.shared.hub, &self.store(), alert);
+        crate::alerts::raise(&self.shared, &self.store(), alert);
     }
 
     /// The alert rules changed: the writer loads them again.
@@ -1360,7 +1360,7 @@ fn check_marker(shared: &Shared, store: &Store) {
     let marker = config_marker(&shared.config);
     if marker.exists() {
         crate::alerts::raise(
-            &shared.hub,
+            shared,
             store,
             &crate::alerts::NewAlert {
                 kind: "crashed",
@@ -1409,7 +1409,7 @@ fn check_losses(shared: &Shared, store: &Store, seen: &mut (u64, u64)) {
     let dropped = shared.dropped_events.load(Ordering::Relaxed);
     if dropped > seen.0 {
         crate::alerts::raise(
-            &shared.hub,
+            shared,
             store,
             &crate::alerts::NewAlert {
                 kind: "dropped_events",
@@ -1425,7 +1425,7 @@ fn check_losses(shared: &Shared, store: &Store, seen: &mut (u64, u64)) {
     let queued = queue_drops(shared.config.queue, shared.config.queues);
     if queued > seen.1 {
         crate::alerts::raise(
-            &shared.hub,
+            shared,
             store,
             &crate::alerts::NewAlert {
                 kind: "queue_overflow",
@@ -1482,7 +1482,7 @@ fn write_loop(shared: &Shared, store: &crate::locked::Locked, events: &Receiver<
                 Ok(()) => {
                     publish_events(shared, &batch, &recorded);
                     for alert in engine.check(&batch, &recorded) {
-                        crate::alerts::raise(&shared.hub, &store, &alert);
+                        crate::alerts::raise(shared, &store, &alert);
                     }
                 }
                 Err(error) => error!(%error, events = batch.len(), "recording events"),

@@ -79,7 +79,8 @@ impl Push {
     }
 
     /// Wakes devices (those with a target; the others are skipped by the gateway). A device woken within the last
-    /// [`WAKE_AGAIN`] isn't woken again: it is connecting, and will be sent everything that waits.
+    /// [`WAKE_AGAIN`], and not connected since, isn't woken again: it is connecting, and will be sent everything that
+    /// waits.
     pub fn wake(&self, devices: Vec<String>) {
         let now = Instant::now();
         let devices: Vec<String> = {
@@ -100,6 +101,11 @@ impl Push {
             debug!(?devices, "waking devices through the push gateway");
             self.send(Event::Wake(devices));
         }
+    }
+
+    /// A device connected: woken or not, the next wake-up isn't held back by the last one.
+    pub fn connected(&self, device: &str) {
+        lock(&self.woken).remove(device);
     }
 
     /// Tells the gateway why the node stops, and waits (briefly) for the frame to leave.
