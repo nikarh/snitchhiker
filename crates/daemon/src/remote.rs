@@ -146,6 +146,11 @@ fn serve(daemon: &Arc<Daemon>, accepted: &Accepted) {
     if let Some(open) = lock(&daemon.remote.connections).get_mut(&device.id) {
         open.retain(|(n, _)| *n != number);
     }
+    // A connection that died (a phone killed, or losing its network) took prompts with it that it was told of.
+    daemon
+        .shared
+        .router
+        .device_left(&daemon.shared.hub, &daemon.shared.broker, &device.id);
 }
 
 /// Whether two secrets are equal, in time independent of where they differ.

@@ -128,6 +128,23 @@ impl Router {
         );
     }
 
+    /// A device's connection ended: if prompts it is to be told of still wait, and it has no other connection for
+    /// them, it is woken to fetch them again.
+    pub fn device_left(&self, hub: &Hub, broker: &Broker, device: &str) {
+        if connected_devices(hub, v1::Topic::Prompts).contains(device)
+            || !self.push.can_wake(device)
+        {
+            return;
+        }
+        if broker
+            .list()
+            .iter()
+            .any(|prompt| self.notifies_now(Some(device), prompt.id))
+        {
+            self.push.wake(vec![device.to_owned()]);
+        }
+    }
+
     /// A prompt is answered or gone: no more to escalate.
     pub fn closed(&self, id: u64) {
         self.escalated
