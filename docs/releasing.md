@@ -24,7 +24,7 @@ the newest file:
 | `snitchhiker-x86_64.pkg.tar.zst`, `snitchhiker-aarch64.pkg.tar.zst` | The same for Arch Linux |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums of all of the above and their detached GPG signature |
 
-More assets (packages, the desktop app, the relay and its image, the Android app) are added as those parts land; see
+More assets (the desktop app, the relay and its image, the Android app) are added as those parts land; see
 `docs/plan.md`.
 
 Dependabot's pull requests are merged by the **Auto-merge** workflow once every required check is green.
