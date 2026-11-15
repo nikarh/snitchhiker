@@ -112,6 +112,8 @@ pub struct Shared {
     pub contexts: crate::contexts::Contexts,
     /// The namespaces decided inside (rootless containers').
     pub namespaces: crate::namespaces::Namespaces,
+    /// Alerts' webhook, if one is configured.
+    pub webhook: crate::webhook::Webhook,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -192,6 +194,7 @@ impl Daemon {
             ),
             contexts: crate::contexts::Contexts::default(),
             namespaces: crate::namespaces::Namespaces::default(),
+            webhook: crate::webhook::Webhook::default(),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -249,6 +252,12 @@ impl Daemon {
         self.watch_agents(agents);
         crate::router::Router::spawn(&self.shared)?;
         crate::namespaces::Namespaces::spawn(self)?;
+        if !self.shared.config.alert_webhook.is_empty() {
+            self.shared.webhook.start(
+                &self.shared.config.alert_webhook,
+                self.shared.config.alert_webhook_secret_file.as_deref(),
+            )?;
+        }
         self.devices_changed();
         Ok(())
     }

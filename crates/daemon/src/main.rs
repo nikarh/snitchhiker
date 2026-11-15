@@ -121,6 +121,8 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     }
     signals.thread_block()?;
 
+    // TLS (the alert webhook) with the same provider as everything else: ring.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     info!(version = VERSION, "starting");
     let daemon = Daemon::start(config)?;
     snitchhiker_daemon::api::spawn(&daemon).map_err(snitchhiker_daemon::runtime::Error::from)?;

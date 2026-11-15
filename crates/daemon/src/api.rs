@@ -346,7 +346,8 @@ fn write_frames(stream: UnixStream, frames: &Receiver<v1::ServerFrame>) {
     }
 }
 
-fn hostname() -> String {
+#[must_use]
+pub fn hostname() -> String {
     std::fs::read_to_string("/proc/sys/kernel/hostname")
         .map_or_else(|_| String::new(), |name| name.trim().to_owned())
 }

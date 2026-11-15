@@ -155,6 +155,16 @@ With `prompt_routing = "escalate"`: how long a prompt waits for the clients on t
 
 Programs allowed to propose rules on the agent socket ([Agents and MCP](/guides/agents/)), as patterns rules use (`glob:{home}/.local/share/claude/versions/*`). Default none: any program may propose, as any can trip a prompt; a person approves either way. With a list, an MCP server started by any other program is refused, and proposals show their agent as a known one.
 
+## Alerts
+
+### `alert_webhook`
+
+A URL every alert is sent to as JSON, with an HTTP POST, besides the clients and devices: `{"node", "id", "time_ms", "kind", "title", "body"}`. Default empty: none. A delivery that fails is logged, not retried ([Alerts](/guides/alerts/#webhooks)).
+
+### `alert_webhook_secret_file`
+
+A file whose content (trimmed) signs each delivery: the header `X-Snitchhiker-Signature: sha256=<hex>` is the HMAC-SHA256 of the body with it, as GitHub signs its webhooks. Default none: unsigned.
+
 ## Queues and storage
 
 ### `queue`, `queues`

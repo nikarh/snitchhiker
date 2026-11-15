@@ -117,6 +117,10 @@ pub struct Config {
     /// How long the node may be gone from its push gateway before its devices are told it is offline (a restart
     /// doesn't make them wonder).
     pub offline_after_secs: u32,
+    /// Where alerts are sent (an HTTP POST of JSON), besides the clients and devices. Empty: nowhere.
+    pub alert_webhook: String,
+    /// A file with a secret that signs each webhook delivery (HMAC-SHA256 of the body, `X-Snitchhiker-Signature`).
+    pub alert_webhook_secret_file: Option<PathBuf>,
 }
 
 /// Who is notified of prompts.
@@ -164,6 +168,8 @@ impl Default for Config {
             escalate_after_secs: 20,
             push_gateway: String::new(),
             offline_after_secs: 120,
+            alert_webhook: String::new(),
+            alert_webhook_secret_file: None,
         }
     }
 }

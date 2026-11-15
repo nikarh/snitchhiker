@@ -121,6 +121,14 @@ pub fn raise(shared: &Shared, store: &Store, alert: &NewAlert) {
     warn!(kind = alert.kind, title = %alert.title, body = %alert.body, "alert");
     match store.insert_alert(alert, crate::runtime::now_ms()) {
         Ok(stored) => {
+            shared.webhook.deliver(crate::webhook::Delivery {
+                node: crate::api::hostname(),
+                id: stored.id,
+                time_ms: stored.time_ms,
+                kind: stored.kind.clone(),
+                title: stored.title.clone(),
+                body: stored.body.clone(),
+            });
             shared
                 .hub
                 .publish(v1::Topic::Alerts, &v1::notice::Body::Alert(stored.wire()));

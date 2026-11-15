@@ -48,3 +48,8 @@ fail = "closed"
 
 #database = "/var/lib/snitchhiker/state.db"
 #retention_days = 30
+
+# Where alerts are sent as JSON (an HTTP POST), and a file with the secret that signs each delivery
+# (X-Snitchhiker-Signature: sha256=<HMAC-SHA256 of the body>).
+#alert_webhook = "https://hooks.example.org/snitchhiker"
+#alert_webhook_secret_file = "/etc/snitchhiker/webhook-secret"

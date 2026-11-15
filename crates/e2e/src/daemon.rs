@@ -1015,3 +1015,122 @@ pub fn alerts_are_raised_and_acknowledged() -> Result<(), String> {
         &found,
     )
 }
+
+/// What a mock webhook received: each request's signature header and body.
+type Hooked = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+
+/// A mock webhook on loopback: its port, and what it received.
+fn webhook_server() -> Result<(u16, Hooked), String> {
+    use std::io::{BufRead as _, Read as _, Write as _};
+    let hook = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let hook_port = hook.local_addr().map_err(|e| e.to_string())?.port();
+    let received: Hooked = std::sync::Arc::default();
+    {
+        let received = std::sync::Arc::clone(&received);
+        thread::spawn(move || {
+            for stream in hook.incoming().flatten() {
+                let mut reader = std::io::BufReader::new(&stream);
+                let (mut length, mut signature) = (0, String::new());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).is_err() || header.trim().is_empty() {
+                        break;
+                    }
+                    let (name, value) = header.split_once(':').unwrap_or_default();
+                    match name.trim().to_ascii_lowercase().as_str() {
+                        "content-length" => length = value.trim().parse().unwrap_or(0),
+                        "x-snitchhiker-signature" => value.trim().clone_into(&mut signature),
+                        _ => {}
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                received
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .push((signature, body));
+                let _ =
+                    (&stream).write_all(b"HTTP/1.1 204 No Content\r\nconnection: close\r\n\r\n");
+            }
+        });
+    }
+    Ok((hook_port, received))
+}
+
+/// Alerts reach the webhook as JSON, signed with the secret: HMAC-SHA256 of the body.
+pub fn alerts_reach_the_webhook_signed() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let (hook_port, received) = webhook_server()?;
+    let secret = format!("{DIR}/webhook-secret");
+    let _ = std::fs::create_dir_all(DIR);
+    std::fs::write(&secret, "s3cret\n").map_err(|e| e.to_string())?;
+    let settings = format!(
+        "mode = \"enforce\"\nno_match = \"reject\"\nalert_webhook = \"http://127.0.0.1:{hook_port}/hook\"\nalert_webhook_secret_file = \"{secret}\"\n"
+    );
+    let daemon = Running::start("webhook", &settings)?;
+    // The daemon's own delivery is to loopback, which the test's rules leave undecided: let it through.
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--net",
+        "127.0.0.1",
+        "--port",
+        &hook_port.to_string(),
+        "--name",
+        "the hook",
+    ])?;
+    daemon.cli(&[
+        "alerts",
+        "rules",
+        "add",
+        "rejected",
+        "--query",
+        &format!("port:{port} action:reject"),
+        "--threshold",
+        "1",
+    ])?;
+    mallory_connects(port)?;
+    thread::sleep(Duration::from_millis(1500));
+    mallory_connects(port)?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while received
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_empty()
+        && std::time::Instant::now() < deadline
+    {
+        thread::sleep(Duration::from_millis(200));
+    }
+    let deliveries = received
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
+    let found = format!(
+        "{:?}",
+        deliveries
+            .iter()
+            .map(|(s, b)| (s, String::from_utf8_lossy(b)))
+            .collect::<Vec<_>>()
+    );
+    let expected = |body: &[u8]| {
+        let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"s3cret");
+        let tag = ring::hmac::sign(&key, body);
+        let hex = tag.as_ref().iter().fold(String::new(), |mut hex, b| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{b:02x}");
+            hex
+        });
+        format!("sha256={hex}")
+    };
+    check(
+        deliveries.iter().any(|(signature, body)| {
+            String::from_utf8_lossy(body).contains("\"kind\":\"alert_rule\"")
+                && *signature == expected(body)
+        }),
+        "no alert reached the webhook, or its signature doesn't verify",
+        &found,
+    )
+}

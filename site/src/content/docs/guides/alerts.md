@@ -35,3 +35,13 @@ sudo snitchhiker alerts rules add "New programs" --first-program
 sudo snitchhiker alerts            # those not acknowledged
 sudo snitchhiker alerts ack --all
 ```
+
+## Webhooks
+
+Besides the clients and devices, alerts can go to a webhook: chat, a pager, a log collector. Set [`alert_webhook`](/reference/configuration/#alert_webhook) to its URL; each alert is sent as JSON:
+
+```json
+{"node": "web-1", "id": 42, "time_ms": 1763200000000, "kind": "alert_rule", "title": "…", "body": "…"}
+```
+
+With [`alert_webhook_secret_file`](/reference/configuration/#alert_webhook_secret_file), each delivery is signed: `X-Snitchhiker-Signature: sha256=<hex>`, the HMAC-SHA256 of the body with the file's secret. The receiver computes the same and compares, to know the alert came from the node. Every alert is also in the system journal (`journalctl -u snitchhikerd`).

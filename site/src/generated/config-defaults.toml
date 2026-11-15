@@ -25,3 +25,4 @@ prompt_routing = "all"
 escalate_after_secs = 20
 push_gateway = ""
 offline_after_secs = 120
+alert_webhook = ""

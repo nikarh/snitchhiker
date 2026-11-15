@@ -146,6 +146,10 @@ const SCENARIOS: &[Scenario] = &[
     ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
+        "daemon/alerts-reach-the-webhook-signed",
+        daemon::alerts_reach_the_webhook_signed,
+    ),
+    (
         "daemon/monitor-records-but-never-blocks",
         daemon::monitor_records_but_never_blocks,
     ),
