@@ -2131,34 +2131,33 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M5. Remote: iroh, pairing, relay, multi-node
 
-- [ ] **Prompt routing (from M2)**
-  - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence of local clients'
-        sessions, per-device mute; every admin client can answer regardless of notification.
-- [ ] **Daemon remote endpoint**
-  - [ ] iroh endpoint with the node key (systemd-creds TPM sealing supported), ALPN, the paired-devices table, roles,
-        revocation.
-- [ ] **Pairing**
-  - [ ] Pairing codes: SPAKE2 exchange, nameplates on the relay's rendezvous and on mDNS, single attempt, expiry,
-        failed-attempt notice.
-  - [ ] Links and QR codes: one-time secrets, the link format, terminal QR rendering; `snitchhiker pair` prints all
+- [x] **Prompt routing (from M2)**
+  - [x] Routing policy (`prompt_routing`: all, escalate), logind lock/idle presence of local clients' users, per-device
+        mute; every admin client can answer regardless of notification.
+- [x] **Daemon remote endpoint**
+  - [x] iroh endpoint with the node key, ALPN, the paired-devices table, roles, revocation. [ ] systemd-creds TPM
+        sealing of the key (M9, hardening).
+- [x] **Pairing**
+  - [x] Pairing codes: SPAKE2, a meeting point on the LAN (mDNS) and on the relays the device knows, single attempt,
+        expiry, failed-attempt alert ([decision 0010](decisions/0010-pairing-codes.md): no rendezvous service).
+  - [x] Links and QR codes: one-time secrets, the link format, terminal QR rendering; `snitchhiker pair` prints all
         three.
-  - [ ] Desktop: "Pair a device" dialog (code, link, QR) and "Add node" by typing a code or pasting a link; fingerprint
-        confirmation on both sides.
-  - [ ] Many-to-many: several devices per node, several nodes per client, local and remote nodes side by side.
-- [ ] **`client` crate: iroh transport**
-  - [ ] Multi-node connection manager, status, backoff, LAN discovery (mDNS).
+  - [x] Desktop: "Pair a device" (link, QR code, fingerprint) and "Add node" by a link or a code.
+  - [x] Many-to-many: several devices per node, several nodes per client, local and remote nodes side by side.
+- [x] **`client` crate: iroh transport**
+  - [x] Connections to remote nodes (reconnecting with backoff, as local ones), LAN discovery (mDNS).
 - [ ] **Relay**
-  - [ ] `snitchhiker-relay`: embedded iroh-relay, presence heartbeats, offline detection, registration store, ACME
-        or reverse-proxy mode, metrics.
-  - [ ] Container image + unit; a docs page for deployment.
-- [ ] **Step-up from another device**
-  - [ ] Approve or deny a dangerous action requested elsewhere.
-- [ ] **Docs:** relay installation and deployment, "Phones and remote nodes" guide (pairing, roles, revocation), the
-      remote protocol and relay internals page.
-- [ ] **Remote end-to-end tests**
-  - [ ] The `remote` topology (node, relay, NAT router VMs, client VM): pairing by code and link, relayed vs direct,
-        offline detection, push to mock endpoints, version mismatch; remote escape tests (unpaired keys, replayed
-        secrets, a malicious relay).
+  - [x] `snitchhiker-relay`: embedded iroh-relay, ACME or reverse-proxy mode, allow-list, metrics; package and unit.
+  - [ ] Presence heartbeats, offline detection and the registration store (moved to M6, with the push channels they
+        feed); the container image (M9, with the release images).
+- [x] **Step-up from another device**
+  - [x] A remote device's dangerous action waits for an approval on the node (its app, with polkit, or root).
+- [x] **Docs:** relay installation and deployment, "Phones and remote nodes" guide (pairing, roles, revocation),
+      the remote connections internals page.
+- [x] **Remote end-to-end tests**
+  - [x] Pairing by link and by code (LAN), relayed connections and the relay's allow-list, a device behind NAT
+        reaching a firewalled node (network namespaces), version mismatch, unpaired keys, spent and wrong secrets,
+        approvals, routing and muting.
 - **DoD:** the desktop app manages the workstation and an AWS node side by side. The AWS node was paired with
   `sudo snitchhiker pair` and is reachable behind NAT via the self-hosted relay.
 
@@ -2191,6 +2190,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
       and tablet sizes, dark and light, through the same text check.
 - [ ] **Release**
   - [ ] Signing in the `release` environment; APKs on GitHub releases; F-Droid metadata (foss flavour).
+- [ ] **Relay presence and push (from M5)**
+  - [ ] Signed heartbeats from nodes, offline detection, the registration store of devices' push tokens, push to
+        FCM and UnifiedPush; graceful-stop notices.
 - **DoD:**
   - the phone gets a notification within seconds of an unknown connection on a headless AWS node, and Allow from the
     notification creates the suggested rule;
