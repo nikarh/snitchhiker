@@ -19,7 +19,9 @@ confidence-threshold = 0.93
 # Permissive licenses only: Snitchhiker is MIT OR Apache-2.0, and no GPL code may be linked into what it ships
 # (docs/plan.md, "Licensing"). Add a license here only when a dependency needs it.
 # Zlib: foldhash, through hashbrown (aya).
-allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib"]
+# Permissive licenses only. BSD-2-Clause and BSD-3-Clause: zstd (the library and its bindings), for compressing bulk
+# data on remote connections.
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause"]
 
 [bans]
 multiple-versions = "deny"

@@ -1,0 +1,27 @@
+// The FlatBuffers form of an event page, for the wire-format benchmark only. Regenerate src/events_generated.rs with:
+//   mise x github:google/flatbuffers@25.12.19 -- flatc --rust -o src events.fbs
+namespace bench;
+
+table Event {
+  seq: long;
+  time_ms: ulong;
+  exe: string;
+  host: string;
+  uid: uint;
+  pid: uint;
+  address: [ubyte];
+  port: ushort;
+  protocol: ubyte;
+  context: ubyte;
+  action: ubyte;
+  source: ubyte;
+  rule: ulong;
+  bytes_out: ulong;
+  bytes_in: ulong;
+}
+
+table Page {
+  events: [Event];
+}
+
+root_type Page;
