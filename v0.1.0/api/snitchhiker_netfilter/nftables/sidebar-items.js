@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["encode_install","encode_remove"],"struct":["Batch","Table"]};

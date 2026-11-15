@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["HEADERS"],"enum":["Verdict"],"fn":["encode_verdict","parse"],"struct":["Packet","Queue","VerdictWriter"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["home_of","user_of","writable_by_others"],"struct":["HostNamespaces","ProcessCache","ProcessInfo"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MANAGED_ID","SYSTEM"],"enum":["Error"],"struct":["Managed"]};

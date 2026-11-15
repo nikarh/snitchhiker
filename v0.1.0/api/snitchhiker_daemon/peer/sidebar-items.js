@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error","Refusal"],"fn":["end_with_process","identify","root_owned_and_unwritable","sha256","verify"],"struct":["ClientPolicy","Peer","TrustedExe"]};

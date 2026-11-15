@@ -1,0 +1,253 @@
+<!DOCTYPE html><html lang="en" dir="ltr" data-theme="dark" data-has-toc data-has-sidebar class="astro-g5ptsecz"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Security | Snitchhiker</title><link rel="canonical" href="https://nikarh.github.io/snitchhiker/v0.1.0/internals/security/"/><link rel="sitemap" href="/snitchhiker/v0.1.0/sitemap-index.xml"/><link rel="shortcut icon" href="/snitchhiker/v0.1.0/favicon.svg" type="image/svg+xml"/><meta name="generator" content="Astro v7.4.10"/><meta name="generator" content="Starlight v0.42.10"/><meta property="og:title" content="Security"/><meta property="og:type" content="article"/><meta property="og:url" content="https://nikarh.github.io/snitchhiker/v0.1.0/internals/security/"/><meta property="og:locale" content="en"/><meta property="og:description" content="What Snitchhiker defends against, who may control the daemon and how it knows, what the escape tests check, and the limits."/><meta property="og:site_name" content="Snitchhiker"/><meta name="twitter:card" content="summary_large_image"/><meta name="description" content="What Snitchhiker defends against, who may control the daemon and how it knows, what the escape tests check, and the limits."/><meta name="darkreader-lock"/><script>
+	window.StarlightThemeProvider = (() => {
+		const storedTheme =
+			typeof localStorage !== 'undefined' && localStorage.getItem('starlight-theme');
+		const theme =
+			storedTheme ||
+			(window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+		document.documentElement.dataset.theme = theme === 'light' ? 'light' : 'dark';
+		return {
+			updatePickers(theme = storedTheme || 'auto') {
+				document.querySelectorAll('starlight-theme-select').forEach((picker) => {
+					const select = picker.querySelector('select');
+					if (select) select.value = theme;
+					/** @type {HTMLTemplateElement | null} */
+					const tmpl = document.querySelector(`#theme-icons`);
+					const newIcon = tmpl && tmpl.content.querySelector('.' + theme);
+					if (newIcon) {
+						const oldIcon = picker.querySelector('svg.label-icon');
+						if (oldIcon) {
+							oldIcon.replaceChildren(...newIcon.cloneNode(true).childNodes);
+						}
+					}
+				});
+			},
+		};
+	})();
+</script><template id="theme-icons"><svg aria-hidden="true" class="light astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M5 12a1 1 0 0 0-1-1H3a1 1 0 0 0 0 2h1a1 1 0 0 0 1-1Zm.64 5-.71.71a1 1 0 0 0 0 1.41 1 1 0 0 0 1.41 0l.71-.71A1 1 0 0 0 5.64 17ZM12 5a1 1 0 0 0 1-1V3a1 1 0 0 0-2 0v1a1 1 0 0 0 1 1Zm5.66 2.34a1 1 0 0 0 .7-.29l.71-.71a1 1 0 1 0-1.41-1.41l-.66.71a1 1 0 0 0 0 1.41 1 1 0 0 0 .66.29Zm-12-.29a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.71-.71a1.004 1.004 0 1 0-1.43 1.41l.73.71ZM21 11h-1a1 1 0 0 0 0 2h1a1 1 0 0 0 0-2Zm-2.64 6A1 1 0 0 0 17 18.36l.71.71a1 1 0 0 0 1.41 0 1 1 0 0 0 0-1.41l-.76-.66ZM12 6.5a5.5 5.5 0 1 0 5.5 5.5A5.51 5.51 0 0 0 12 6.5Zm0 9a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Zm0 3.5a1 1 0 0 0-1 1v1a1 1 0 0 0 2 0v-1a1 1 0 0 0-1-1Z"/></svg><svg aria-hidden="true" class="dark astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.64 13a1 1 0 0 0-1.05-.14 8.049 8.049 0 0 1-3.37.73 8.15 8.15 0 0 1-8.14-8.1 8.59 8.59 0 0 1 .25-2A1 1 0 0 0 8 2.36a10.14 10.14 0 1 0 14 11.69 1 1 0 0 0-.36-1.05Zm-9.5 6.69A8.14 8.14 0 0 1 7.08 5.22v.27a10.15 10.15 0 0 0 10.14 10.14 9.784 9.784 0 0 0 2.1-.22 8.11 8.11 0 0 1-7.18 4.32v-.04Z"/></svg><svg aria-hidden="true" class="auto astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg></template><link rel="stylesheet" href="/snitchhiker/v0.1.0/_astro/print.C9eyqPGL.css" media="print"><link rel="stylesheet" href="/snitchhiker/v0.1.0/_astro/common.Dqj1__4r.css"><style>@layer starlight.components{svg:where(.astro-hkc32dio){color:var(--sl-icon-color);font-size:var(--sl-icon-size,1em);width:1em;height:1em;overflow:visible}}
+</style><script type="module" src="/snitchhiker/v0.1.0/_astro/page.cNngjUgL.js"></script></head><body class="astro-g5ptsecz"><a class="sl-skip-link astro-qb7clj6f" href="#_top">Skip to content</a><div class="page sl-flex astro-yntsjkba"><header class="header astro-yntsjkba"><div class="header astro-by6fddyj"><div class="title-wrapper sl-flex astro-by6fddyj"><div class="title-group astro-hen6hmfb"><a href="/snitchhiker/v0.1.0/" class="site-title astro-hen6hmfb"><svg class="mark astro-hen6hmfb" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 7C9.5 7 4.6 11.4 2.5 16c2.1 4.6 7 9 13.5 9s11.4-4.4 13.5-9C27.4 11.4 22.5 7 16 7zm0 14.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z" fill="currentColor"></path><circle cx="16" cy="16" r="2.4" fill="currentColor"></circle></svg><span translate="no" class="astro-hen6hmfb">Snitchhiker</span></a><snitchhiker-version-select data-version="v0.1.0" class="astro-jcjov46q"><label class="version astro-jcjov46q"><span class="sr-only astro-jcjov46q">Documentation version</span><select autocomplete="off" aria-label="Documentation version" class="astro-jcjov46q"><option value="v0.1.0" selected class="astro-jcjov46q">v0.1.0</option></select><svg class="caret astro-jcjov46q" viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" class="astro-jcjov46q"></path></svg></label></snitchhiker-version-select><script type="module" src="/snitchhiker/v0.1.0/_astro/VersionSelect.astro_astro_type_script_index_0_lang.DT3RqbTT.js"></script></div></div><div class="sl-flex print:hidden astro-by6fddyj"><site-search class="astro-by6fddyj astro-b5kgnn7o" data-translations="{&quot;placeholder&quot;:&quot;Search&quot;}"><button data-open-modal disabled aria-label="Search" aria-keyshortcuts="Control+K" class="astro-b5kgnn7o"><svg aria-hidden="true" class="astro-b5kgnn7o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21.71 20.29 18 16.61A9 9 0 1 0 16.61 18l3.68 3.68a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.39ZM11 18a7 7 0 1 1 0-14 7 7 0 0 1 0 14Z"/></svg><span class="sl-hidden md:sl-block astro-b5kgnn7o" aria-hidden="true">Search</span><kbd class="sl-hidden md:sl-flex astro-b5kgnn7o" style="display: none"><kbd class="astro-b5kgnn7o">Ctrl</kbd><kbd class="astro-b5kgnn7o">K</kbd></kbd></button><dialog style="padding: 0" aria-label="Search" class="astro-b5kgnn7o"><div class="dialog-frame sl-flex astro-b5kgnn7o"><button data-close-modal class="sl-flex md:sl-hidden astro-b5kgnn7o">Cancel</button><div class="search-container astro-b5kgnn7o"><div id="starlight__search" class="astro-b5kgnn7o"></div></div></div></dialog></site-search><script>
+	(() => {
+		const openBtn = document.querySelector('button[data-open-modal]');
+		const shortcut = openBtn?.querySelector('kbd');
+		if (!openBtn || !(shortcut instanceof HTMLElement)) return;
+		const platformKey = shortcut.querySelector('kbd');
+		if (platformKey && /(Mac|iPhone|iPod|iPad)/i.test(navigator.platform)) {
+			platformKey.textContent = '⌘';
+			openBtn.setAttribute('aria-keyshortcuts', 'Meta+K');
+		}
+		shortcut.style.display = '';
+	})();
+</script><script type="module" src="/snitchhiker/v0.1.0/_astro/Search.astro_astro_type_script_index_0_lang.Bxa-6HAB.js"></script></div><div class="sl-hidden md:sl-flex print:hidden right-group astro-by6fddyj"><div class="sl-flex social-icons astro-by6fddyj"><a href="https://github.com/nikarh/snitchhiker" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script><script type="module">var e=`starlight-theme`,t=e=>e===`auto`||e===`dark`||e===`light`?e:`auto`,n=()=>t(typeof localStorage<`u`&&localStorage.getItem(e));function r(t){typeof localStorage<`u`&&localStorage.setItem(e,t===`light`||t===`dark`?t:``)}var i=()=>matchMedia(`(prefers-color-scheme: light)`).matches?`light`:`dark`;function a(e){StarlightThemeProvider.updatePickers(e),document.documentElement.dataset.theme=e===`auto`?i():e,r(e)}matchMedia(`(prefers-color-scheme: light)`).addEventListener(`change`,()=>{n()===`auto`&&a(`auto`)});var o=class extends HTMLElement{constructor(){super(),a(n()),this.querySelector(`select`)?.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&a(t(e.currentTarget.value))})}};customElements.define(`starlight-theme-select`,o);</script><script type="module">var e=class extends HTMLElement{constructor(){super();let e=this.querySelector(`select`);e&&(e.addEventListener(`change`,e=>{e.currentTarget instanceof HTMLSelectElement&&(window.location.pathname=e.currentTarget.value)}),window.addEventListener(`pageshow`,t=>{if(!t.persisted)return;let n=e.querySelector(`option[selected]`)?.index;n!==e.selectedIndex&&(e.selectedIndex=n??0)}))}};customElements.define(`starlight-lang-select`,e);</script></div></div></header><nav class="sidebar print:hidden astro-yntsjkba" aria-label="Main"><button popovertarget="starlight__sidebar" class="sl-menu-button sl-flex md:sl-hidden print:hidden astro-r2osgdlg"><svg aria-hidden="true" class="open-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M3 8h18a1 1 0 1 0 0-2H3a1 1 0 0 0 0 2Zm18 8H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Zm0-5H3a1 1 0 0 0 0 2h18a1 1 0 0 0 0-2Z"/></svg><svg aria-hidden="true" class="close-menu astro-r2osgdlg astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="m13.41 12 6.3-6.29a1.004 1.004 0 1 0-1.42-1.42L12 10.59l-6.29-6.3a1.004 1.004 0 0 0-1.42 1.42l6.3 6.29-6.3 6.29a1 1 0 0 0 0 1.42.998.998 0 0 0 1.42 0l6.29-6.3 6.29 6.3a.999.999 0 0 0 1.42 0 1 1 0 0 0 0-1.42L13.41 12Z"/></svg><span class="sr-only astro-r2osgdlg">Menu</span></button><script type="module">var e=class extends HTMLElement{constructor(){super();let e=matchMedia(`(min-width: 50em)`),t=()=>{this.popover=e.matches?null:`auto`};t(),e.addEventListener(`change`,()=>t()),this.addEventListener(`toggle`,({newState:e})=>this.trapFocus(e===`open`))}trapFocus(e){document.querySelectorAll(`.main-frame, .sl-skip-link`).forEach(t=>{t.toggleAttribute(`inert`,e)})}};customElements.define(`sl-sidebar-pane`,e);</script><sl-sidebar-pane popover id="starlight__sidebar" class="sidebar-pane astro-yntsjkba"><div class="sidebar-content sl-flex astro-yntsjkba"><sl-sidebar-state-persist data-hash="1h0hy0r" class="astro-ipdry5cl"><script aria-hidden="true">
+		(() => {
+			try {
+				if (!matchMedia('(min-width: 50em)').matches) return;
+				/** @type {HTMLElement | null} */
+				const target = document.querySelector('sl-sidebar-state-persist');
+				const state = JSON.parse(sessionStorage.getItem('sl-sidebar-state') || '0');
+				if (!target || !state || target.dataset.hash !== state.hash) return;
+				window._starlightScrollRestore = state.scroll;
+				customElements.define(
+					'sl-sidebar-restore',
+					class SidebarRestore extends HTMLElement {
+						connectedCallback() {
+							try {
+								const idx = parseInt(this.dataset.index || '');
+								const details = this.closest('details');
+								if (details && typeof state.open[idx] === 'boolean') details.open = state.open[idx];
+							} catch {}
+						}
+					}
+				);
+			} catch {}
+		})();
+	</script><ul class="top-level astro-rmhv4bp6"><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Getting started</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="0"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/start/introduction/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Introduction</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/start/quick-start/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Quick start</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Install</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="1"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/install/linux/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Linux packages</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/install/verifying/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Verifying downloads</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Guides</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="2"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/guides/rules/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Rules</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/guides/prompts/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Prompts</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Reference</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="3"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/reference/configuration/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Configuration</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/reference/cli/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Command line</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/reference/rule-files/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Rule files</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/reference/protocol/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Client protocol</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/reference/changelog/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Changelog</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details open class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">How it works</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="4"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/internals/how-it-works/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">How a connection is decided</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/internals/security/" aria-current="page" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Security</span></a></li></ul></details></li><li class="astro-rmhv4bp6"><details class="astro-rmhv4bp6"><summary class="astro-rmhv4bp6"><span class="group-label astro-rmhv4bp6"><span class="large astro-rmhv4bp6">Project</span></span><svg aria-hidden="true" class="caret astro-rmhv4bp6 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.25rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></summary><sl-sidebar-restore data-index="5"></sl-sidebar-restore><ul class="astro-rmhv4bp6"><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/project/development/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Development</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/project/docs/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Writing the docs</span></a></li><li class="astro-rmhv4bp6"><a href="/snitchhiker/v0.1.0/project/releasing/" class="astro-rmhv4bp6"><span class="astro-rmhv4bp6">Releasing</span></a></li></ul></details></li></ul><script aria-hidden="true">
+		(() => {
+			const scroller = document.getElementById('starlight__sidebar');
+			if (!window._starlightScrollRestore || !scroller) return;
+			scroller.scrollTop = window._starlightScrollRestore;
+			delete window._starlightScrollRestore;
+		})();
+	</script></sl-sidebar-state-persist><div class="md:sl-hidden"><div class="mobile-preferences sl-flex astro-p4azlveh"><div class="social-icons astro-p4azlveh"><a href="https://github.com/nikarh/snitchhiker" rel="me" class="sl-flex astro-n2mnl6yq"><span class="sr-only astro-n2mnl6yq">GitHub</span><svg aria-hidden="true" class="astro-n2mnl6yq astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M12 .3a12 12 0 0 0-3.8 23.38c.6.12.83-.26.83-.57L9 21.07c-3.34.72-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.09-.73.09-.73 1.2.09 1.83 1.24 1.83 1.24 1.08 1.83 2.81 1.3 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.14-.3-.54-1.52.1-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.28-1.55 3.29-1.23 3.29-1.23.64 1.66.24 2.88.12 3.18a4.65 4.65 0 0 1 1.23 3.22c0 4.61-2.8 5.63-5.48 5.92.42.36.81 1.1.81 2.22l-.01 3.29c0 .31.2.69.82.57A12 12 0 0 0 12 .3Z"/></svg></a></div><starlight-theme-select><label style="--sl-select-width: 6.25em" class="astro-2z5xp7gb"><span class="sr-only astro-2z5xp7gb">Select theme</span><svg aria-hidden="true" class="icon label-icon astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M21 14h-1V7a3 3 0 0 0-3-3H7a3 3 0 0 0-3 3v7H3a1 1 0 0 0-1 1v2a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3v-2a1 1 0 0 0-1-1ZM6 7a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v7H6V7Zm14 10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-1h16v1Z"/></svg><select autocomplete="off" class="astro-2z5xp7gb"><option value="dark" class="astro-2z5xp7gb">Dark</option><option value="light" class="astro-2z5xp7gb">Light</option><option value="auto" selected class="astro-2z5xp7gb">Auto</option></select><svg aria-hidden="true" class="icon caret astro-2z5xp7gb astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1em;"><path d="M17 9.17a1 1 0 0 0-1.41 0L12 12.71 8.46 9.17a1 1 0 1 0-1.41 1.42l4.24 4.24a1.002 1.002 0 0 0 1.42 0L17 10.59a1.002 1.002 0 0 0 0-1.42Z"/></svg></label></starlight-theme-select><script>
+	StarlightThemeProvider.updatePickers();
+</script></div></div></div></sl-sidebar-pane></nav><div class="main-frame astro-yntsjkba"><script type="module">var e=document.getElementById(`starlight__sidebar`),t=e?.querySelector(`sl-sidebar-state-persist`),n=`sl-sidebar-state`,r=()=>{let r=[],i=t?.dataset.hash||``;try{let e=sessionStorage.getItem(n),t=JSON.parse(e||`{}`);Array.isArray(t.open)&&t.hash===i&&(r=t.open)}catch{}return{hash:i,open:r,scroll:e?.scrollTop||0}},i=e=>{try{sessionStorage.setItem(n,JSON.stringify(e))}catch{}},a=()=>i(r()),o=(e,t)=>{let n=r();n.open[t]=e,i(n)};t?.addEventListener(`click`,e=>{if(!(e.target instanceof Element))return;let t=e.target.closest(`summary`)?.closest(`details`);if(!t)return;let n=t.querySelector(`sl-sidebar-restore`),r=parseInt(n?.dataset.index||``);isNaN(r)||o(!t.open,r)}),addEventListener(`visibilitychange`,()=>{document.visibilityState===`hidden`&&a()});</script><div class="lg:sl-flex astro-lrzkfocr"><aside class="right-sidebar-container print:hidden astro-lrzkfocr"><div class="right-sidebar astro-lrzkfocr"><div class="lg:sl-hidden astro-qok35upx"><mobile-starlight-toc data-min-h="2" data-max-h="3" class="astro-66cqc7ze"><nav aria-labelledby="starlight__on-this-page--mobile" class="astro-66cqc7ze"><details id="starlight__mobile-toc" class="astro-66cqc7ze"><summary id="starlight__on-this-page--mobile" class="sl-flex astro-66cqc7ze"><span class="toggle sl-flex astro-66cqc7ze">On this page<svg aria-hidden="true" class="caret astro-66cqc7ze astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1rem;"><path d="m14.83 11.29-4.24-4.24a1 1 0 1 0-1.42 1.41L12.71 12l-3.54 3.54a1 1 0 0 0 0 1.41 1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.24-4.24a1.002 1.002 0 0 0 0-1.42Z"/></svg></span><span class="display-current astro-66cqc7ze"></span></summary><div class="dropdown astro-66cqc7ze"><ul class="isMobile astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-it-defends-against" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What it defends against</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-daemons-sockets" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The daemon’s sockets</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#clients" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Clients</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#dangerous-actions-need-more-than-a-session" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Dangerous actions need more than a session</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#facts-a-process-cant-fake" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Facts a process can’t fake</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-escape-tests" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The escape tests</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-daemon-itself" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The daemon itself</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#reporting-a-vulnerability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Reporting a vulnerability</span></a></li></ul></div></details></nav></mobile-starlight-toc><script type="module" src="/snitchhiker/v0.1.0/_astro/MobileTableOfContents.astro_astro_type_script_index_0_lang.C3fM4Kra.js"></script></div><div class="right-sidebar-panel sl-hidden lg:sl-block astro-qok35upx"><div class="sl-container astro-qok35upx"><starlight-toc data-min-h="2" data-max-h="3"><nav aria-labelledby="starlight__on-this-page"><h2 id="starlight__on-this-page">On this page</h2><ul class="astro-jugkfwgx" style="--depth: 0;"><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#_top" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Overview</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#what-it-defends-against" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">What it defends against</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-daemons-sockets" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The daemon’s sockets</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#clients" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Clients</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#dangerous-actions-need-more-than-a-session" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Dangerous actions need more than a session</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#facts-a-process-cant-fake" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Facts a process can’t fake</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-escape-tests" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The escape tests</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#the-daemon-itself" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">The daemon itself</span></a></li><li style="--depth: 0;" class="astro-jugkfwgx"><a href="#reporting-a-vulnerability" style="--depth: 0;" class="astro-jugkfwgx"><span style="--depth: 0;" class="astro-jugkfwgx">Reporting a vulnerability</span></a></li></ul></nav></starlight-toc><script type="module" src="/snitchhiker/v0.1.0/_astro/TableOfContents.astro_astro_type_script_index_0_lang.BpJaGz7G.js"></script></div></div></div></aside><div class="main-pane astro-lrzkfocr"><main data-pagefind-body class="astro-g5ptsecz" lang="en" dir="ltr"><snitchhiker-version-notice data-version="v0.1.0" data-pagefind-ignore="true" hidden="true" class="astro-uljtwisc"><p class="astro-uljtwisc"></p></snitchhiker-version-notice><script type="module" src="/snitchhiker/v0.1.0/_astro/Banner.astro_astro_type_script_index_0_lang.3VK1fiYg.js"></script><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><h1 id="_top" class="astro-bebwqqxs">Security</h1></div></div><div class="content-panel astro-a7po4psb"><div class="sl-container astro-a7po4psb"><div class="sl-markdown-content"><p>A firewall that any process of the user can turn off, answer or edit protects against nothing that runs as that user. Snitchhiker’s goal is that only root, and Snitchhiker’s own client programs, can change what it decides.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="what-it-defends-against">What it defends against</h2><a class="sl-anchor-link" href="#what-it-defends-against"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “What it defends against”</span></a></div>
+<p>An unprivileged process, including one running as your own user (a compromised dependency, a hostile build script, a prompt-injected coding agent), must not be able to:</p>
+<ol>
+<li>get packets out that no rule allows;</li>
+<li>pass for another program, user or context so that someone else’s rule applies to it;</li>
+<li>connect to the daemon, change its rules, answer its prompts or read its history;</li>
+<li>read or alter a client’s memory, or start a client in a way that subverts it.</li>
+</ol>
+<p><strong>Out of scope</strong>: root, the kernel, and physical access to an unlocked machine. Root can always stop the firewall.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-daemons-sockets">The daemon’s sockets</h2><a class="sl-anchor-link" href="#the-daemons-sockets"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “The daemon’s sockets”</span></a></div>
+<p>The daemon is the server; clients connect to it. Both sockets are in <code dir="auto">/run/snitchhiker/</code>, a root-owned directory only root can write.</p>
+<table>
+<thead>
+<tr>
+<th>Socket</th>
+<th>Owner and mode</th>
+<th>Who gets in</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code dir="auto">admin.sock</code></td>
+<td><code dir="auto">root:root 0600</code></td>
+<td>processes running as root (checked again with <code dir="auto">SO_PEERCRED</code>)</td>
+<td>everything</td>
+</tr>
+<tr>
+<td><code dir="auto">client.sock</code></td>
+<td><code dir="auto">root:snitchhiker-ui 0660</code></td>
+<td>Snitchhiker’s client binaries, verified as below</td>
+<td>read, answer prompts, change rules</td>
+</tr>
+</tbody>
+</table>
+<div class="sl-heading-wrapper level-h2"><h2 id="clients">Clients</h2><a class="sl-anchor-link" href="#clients"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Clients”</span></a></div>
+<p>Passwords, tokens and keys stored for a client fail against a process of the same user: it can read whatever the client can. Snitchhiker identifies the client <strong>process</strong> instead, from facts only the kernel and root can establish. Nothing the client sends counts.</p>
+<p>The client binaries (the desktop app, later the MCP server) are installed root-owned and <strong>setgid</strong> to the <code dir="auto">snitchhiker-ui</code> group. Users aren’t members of that group, so running an installed client binary is the only way a process of theirs gets it. The kernel then also makes the process non-dumpable: other processes of the same user can’t attach to it with ptrace, read its memory or get its core dump. glibc’s loader ignores <code dir="auto">LD_PRELOAD</code> and the like for it.</p>
+<p>When a process connects to <code dir="auto">client.sock</code>, the daemon takes a pidfd for it from the kernel (<code dir="auto">SO_PEERPIDFD</code>, Linux 6.5) and checks, in this order:</p>
+<ol>
+<li>its effective or supplementary groups include <code dir="auto">snitchhiker-ui</code>;</li>
+<li>the executable it runs is a trusted client, compared by device and inode, so a different file at the same path doesn’t pass;</li>
+<li>that file and every directory above it are owned by root and writable by nobody else;</li>
+<li>for a client registered with <code dir="auto">snitchhikerd trust-client</code>, the file still has the SHA-256 it was registered with (read once per version of the file, by its inode and change time);</li>
+<li>nothing is tracing it;</li>
+<li>it isn’t dumpable.</li>
+</ol>
+<p>Then it checks the pidfd still refers to a live process, so the process can’t have exited and its pid been reused while it was being checked. A process that fails any check gets a refusal and the connection closes.</p>
+<p><strong>The session is the process’s.</strong> The daemon keeps the pidfd and ends the connection when that process exits, even if another process holds the socket by then (passed on, or inherited by a child). A client’s rights don’t outlive it.</p>
+<p><strong>Clients check the daemon too.</strong> Before sending anything, a client (the command line included) checks that the socket and every directory above it belong to root and that no one else may write to those directories, and that the process serving the socket runs as root. A socket some other process bound elsewhere can’t pose as the daemon to feed a client false prompts or collect its answers.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="dangerous-actions-need-more-than-a-session">Dangerous actions need more than a session</h2><a class="sl-anchor-link" href="#dangerous-actions-need-more-than-a-session"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Dangerous actions need more than a session”</span></a></div>
+<p>Some requests would undo the firewall in one step, so a client’s session isn’t enough for them. Today that is a rule that allows every program to connect anywhere: an allow rule naming no program and no destination, whether added directly, imported, or made by answering a prompt with conditions of the client’s own. Changes to the policy, pairing devices and the like will join it as they become possible through the protocol.</p>
+<p>For these the daemon asks polkit whether the client’s process may do it (action <code dir="auto">org.snitchhiker.manage</code>, the process named by its pidfd). By default polkit asks for an administrator’s password through the user’s polkit agent and remembers it for a few minutes. Local policy can change that with a file in <code dir="auto">/etc/polkit-1/rules.d/</code>. When polkit doesn’t authorize the request, or can’t be asked (not installed, no agent), the request is refused with <code dir="auto">ERROR_CODE_NOT_AUTHORIZED</code>. Root’s requests on the admin socket need no step-up, and <a href="/snitchhiker/v0.1.0/reference/configuration/#step_up"><code dir="auto">step_up = "off"</code></a> switches it off.</p>
+<p>Every dangerous request is recorded in the audit trail, with the client, its user and process, what it asked for and the outcome, whether it went ahead or not: <code dir="auto">sudo snitchhiker audit</code>.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="facts-a-process-cant-fake">Facts a process can’t fake</h2><a class="sl-anchor-link" href="#facts-a-process-cant-fake"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Facts a process can’t fake”</span></a></div>
+<p>A rule matches on what the kernel says about a connection, not on what the process says about itself:</p>
+<ul>
+<li><strong>The program</strong> is the executable the kernel resolved for the process (<code dir="auto">/proc/&lt;pid&gt;/exe</code>), read when the connection is decided and checked against the process’s start time. A process renaming itself, or exec’d with another <code dir="auto">argv[0]</code>, is still its executable.</li>
+<li><strong>The user</strong> is the real user id the kernel recorded when the socket was opened.</li>
+<li><strong>The context</strong> compares the process’s namespaces with the host’s. A process in a private mount namespace, where an allowed path can be bind-mounted over with anything, is in a container, and host rules don’t apply to it.</li>
+<li><strong>Host names</strong> are learned only from answers to queries the process (or the local resolver) was seen sending (<a href="/snitchhiker/v0.1.0/internals/how-it-works/#names">Names</a>).</li>
+</ul>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-escape-tests">The escape tests</h2><a class="sl-anchor-link" href="#the-escape-tests"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “The escape tests”</span></a></div>
+<p>The end-to-end suite runs in disposable VMs on every change and includes an unprivileged user trying to get around the daemon. Each scenario has a control that shows the setup works:</p>
+<table>
+<thead>
+<tr>
+<th>Scenario</th>
+<th>Tries</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code dir="auto">escape/tcp-fast-open</code></td>
+<td>data in the SYN with <code dir="auto">MSG_FASTOPEN</code></td>
+</tr>
+<tr>
+<td><code dir="auto">escape/udp-sendto</code></td>
+<td>unconnected UDP to a destination no rule allows</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/ipv6-and-mapped-ipv4</code></td>
+<td>IPv6, and IPv4 through an IPv4-mapped IPv6 address</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/icmp-ping-socket</code></td>
+<td>unprivileged ICMP ping sockets</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/raw-sockets-need-privileges</code></td>
+<td>raw sockets (refused by the kernel without <code dir="auto">CAP_NET_RAW</code>)</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/spoofed-process-name</code></td>
+<td>passing for an allowed program by <code dir="auto">argv[0]</code> and process name</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/non-dumpable-process-is-not-root</code></td>
+<td>passing for root by being non-dumpable</td>
+</tr>
+<tr>
+<td><code dir="auto">escape/allowed-path-in-a-private-mount-namespace</code></td>
+<td>mounting another program over an allowed path</td>
+</tr>
+<tr>
+<td><code dir="auto">names/unsolicited-answers-teach-nothing</code></td>
+<td>teaching the daemon a name with an unsolicited DNS answer</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/plain-process-cannot-connect</code></td>
+<td>connecting to the client socket</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/open-socket-still-refuses-plain-process</code></td>
+<td>the same, with the socket’s mode opened up</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/unregistered-setgid-binary-refused</code></td>
+<td>a setgid binary of the right group that root didn’t register</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/traced-client-refused</code></td>
+<td>a client started under a tracer</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/same-user-cannot-attach-or-read-memory</code></td>
+<td>attaching to a client, or reading its memory</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/registered-clients-are-pinned</code></td>
+<td>a registered client binary changed in place, and registering a binary that isn’t a setgid client</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/connection-ends-with-its-process</code></td>
+<td>keeping a client’s connection after the client exits, by holding its socket</td>
+</tr>
+<tr>
+<td><code dir="auto">step-up/allow-everything-needs-authorization</code></td>
+<td>adding an allow-everything rule from a client without polkit’s authorization</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/client-refuses-a-fake-node</code></td>
+<td>posing as the daemon to a client, with a socket of one’s own</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/admin-socket-refuses-ordinary-users</code></td>
+<td>the command line run by an ordinary user</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/disguised-clients-are-refused</code></td>
+<td>a hard link to the client binary, and the client run inside a user namespace</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/configuration-state-and-runtime-are-root-only</code></td>
+<td>writing the configuration, rule files, sockets or state; reading the history or the client registry</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/the-service-cannot-be-stopped-or-changed</code></td>
+<td>stopping, killing, masking, disabling or overriding the service</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/the-daemon-cannot-be-signalled-or-traced</code></td>
+<td>signalling or tracing the daemon, reading its memory, descriptors or environment</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/bpf-programs-and-maps-are-out-of-reach</code></td>
+<td>listing the eBPF programs, reading their maps</td>
+</tr>
+<tr>
+<td><code dir="auto">tamper/connecting-while-rules-reload</code></td>
+<td>connecting hundreds of times while the rules are reloaded every 20 ms</td>
+</tr>
+</tbody>
+</table>
+<div class="sl-heading-wrapper level-h2"><h2 id="the-daemon-itself">The daemon itself</h2><a class="sl-anchor-link" href="#the-daemon-itself"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “The daemon itself”</span></a></div>
+<p>The daemon runs as root with only the capabilities it needs, sees the system read-only apart from its own directories, and can’t gain privileges (<a href="/snitchhiker/v0.1.0/install/linux/#the-service">The service</a>). Everything it creates, the database with the history and the audit trail first, is readable by root alone, wherever the configuration puts it. With <code dir="auto">fail = "closed"</code>, its table stays in place when it stops or crashes, and systemd restarts it, so nothing new gets out undecided meanwhile.</p>
+<div class="sl-heading-wrapper level-h2"><h2 id="reporting-a-vulnerability">Reporting a vulnerability</h2><a class="sl-anchor-link" href="#reporting-a-vulnerability"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Reporting a vulnerability”</span></a></div>
+<p>Report it privately through <a href="https://github.com/nikarh/snitchhiker/security/advisories/new">GitHub’s private vulnerability reporting</a>, not in a public issue. <a href="https://github.com/nikarh/snitchhiker/blob/main/SECURITY.md"><code dir="auto">SECURITY.md</code></a> says what counts.</p>
+</div><footer class="sl-flex astro-ddtxxk7k"><div class="meta sl-flex astro-ddtxxk7k"><a href="https://github.com/nikarh/snitchhiker/edit/main/site/src/content/docs/internals/security.md" class="sl-flex print:hidden astro-qlekgd3o"><svg aria-hidden="true" class="astro-qlekgd3o astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.2em;"><path d="M22 7.24a1 1 0 0 0-.29-.71l-4.24-4.24a1 1 0 0 0-1.1-.22 1 1 0 0 0-.32.22l-2.83 2.83L2.29 16.05a1 1 0 0 0-.29.71V21a1 1 0 0 0 1 1h4.24a1 1 0 0 0 .76-.29l10.87-10.93L21.71 8c.1-.1.17-.2.22-.33a1 1 0 0 0 0-.24v-.14l.07-.05ZM6.83 20H4v-2.83l9.93-9.93 2.83 2.83L6.83 20ZM18.17 8.66l-2.83-2.83 1.42-1.41 2.82 2.82-1.41 1.42Z"/></svg>Edit page</a></div><div class="pagination-links print:hidden astro-b5raizh3" dir="ltr"><a href="/snitchhiker/v0.1.0/internals/how-it-works/" rel="prev" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17 11H9.41l3.3-3.29a1.004 1.004 0 1 0-1.42-1.42l-5 5a1 1 0 0 0-.21.33 1 1 0 0 0 0 .76 1 1 0 0 0 .21.33l5 5a1.002 1.002 0 0 0 1.639-.325 1 1 0 0 0-.219-1.095L9.41 13H17a1 1 0 0 0 0-2Z"/></svg><span class="astro-b5raizh3">Previous<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">How a connection is decided</span></span></a><a href="/snitchhiker/v0.1.0/project/development/" rel="next" class="astro-b5raizh3"><svg aria-hidden="true" class="astro-b5raizh3 astro-hkc32dio" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style="--sl-icon-size: 1.5rem;"><path d="M17.92 11.62a1.001 1.001 0 0 0-.21-.33l-5-5a1.003 1.003 0 1 0-1.42 1.42l3.3 3.29H7a1 1 0 0 0 0 2h7.59l-3.3 3.29a1.002 1.002 0 0 0 .325 1.639 1 1 0 0 0 1.095-.219l5-5a1 1 0 0 0 .21-.33 1 1 0 0 0 0-.76Z"/></svg><span class="astro-b5raizh3">Next<br class="astro-b5raizh3"><span class="link-title astro-b5raizh3">Development</span></span></a></div></footer></div></div></main></div></div></div></div></body></html>

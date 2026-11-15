@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Action","Condition","ContextKind","Expiry","Tier"],"fn":["allows_everything"],"struct":["Folder","Rule"],"type":["FolderId","RuleId"]};

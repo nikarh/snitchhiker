@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["FILE_NAME"],"enum":["Error"],"fn":["load","policy","registry_path","trust","untrust"],"struct":["Entry"]};

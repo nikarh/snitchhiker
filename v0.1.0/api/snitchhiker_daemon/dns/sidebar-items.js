@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["NAMES"],"fn":["parse_answer"],"struct":["Answer","Names"]};

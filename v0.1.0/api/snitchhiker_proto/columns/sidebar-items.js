@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["EVENT_MAGIC","VERSION"],"enum":["BlockError","Column"],"fn":["encode_events"],"struct":["EventBlock","EventRow"]};
