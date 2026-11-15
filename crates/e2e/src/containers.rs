@@ -270,3 +270,136 @@ pub fn a_containers_prompt_names_it_and_its_answer_holds_for_its_service() -> Re
         &found,
     )
 }
+
+/// Podman, rootful (as root) and rootless (as mallory, with pasta), with the test image.
+fn podman() -> Result<(), String> {
+    let build = |import: &str| {
+        let busybox = run("sh", &["-c", "command -v busybox"])?;
+        let script = format!(
+            "set -e; d=$(mktemp -d); mkdir -p $d/bin; cp {busybox} $d/bin/busybox; \
+             for a in sh wget nc sleep; do ln -s busybox $d/bin/$a; done; chmod -R a+rX $d; \
+             tar -C $d -c . | {import} >/dev/null; rm -rf $d",
+            busybox = busybox.trim()
+        );
+        run("sh", &["-c", &script]).map(|_| ())
+    };
+    if run("podman", &["image", "exists", IMAGE]).is_err() {
+        build(&format!("podman import - {IMAGE}"))?;
+    }
+    run("loginctl", &["enable-linger", "mallory"])?;
+    if rootless(&["image", "exists", IMAGE]).is_err() {
+        build(&format!(
+            "runuser -l mallory -c 'XDG_RUNTIME_DIR=/run/user/1001 podman import - {IMAGE}'"
+        ))?;
+    }
+    Ok(())
+}
+
+/// `podman <args>` as mallory.
+fn rootless(args: &[&str]) -> Result<String, String> {
+    run(
+        "runuser",
+        &[
+            "-l",
+            "mallory",
+            "-c",
+            &format!("XDG_RUNTIME_DIR=/run/user/1001 podman {}", args.join(" ")),
+        ],
+    )
+}
+
+/// Podman's containers: a rootful one on its bridge is decided by its program, as Docker's; a rootless one's
+/// connections are made by its network helper (pasta) on the host, and are decided as the container's, with the
+/// program inside unknown: rules on the container hold, rules on a program don't.
+pub fn podman_containers_are_named_rootful_and_rootless() -> Result<(), String> {
+    podman()?;
+    let daemon = Running::start(
+        "containers-podman",
+        "mode = \"enforce\"\nno_match = \"deny\"\n",
+    )?;
+    for (args, name) in [
+        (
+            ["--container", "e2e-rootful", "--port", "8091"],
+            "rootful by name",
+        ),
+        (
+            ["--container", "e2e-rootless", "--port", "8092"],
+            "rootless by name",
+        ),
+    ] {
+        let mut all = vec!["rules", "add", "allow"];
+        all.extend(args);
+        all.extend(["--name", name]);
+        daemon.cli(&all)?;
+    }
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "/bin/busybox",
+        "--any-context",
+        "--port",
+        "8093",
+        "--name",
+        "the program",
+    ])?;
+    let wget = "wget -T 2 -q -O /dev/null";
+    let _ = run(
+        "podman",
+        &[
+            "run",
+            "--rm",
+            "--name",
+            "e2e-rootful",
+            IMAGE,
+            "sh",
+            "-c",
+            &format!("{wget} http://203.0.113.90:8091/"),
+        ],
+    );
+    for (port, address) in [(8092, "203.0.113.91"), (8093, "203.0.113.92")] {
+        let _ = rootless(&[
+            "run",
+            "--rm",
+            "--name",
+            "e2e-rootless",
+            IMAGE,
+            "sh",
+            "-c",
+            &format!("'{wget} http://{address}:{port}/'"),
+        ]);
+    }
+    thread::sleep(Duration::from_millis(500));
+    let rootful = decisions(&daemon, "203.0.113.90:8091")?;
+    let rootless_named = decisions(&daemon, "203.0.113.91:8092")?;
+    let rootless_program = decisions(&daemon, "203.0.113.92:8093")?;
+    let found = format!(
+        "rootful:\n{}\nrootless, a rule on its name:\n{}\nrootless, a rule on the program:\n{}",
+        rootful.join("\n"),
+        rootless_named.join("\n"),
+        rootless_program.join("\n")
+    );
+    check(
+        rootful
+            .iter()
+            .any(|l| l.contains(" allow ") && l.contains("[podman e2e-rootful] /bin/busybox")),
+        "the rootful container wasn't decided by its name and program",
+        &found,
+    )?;
+    check(
+        rootless_named
+            .iter()
+            .any(|l| l.contains(" allow ") && l.contains("[podman e2e-rootless]")),
+        "the rootless container's connection (made by pasta) wasn't decided as the container's",
+        &found,
+    )?;
+    check(
+        !rootless_program.is_empty()
+            && rootless_program
+                .iter()
+                .all(|l| l.contains(" deny ") && l.contains("[podman e2e-rootless]")),
+        "a rule on the program held through pasta, where the program can't be known",
+        &found,
+    )
+}

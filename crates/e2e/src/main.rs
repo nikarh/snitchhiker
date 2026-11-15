@@ -262,6 +262,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::a_containers_prompt_names_it_and_its_answer_holds_for_its_service,
     ),
     (
+        "containers/podman-containers-are-named-rootful-and-rootless",
+        containers::podman_containers_are_named_rootful_and_rootless,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

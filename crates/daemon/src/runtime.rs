@@ -1130,6 +1130,34 @@ pub fn policy_action(policy: Policy, no_client: Action) -> Action {
 
 /// The verdict for one packet (none: it is held for a prompt), recording what happened, and the socket to close for a
 /// rejected connection.
+/// The context a connection comes from: the process's own (its cgroup names its container), or, for a rootless
+/// container's user-mode network helper, the container it connects for (`true`: the program in it is unknown).
+fn context_of(
+    shared: &Shared,
+    owner: Option<snitchhiker_ebpf::FlowOwner>,
+    process: Option<&crate::process::ProcessInfo>,
+) -> (ContextKind, Option<Arc<crate::contexts::Identified>>, bool) {
+    let (Some(owner), Some(process)) = (owner, process) else {
+        return (ContextKind::Host, None, false);
+    };
+    // A helper makes its connections from the host's network namespace (rootless, it runs in the runtime's user
+    // namespace): a program of that name inside a container is no helper.
+    if crate::contexts::is_network_helper(&process.exe)
+        && std::fs::metadata(format!("/proc/{}/ns/net", owner.pid))
+            .is_ok_and(|m| u32::try_from(m.ino()).ok() == Some(shared.netns))
+        && let Some(served) =
+            shared
+                .contexts
+                .served_by(owner.pid, owner.start_boottime, &process.exe)
+    {
+        return (ContextKind::Container, Some(served), true);
+    }
+    let container = (process.context == ContextKind::Container)
+        .then(|| shared.contexts.container(owner.pid, owner.cgroup))
+        .flatten();
+    (process.context, container, false)
+}
+
 /// The netfilter hook of forwarded packets.
 const NF_INET_FORWARD: u8 = 2;
 
@@ -1208,10 +1236,9 @@ fn decide(
         .unwrap_or_else(PoisonError::into_inner)
         .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
-    let context = process.as_ref().map_or(ContextKind::Host, |p| p.context);
-    let container = owner
-        .filter(|_| context == ContextKind::Container)
-        .and_then(|o| shared.contexts.container(o.pid, o.cgroup));
+    let (context, container, helper) = context_of(shared, owner, process.as_deref());
+    // A network helper isn't the program: the one in the container is, unknown from out here.
+    let process = if helper { None } else { process };
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: empty,

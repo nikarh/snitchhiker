@@ -106,10 +106,15 @@ pub struct Identified {
     pub key: Arc<str>,
 }
 
-/// The containers looked up, by cgroup id.
+/// What was found for a key: a container, or that there is none.
+type Found<K> = Mutex<HashMap<K, Option<Arc<Identified>>>>;
+
+/// The containers looked up, by cgroup id; and the containers user-mode network helpers serve, by helper process
+/// (pid and start time).
 #[derive(Default)]
 pub struct Contexts {
-    containers: Mutex<HashMap<u64, Option<Arc<Identified>>>>,
+    containers: Found<u64>,
+    helpers: Found<(u32, u64)>,
 }
 
 impl Contexts {
@@ -147,6 +152,172 @@ impl Contexts {
         containers.insert(cgroup, found.clone());
         found
     }
+}
+
+impl Contexts {
+    /// For a rootless container's user-mode network helper (pasta, slirp4netns): the container it connects for. The
+    /// helper runs in the host's namespace and makes the container's connections itself; it serves exactly one
+    /// namespace, named on its command line, and the container is the one whose processes are in it. `start`
+    /// tells this helper from a later process with its pid.
+    pub fn served_by(&self, helper: u32, start: u64, exe: &str) -> Option<Arc<Identified>> {
+        if !is_network_helper(exe) {
+            return None;
+        }
+        let mut helpers = self.helpers.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(known) = helpers.get(&(helper, start)) {
+            return known.clone();
+        }
+        let found = served_namespace(helper)
+            .and_then(container_in_namespace)
+            .map(|(pid, named)| {
+                let container = describe(named);
+                debug!(helper, pid, name = %container.name, "a network helper's container");
+                Arc::new(Identified {
+                    key: Arc::from(container.key()),
+                    container,
+                })
+            });
+        if helpers.len() >= CAPACITY {
+            helpers.clear();
+        }
+        helpers.insert((helper, start), found.clone());
+        found
+    }
+}
+
+/// Whether `exe` is a user-mode network helper of rootless containers.
+#[must_use]
+pub fn is_network_helper(exe: &str) -> bool {
+    let name = exe.rsplit('/').next().unwrap_or(exe);
+    name == "pasta"
+        || name == "slirp4netns"
+        || name == "passt"
+        || name.starts_with("passt.")
+        || name.starts_with("pasta.")
+}
+
+/// The network namespace (its inode) a helper serves, from its command line: pasta's `--netns <path>` (or a pid as
+/// its last argument), slirp4netns's target pid (or `--netns-type=path` and a path).
+fn served_namespace(helper: u32) -> Option<u64> {
+    let cmdline = std::fs::read(format!("/proc/{helper}/cmdline")).ok()?;
+    let args: Vec<String> = cmdline
+        .split(|b| *b == 0)
+        .filter(|a| !a.is_empty())
+        .map(|a| String::from_utf8_lossy(a).into_owned())
+        .collect();
+    namespace_argument(&args).and_then(|target| match target {
+        Target::Path(path) => namespace_at(helper, &path),
+        Target::Pid(pid) => std::fs::metadata(format!("/proc/{pid}/ns/net"))
+            .ok()
+            .map(|m| std::os::unix::fs::MetadataExt::ino(&m)),
+    })
+}
+
+/// The namespace mounted at `path` as the helper's runtime sees it. Rootless, the runtime mounts it in a mount
+/// namespace of its own (from the host's, the path is an empty file), and the helper has since sandboxed itself into
+/// an empty root: the path is resolved through the runtime's other processes, those in the helper's user namespace.
+fn namespace_at(helper: u32, path: &str) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt as _;
+    let user = std::fs::metadata(format!("/proc/{helper}/ns/user"))
+        .ok()?
+        .ino();
+    // Namespace files are on nsfs, whose inodes are the namespaces'.
+    let nsfs = std::fs::metadata("/proc/self/ns/net").ok()?.dev();
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        if pid == helper
+            || std::fs::metadata(format!("/proc/{pid}/ns/user"))
+                .map(|m| m.ino())
+                .ok()
+                != Some(user)
+        {
+            continue;
+        }
+        if let Ok(found) = std::fs::metadata(format!("/proc/{pid}/root{path}"))
+            && found.dev() == nsfs
+        {
+            return Some(found.ino());
+        }
+    }
+    None
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Target {
+    Path(String),
+    Pid(u32),
+}
+
+/// Where a helper's arguments say its namespace is.
+fn namespace_argument(args: &[String]) -> Option<Target> {
+    let mut iter = args.iter().skip(1).peekable();
+    let mut path_type = false;
+    let mut last = None;
+    while let Some(arg) = iter.next() {
+        if let Some(value) = arg.strip_prefix("--netns=") {
+            return Some(Target::Path(value.to_owned()));
+        }
+        if arg == "--netns" {
+            return iter.next().map(|path| Target::Path(path.clone()));
+        }
+        if arg == "--netns-type=path" {
+            path_type = true;
+        }
+        if !arg.starts_with('-') {
+            last = Some(arg.clone());
+        }
+    }
+    // slirp4netns: `[options] <pid or path> <tap>`; the target is the argument before the tap's name.
+    let positional: Vec<&String> = args
+        .iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .collect();
+    let target = if positional.len() >= 2 {
+        positional.get(positional.len() - 2).map(|s| (*s).clone())
+    } else {
+        last
+    }?;
+    if path_type {
+        Some(Target::Path(target))
+    } else {
+        target.parse().ok().map(Target::Pid)
+    }
+}
+
+/// A container with a process in the network namespace `inode`, and that process.
+fn container_in_namespace(inode: u64) -> Option<(u32, Named)> {
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(meta) = std::fs::metadata(format!("/proc/{pid}/ns/net")) else {
+            continue;
+        };
+        if std::os::unix::fs::MetadataExt::ino(&meta) != inode {
+            continue;
+        }
+        let named = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .find_map(|line| line.strip_prefix("0::").and_then(named))
+            });
+        if let Some(named) = named {
+            return Some((pid, named));
+        }
+    }
+    None
 }
 
 /// A named container, with what its runtime says of it.
@@ -264,7 +435,8 @@ fn podman(id: &str, owner: Option<u32>) -> Option<Details> {
     .inspect_err(|error| debug!(%error, path = %database.display(), "opening Podman's database"))
     .ok()?;
     connection.busy_timeout(TIMEOUT).ok()?;
-    let config: String = connection
+    // The JSON is kept as a BLOB.
+    let config: Vec<u8> = connection
         .query_row(
             "SELECT JSON FROM ContainerConfig WHERE ID = ?1",
             [id],
@@ -272,7 +444,7 @@ fn podman(id: &str, owner: Option<u32>) -> Option<Details> {
         )
         .inspect_err(|error| debug!(%error, "reading a container from Podman's database"))
         .ok()?;
-    podman_details(&config)
+    podman_details(std::str::from_utf8(&config).ok()?)
 }
 
 fn podman_details(config: &str) -> Option<Details> {
@@ -316,6 +488,32 @@ mod tests {
         );
         assert_eq!(named("/user.slice/user-1000.slice/session-2.scope"), None);
         assert_eq!(named("/system.slice/docker-notanid.scope"), None);
+    }
+
+    #[test]
+    fn helpers_name_the_namespace_they_serve() {
+        let args = |line: &str| line.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        assert_eq!(
+            namespace_argument(&args(
+                "/usr/bin/pasta --config-net --dns-forward 169.254.1.1 -t none --quiet --netns /run/user/1001/netns/netns-6770"
+            )),
+            Some(Target::Path("/run/user/1001/netns/netns-6770".to_owned()))
+        );
+        assert_eq!(
+            namespace_argument(&args(
+                "/usr/bin/slirp4netns --disable-host-loopback --mtu=65520 -c -e 3 -r 4 4242 tap0"
+            )),
+            Some(Target::Pid(4242))
+        );
+        assert_eq!(
+            namespace_argument(&args(
+                "/usr/bin/slirp4netns --netns-type=path /run/user/1001/netns/n tap0"
+            )),
+            Some(Target::Path("/run/user/1001/netns/n".to_owned()))
+        );
+        assert!(is_network_helper("/usr/bin/passt.avx2"));
+        assert!(is_network_helper("/usr/bin/slirp4netns"));
+        assert!(!is_network_helper("/usr/bin/curl"));
     }
 
     #[test]
