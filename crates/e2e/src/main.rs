@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 mod attribution;
+mod daemon;
 mod local_auth;
 mod nftables;
 mod queue;
@@ -60,6 +61,19 @@ const SCENARIOS: &[Scenario] = &[
     (
         "local-auth/same-user-cannot-attach-or-read-memory",
         local_auth::same_user_cannot_attach_or_read_memory,
+    ),
+    ("daemon/enforces-rules", daemon::enforces_rules),
+    (
+        "daemon/monitor-records-but-never-blocks",
+        daemon::monitor_records_but_never_blocks,
+    ),
+    (
+        "daemon/fail-closed-keeps-the-table",
+        daemon::fail_closed_keeps_the_table,
+    ),
+    (
+        "daemon/fail-open-removes-the-table",
+        daemon::fail_open_removes_the_table,
     ),
 ];
 
