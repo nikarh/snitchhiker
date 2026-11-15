@@ -1,5 +1,6 @@
 //! The window: a sidebar of pages, and the page shown.
 
+use std::collections::HashSet;
 use std::sync::mpsc;
 
 use gpui::{
@@ -12,6 +13,7 @@ use gpui_component::{ActiveTheme as _, IconName, h_flex, v_flex};
 
 use crate::backend::{Request, Update};
 use crate::model::{Changed, Model};
+use crate::notify::{self, Notice};
 use crate::views::events::EventsTable;
 use crate::views::prompts::Prompts;
 use crate::views::rules::RulesTable;
@@ -38,6 +40,7 @@ impl App {
     pub fn new(
         requests: mpsc::Sender<Request>,
         updates: async_channel::Receiver<Update>,
+        updates_sender: async_channel::Sender<Update>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -54,6 +57,7 @@ impl App {
             TableState::new(RulesTable::new(model.clone(), requests.clone()), window, cx)
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
+        let notices = notify::start(requests.clone(), updates_sender);
         for request in [
             Request::Status,
             Request::Rules,
@@ -65,11 +69,22 @@ impl App {
         cx.spawn(async move |this, cx| {
             while let Ok(update) = updates.recv().await {
                 let applied = this.update(cx, |app: &mut Self, cx| {
+                    let before: HashSet<u64> = app.model.read(cx).prompts.keys().copied().collect();
                     let changed = app.model.update(cx, |model, cx| {
                         let changed = model.apply(update);
                         cx.notify();
                         changed
                     });
+                    // A notification for every prompt that opened, and down with those resolved.
+                    let prompts = &app.model.read(cx).prompts;
+                    for (id, prompt) in prompts {
+                        if !before.contains(id) {
+                            let _ = notices.try_send(Notice::Show(prompt.clone()));
+                        }
+                    }
+                    for id in before.iter().filter(|id| !prompts.contains_key(id)) {
+                        let _ = notices.try_send(Notice::Close(*id));
+                    }
                     match changed {
                         Changed::RulesOnNode => {
                             let _ = requests.send(Request::Rules);
@@ -79,6 +94,10 @@ impl App {
                         Changed::Rules => app.rules.update(cx, TableState::refresh),
                         Changed::Prompts if !app.model.read(cx).prompts.is_empty() => {
                             app.page = Page::Prompts;
+                        }
+                        Changed::ShowPrompts => {
+                            app.page = Page::Prompts;
+                            cx.activate(true);
                         }
                         Changed::Prompts | Changed::Status | Changed::Nothing => {}
                     }

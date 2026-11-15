@@ -16,6 +16,7 @@ workspace = true
 [dependencies]
 async-channel = "2.5.0"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+futures-lite = "2.6.1"
 gpui = { version = "=0.3.12", package = "gpui-pre" }
 gpui-component = "0.9.1"
 gpui-kit-assets = "0.9.1"
@@ -23,3 +24,4 @@ gpui-pre-linux = { version = "=0.3.12", default-features = false, features = ["w
 gpui-pre-platform = "=0.3.12"
 snitchhiker-client = { version = "0.1.0", path = "../client" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
+zbus = "6.3.0"

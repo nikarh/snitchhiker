@@ -6563,6 +6563,7 @@ version = "0.1.0"
 dependencies = [
  "async-channel",
  "chrono",
+ "futures-lite",
  "gpui-component",
  "gpui-kit-assets",
  "gpui-pre",
@@ -6570,6 +6571,7 @@ dependencies = [
  "gpui-pre-platform",
  "snitchhiker-client",
  "snitchhiker-proto",
+ "zbus 6.3.0",
 ]
 
 [[package]]

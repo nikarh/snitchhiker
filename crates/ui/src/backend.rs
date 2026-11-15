@@ -56,6 +56,8 @@ pub enum Update {
     RulesChanged,
     /// A request failed; for the user.
     Failed(String),
+    /// A prompt's notification was clicked: show the prompts.
+    ShowPrompts,
 }
 
 /// Events in one page of history.
@@ -66,7 +68,13 @@ const BACKOFF: [u64; 5] = [1, 2, 5, 10, 30];
 
 /// Starts the connections to the node's socket at `socket`; requests go to the returned sender, updates come out of
 /// the returned receiver.
-pub fn start(socket: PathBuf) -> (mpsc::Sender<Request>, async_channel::Receiver<Update>) {
+pub fn start(
+    socket: PathBuf,
+) -> (
+    mpsc::Sender<Request>,
+    async_channel::Receiver<Update>,
+    async_channel::Sender<Update>,
+) {
     let (updates, received) = async_channel::unbounded();
     let (requests, incoming) = mpsc::channel();
     {
@@ -78,8 +86,11 @@ pub fn start(socket: PathBuf) -> (mpsc::Sender<Request>, async_channel::Receiver
     }
     let _ = thread::Builder::new()
         .name("node-subscriptions".to_owned())
-        .spawn(move || listen(&socket, &updates));
-    (requests, received)
+        .spawn({
+            let updates = updates.clone();
+            move || listen(&socket, &updates)
+        });
+    (requests, received, updates)
 }
 
 fn connect(socket: &Path) -> Result<Client, ClientError> {

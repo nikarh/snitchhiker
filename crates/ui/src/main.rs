@@ -5,6 +5,7 @@ mod app;
 mod backend;
 mod env;
 mod model;
+mod notify;
 mod views;
 
 use std::path::PathBuf;
@@ -29,14 +30,15 @@ fn main() -> ExitCode {
         .with_assets(gpui_kit_assets::AllAssets)
         .run(move |cx| {
             gpui_component::init(cx);
-            let (requests, updates) = backend::start(socket);
+            let (requests, updates, updates_sender) = backend::start(socket);
             let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..WindowOptions::default()
             };
             let _ = cx.open_window(options, |window, cx| {
-                let view = cx.new(|cx| app::App::new(requests, updates, window, cx));
+                let view =
+                    cx.new(|cx| app::App::new(requests, updates, updates_sender, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             });
         });

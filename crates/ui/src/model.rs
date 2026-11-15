@@ -107,6 +107,8 @@ pub enum Changed {
     Status,
     /// The rules changed on the node: they are to be listed again.
     RulesOnNode,
+    /// The prompts are to be shown.
+    ShowPrompts,
 }
 
 impl Model {
@@ -155,6 +157,7 @@ impl Model {
                 Changed::Events
             }
             Update::RulesChanged => Changed::RulesOnNode,
+            Update::ShowPrompts => Changed::ShowPrompts,
             Update::Failed(error) => {
                 self.error = Some(error);
                 Changed::Status
