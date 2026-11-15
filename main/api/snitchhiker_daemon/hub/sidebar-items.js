@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["OUTBOUND"],"enum":["BackfillError"],"struct":["Hub"]};
+window.SIDEBAR_ITEMS = {"constant":["OUTBOUND"],"enum":["BackfillError","Outgoing"],"struct":["Closed","Hub","Outbox"],"type":["Strings"]};

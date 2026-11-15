@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["events","fastest","main"],"mod":["events_generated"],"struct":["ArchivedEvent","Columnar","Event","EventResolver","FlatBuffers","Protobuf","Random","Rkyv","Scan"],"trait":["Format"]};
