@@ -7,24 +7,33 @@
 use std::net::IpAddr;
 
 use aya::maps::{HashMap, MapData};
-use aya::programs::FEntry;
+use aya::programs::{FEntry, FExit};
 use aya::{Btf, Ebpf};
 
 /// The compiled programs (`build.rs`), aligned as the ELF parser needs.
 static ATTRIBUTION: &[u8] =
     aya::include_bytes_aligned!(concat!(env!("OUT_DIR"), "/attribution.bpf.o"));
 
-/// Each program and the kernel function it is attached to.
-const HOOKS: &[(&str, &str)] = &[
+/// Each entry program and the kernel function it is attached to.
+const ENTRY_HOOKS: &[(&str, &str)] = &[
     ("on_tcp_connect", "tcp_connect"),
     ("on_udp_sendmsg", "udp_sendmsg"),
     ("on_udpv6_sendmsg", "udpv6_sendmsg"),
+    ("on_tcp_read", "tcp_cleanup_rbuf"),
+    ("on_udp_read", "skb_consume_udp"),
+];
+
+/// Each exit program (it sees the function's result) and its function.
+const EXIT_HOOKS: &[(&str, &str)] = &[
+    ("on_tcp_sent", "tcp_sendmsg"),
+    ("on_udp_sent", "udp_sendmsg"),
+    ("on_udpv6_sent", "udpv6_sendmsg"),
 ];
 
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 10;
 const KEY_LEN: usize = 28;
-const OWNER_LEN: usize = 56;
+const OWNER_LEN: usize = 64;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -97,6 +106,8 @@ impl FlowKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlowOwner {
     pub cgroup: u64,
+    /// The socket's cookie, the key of its byte counts.
+    pub cookie: u64,
     /// `CLOCK_MONOTONIC` nanoseconds when the flow was recorded.
     pub ktime: u64,
     /// When the process started, in nanoseconds since boot; with `pid`, it identifies the process.
@@ -126,17 +137,18 @@ impl FlowOwner {
                 .map_or(0, u32::from_ne_bytes)
         };
         let mut comm = [0_u8; 16];
-        if let Some(source) = bytes.get(40..56) {
+        if let Some(source) = bytes.get(48..64) {
             comm.copy_from_slice(source);
         }
         Self {
             cgroup: u64_at(0),
-            ktime: u64_at(8),
-            start_boottime: u64_at(16),
-            pid: u32_at(24),
-            tid: u32_at(28),
-            uid: u32_at(32),
-            gid: u32_at(36),
+            cookie: u64_at(8),
+            ktime: u64_at(16),
+            start_boottime: u64_at(24),
+            pid: u32_at(32),
+            tid: u32_at(36),
+            uid: u32_at(40),
+            gid: u32_at(44),
             comm,
         }
     }
@@ -156,6 +168,7 @@ impl FlowOwner {
 /// The attribution programs, loaded and attached for as long as this lives.
 pub struct Attribution {
     flows: HashMap<MapData, [u8; KEY_LEN], [u8; OWNER_LEN]>,
+    bytes: HashMap<MapData, [u8; 8], [u8; 16]>,
     _ebpf: Ebpf,
 }
 
@@ -164,8 +177,19 @@ impl Attribution {
     pub fn load() -> Result<Self, Error> {
         let mut ebpf = Ebpf::load(ATTRIBUTION)?;
         let btf = Btf::from_sys_fs()?;
-        for &(program, function) in HOOKS {
+        for &(program, function) in ENTRY_HOOKS {
             let hook: &mut FEntry = ebpf
+                .program_mut(program)
+                .ok_or(Error::Missing(program))?
+                .try_into()
+                .map_err(|source| Error::Program { program, source })?;
+            hook.load(function, &btf)
+                .map_err(|source| Error::Program { program, source })?;
+            hook.attach()
+                .map_err(|source| Error::Program { program, source })?;
+        }
+        for &(program, function) in EXIT_HOOKS {
+            let hook: &mut FExit = ebpf
                 .program_mut(program)
                 .ok_or(Error::Missing(program))?
                 .try_into()
@@ -180,7 +204,32 @@ impl Attribution {
             map: "flows",
             source,
         })?;
-        Ok(Self { flows, _ebpf: ebpf })
+        let map = ebpf.take_map("bytes").ok_or(Error::Missing("bytes"))?;
+        let bytes = HashMap::try_from(map).map_err(|source| Error::Map {
+            map: "bytes",
+            source,
+        })?;
+        Ok(Self {
+            flows,
+            bytes,
+            _ebpf: ebpf,
+        })
+    }
+
+    /// Every counted socket: (cookie, bytes sent, bytes read). Walks the live sockets in the map.
+    pub fn socket_bytes(&self) -> impl Iterator<Item = (u64, u64, u64)> + '_ {
+        self.bytes
+            .iter()
+            .filter_map(Result::ok)
+            .map(|(cookie, counts)| {
+                let half = |at: usize| {
+                    counts
+                        .get(at..at + 8)
+                        .and_then(|b| b.try_into().ok())
+                        .map_or(0, u64::from_ne_bytes)
+                };
+                (u64::from_ne_bytes(cookie), half(0), half(8))
+            })
     }
 
     /// The owner of a flow, if the programs saw it open.
@@ -235,11 +284,13 @@ mod tests {
     #[test]
     fn owners_decode_the_c_layout() {
         let mut bytes = [0_u8; OWNER_LEN];
-        bytes[16..24].copy_from_slice(&7_u64.to_ne_bytes());
-        bytes[24..28].copy_from_slice(&42_u32.to_ne_bytes());
-        bytes[32..36].copy_from_slice(&1001_u32.to_ne_bytes());
-        bytes[40..44].copy_from_slice(b"curl");
+        bytes[8..16].copy_from_slice(&99_u64.to_ne_bytes());
+        bytes[24..32].copy_from_slice(&7_u64.to_ne_bytes());
+        bytes[32..36].copy_from_slice(&42_u32.to_ne_bytes());
+        bytes[40..44].copy_from_slice(&1001_u32.to_ne_bytes());
+        bytes[48..52].copy_from_slice(b"curl");
         let owner = FlowOwner::decode(&bytes);
+        assert_eq!(owner.cookie, 99);
         assert_eq!(owner.start_boottime, 7);
         assert_eq!(owner.pid, 42);
         assert_eq!(owner.uid, 1001);

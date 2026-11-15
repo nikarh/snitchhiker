@@ -103,9 +103,11 @@ struct flow_key {
 	__u8 daddr[16];
 };
 
-// Who opened it. 56 bytes, no padding.
+// Who opened it. 64 bytes, no padding.
 struct flow_owner {
 	__u64 cgroup;
+	// The socket's cookie: its key in `bytes`.
+	__u64 cookie;
 	__u64 ktime;
 	// When the process started, in nanoseconds since boot (what /proc/<pid>/stat reports in clock ticks): with the
 	// pid, it identifies the process even after the pid is reused.
@@ -124,6 +126,19 @@ struct {
 	__type(value, struct flow_owner);
 } flows SEC(".maps");
 
+// Bytes a socket sent and its program read, by socket cookie.
+struct socket_bytes {
+	__u64 sent;
+	__u64 received;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_LRU_HASH);
+	__uint(max_entries, 262144);
+	__type(key, __u64);
+	__type(value, struct socket_bytes);
+} bytes SEC(".maps");
+
 // An IPv6 socket talking to an IPv4 address (::ffff:a.b.c.d) sends IPv4 packets: key it as IPv4.
 static __always_inline void unmap_v4(struct flow_key *key)
 {
@@ -139,13 +154,14 @@ static __always_inline void unmap_v4(struct flow_key *key)
 	__builtin_memset(&key->daddr[4], 0, 12);
 }
 
-static __always_inline void record(struct flow_key *key)
+static __always_inline void record(struct flow_key *key, struct sock *sk)
 {
 	struct flow_owner owner = {};
 	__u64 pid_tgid = bpf_get_current_pid_tgid();
 	__u64 uid_gid = bpf_get_current_uid_gid();
 
 	owner.cgroup = bpf_get_current_cgroup_id();
+	owner.cookie = bpf_get_socket_cookie(sk);
 	owner.ktime = bpf_ktime_get_ns();
 	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
 	owner.start_boottime = BPF_CORE_READ(task, group_leader, start_boottime);
@@ -184,7 +200,7 @@ int BPF_PROG(on_tcp_connect, struct sock *sk)
 	struct flow_key key = {};
 
 	if (key_from_sock(&key, sk, IPPROTO_TCP))
-		record(&key);
+		record(&key, sk);
 	return 0;
 }
 
@@ -216,7 +232,7 @@ static __always_inline int on_udp(struct sock *sk, struct msghdr *msg)
 			BPF_CORE_READ_INTO(&key.daddr, sin6, sin6_addr.in6_u.u6_addr8);
 		}
 	}
-	record(&key);
+	record(&key, sk);
 	return 0;
 }
 
@@ -230,4 +246,61 @@ SEC("fentry/udpv6_sendmsg")
 int BPF_PROG(on_udpv6_sendmsg, struct sock *sk, struct msghdr *msg)
 {
 	return on_udp(sk, msg);
+}
+
+static __always_inline void count(struct sock *sk, __u64 sent, __u64 received)
+{
+	__u64 cookie = bpf_get_socket_cookie(sk);
+	struct socket_bytes *counted = bpf_map_lookup_elem(&bytes, &cookie);
+
+	if (!counted) {
+		struct socket_bytes zero = {};
+
+		bpf_map_update_elem(&bytes, &cookie, &zero, BPF_NOEXIST);
+		counted = bpf_map_lookup_elem(&bytes, &cookie);
+		if (!counted)
+			return;
+	}
+	__sync_fetch_and_add(&counted->sent, sent);
+	__sync_fetch_and_add(&counted->received, received);
+}
+
+SEC("fexit/tcp_sendmsg")
+int BPF_PROG(on_tcp_sent, struct sock *sk, struct msghdr *msg, __u64 size, int sent)
+{
+	if (sent > 0)
+		count(sk, sent, 0);
+	return 0;
+}
+
+SEC("fentry/tcp_cleanup_rbuf")
+int BPF_PROG(on_tcp_read, struct sock *sk, int copied)
+{
+	if (copied > 0)
+		count(sk, 0, copied);
+	return 0;
+}
+
+SEC("fexit/udp_sendmsg")
+int BPF_PROG(on_udp_sent, struct sock *sk, struct msghdr *msg, __u64 len, int sent)
+{
+	if (sent > 0)
+		count(sk, sent, 0);
+	return 0;
+}
+
+SEC("fexit/udpv6_sendmsg")
+int BPF_PROG(on_udpv6_sent, struct sock *sk, struct msghdr *msg, __u64 len, int sent)
+{
+	if (sent > 0)
+		count(sk, sent, 0);
+	return 0;
+}
+
+SEC("fentry/skb_consume_udp")
+int BPF_PROG(on_udp_read, struct sock *sk, void *skb, int len)
+{
+	if (len > 0)
+		count(sk, 0, len);
+	return 0;
 }
