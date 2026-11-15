@@ -2017,7 +2017,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] Session lifecycle bound to the pidfd and logind session. The pidfd part is done (a connection ends with
         its client's process); the logind session comes with presence in prompt routing.
 - [ ] **Step-up**
-  - [ ] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions.
+  - [x] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions. Today's
+        only dangerous action through the protocol is an allow-everything rule; others join as they are added.
 - [ ] **Prompt broker**
   - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
   - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;

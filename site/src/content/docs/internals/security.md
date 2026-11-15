@@ -48,6 +48,14 @@ Then it checks the pidfd still refers to a live process, so the process can't ha
 
 **Clients check the daemon too.** Before sending anything, a client (the command line included) checks that the socket and every directory above it belong to root and that no one else may write to those directories, and that the process serving the socket runs as root. A socket some other process bound elsewhere can't pose as the daemon to feed a client false prompts or collect its answers.
 
+## Dangerous actions need more than a session
+
+Some requests would undo the firewall in one step, so a client's session isn't enough for them. Today that is a rule that allows every program to connect anywhere: an allow rule naming no program and no destination, whether added directly, imported, or made by answering a prompt with conditions of the client's own. Changes to the policy, pairing devices and the like will join it as they become possible through the protocol.
+
+For these the daemon asks polkit whether the client's process may do it (action `org.snitchhiker.manage`, the process named by its pidfd). By default polkit asks for an administrator's password through the user's polkit agent and remembers it for a few minutes. Local policy can change that with a file in `/etc/polkit-1/rules.d/`. When polkit doesn't authorize the request, or can't be asked (not installed, no agent), the request is refused with `ERROR_CODE_NOT_AUTHORIZED`. Root's requests on the admin socket need no step-up, and [`step_up = "off"`](/reference/configuration/#step_up) switches it off.
+
+Every dangerous request is recorded in the audit trail, with the client, its user and process, what it asked for and the outcome, whether it went ahead or not: `sudo snitchhiker audit`.
+
 ## Facts a process can't fake
 
 A rule matches on what the kernel says about a connection, not on what the process says about itself:
@@ -79,6 +87,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `local-auth/same-user-cannot-attach-or-read-memory` | attaching to a client, or reading its memory |
 | `local-auth/registered-clients-are-pinned` | a registered client binary changed in place, and registering a binary that isn't a setgid client |
 | `local-auth/connection-ends-with-its-process` | keeping a client's connection after the client exits, by holding its socket |
+| `step-up/allow-everything-needs-authorization` | adding an allow-everything rule from a client without polkit's authorization |
 | `local-auth/client-refuses-a-fake-node` | posing as the daemon to a client, with a socket of one's own |
 
 ## The daemon itself

@@ -34,6 +34,7 @@ sudo systemctl enable --now snitchhikerd
 | `/usr/bin/snitchhiker` | The command line: the same binary, which acts by the name it is run as |
 | `/usr/lib/systemd/system/snitchhikerd.service` | The service, hardened (below) |
 | `/usr/lib/sysusers.d/snitchhiker.conf` | The `snitchhiker-ui` group of the client binaries |
+| `/usr/share/polkit-1/actions/org.snitchhiker.manage.policy` | The polkit action for [step-up](/internals/security/#dangerous-actions-need-more-than-a-session) (the Debian package recommends `polkitd`; on Arch, install `polkit`) |
 | `/etc/snitchhiker/daemon.toml` | The [configuration](/reference/configuration/), in monitor mode. Kept on upgrades once changed |
 
 At run time the daemon keeps its database in `/var/lib/snitchhiker/` and its sockets in `/run/snitchhiker/`. It reads rule files from `/etc/snitchhiker/rules.d/` if that directory exists.

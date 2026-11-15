@@ -71,6 +71,14 @@ Prints a rule file with a rule for each program, destination and port that no ru
 
 Durations: `once` (no rule), `restart`, `hour`, `12h`, `forever` (default). See [Prompts](/guides/prompts/#answering).
 
+## `audit`
+
+```text
+snitchhiker audit [--limit <n>]
+```
+
+The dangerous actions clients asked for, newest first (50 by default): id, time, outcome (`authorized`, `refused`, or `unchecked` for root's requests and with step-up off), client, user, process, and what was asked. See [Security](/internals/security/#dangerous-actions-need-more-than-a-session).
+
 ## `version`
 
 Prints the version.

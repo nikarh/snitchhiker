@@ -86,6 +86,10 @@ Client binaries allowed on the client socket by path alone. Default none. Each m
 
 Clients are better registered with [`snitchhikerd trust-client`](/reference/cli/#trusted-clients), which also pins each to its SHA-256: packages register their client that way. The registry is `trusted-clients.toml` in the database's directory.
 
+### `step_up`
+
+What confirms a dangerous action a client asks for, such as a rule that allows every program to connect anywhere ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
+
 ## Queues and storage
 
 ### `queue`, `queues`

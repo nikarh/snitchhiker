@@ -45,7 +45,7 @@ A client must not send requests before it has the `Welcome`.
 | --- | --- |
 | `ROLE_ROOT` | everything |
 | `ROLE_ADMIN` | everything a client app needs: read, answer prompts, change rules |
-| `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `Subscribe`, `Unsubscribe` |
+| `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `ListAudit`, `Subscribe`, `Unsubscribe` |
 | `ROLE_AGENT` | (reserved for the MCP server) |
 
 A request the role doesn't allow gets an `ERROR_CODE_FORBIDDEN` error. Rules that can't be changed through the protocol (the System folder, root's `rules.d` files) are listed with `locked` set, and changing one gets `ERROR_CODE_LOCKED`.
@@ -61,6 +61,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `AddRule` | `RuleAdded` | Stores a rule; returns its id |
 | `DeleteRule` | `Done` | |
 | `SetRuleEnabled` | `Done` | |
+| `ListAudit` | `AuditPage` | Dangerous actions asked for, newest first: `limit` entries with `id` below `before` (0: from the newest) |
 | `ImportRules` | `Done` | A [rule file](/reference/rule-files/) as TOML, into a new folder; checked as a whole first |
 | `ExportRules` | `RuleFile` | The stored rules as a rule file |
 | `Learn` | `RuleFile` | Rules for the connections no rule decided in the last hours |
@@ -70,7 +71,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
 | `Unsubscribe` | `Done` | |
 
-A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`.
+A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`. A dangerous request (a rule that allows every program to connect anywhere) from a client needs polkit's authorization of the client's process, which the node asks for while the request waits; without it the answer is `ERROR_CODE_NOT_AUTHORIZED` ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)).
 
 Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 
