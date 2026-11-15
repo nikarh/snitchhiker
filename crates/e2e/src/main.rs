@@ -18,6 +18,7 @@ mod prompts;
 mod queue;
 mod stepup;
 mod subscriptions;
+mod tamper;
 mod util;
 
 /// A scenario: a name and a function that fails with a message.
@@ -83,6 +84,34 @@ const SCENARIOS: &[Scenario] = &[
     (
         "local-auth/client-refuses-a-fake-node",
         local_auth::client_refuses_a_fake_node,
+    ),
+    (
+        "tamper/admin-socket-refuses-ordinary-users",
+        tamper::admin_socket_refuses_ordinary_users,
+    ),
+    (
+        "tamper/disguised-clients-are-refused",
+        tamper::disguised_clients_are_refused,
+    ),
+    (
+        "tamper/configuration-state-and-runtime-are-root-only",
+        tamper::configuration_state_and_runtime_are_root_only,
+    ),
+    (
+        "tamper/the-service-cannot-be-stopped-or-changed",
+        tamper::the_service_cannot_be_stopped_or_changed,
+    ),
+    (
+        "tamper/the-daemon-cannot-be-signalled-or-traced",
+        tamper::the_daemon_cannot_be_signalled_or_traced,
+    ),
+    (
+        "tamper/bpf-programs-and-maps-are-out-of-reach",
+        tamper::bpf_programs_and_maps_are_out_of_reach,
+    ),
+    (
+        "tamper/connecting-while-rules-reload",
+        tamper::connecting_while_rules_reload,
     ),
     (
         "subscriptions/events-resume-from-a-sequence-number",
