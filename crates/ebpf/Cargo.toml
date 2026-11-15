@@ -1,0 +1,18 @@
+[package]
+name = "snitchhiker-ebpf"
+description = "Snitchhiker's eBPF programs (attributing connections to processes) and their loader"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aya = "0.16.0"
+thiserror = "2.0.21"
