@@ -53,12 +53,18 @@ Commands:
                                     --any-context     also for containers, VMs and other namespaces
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
+  rules move <id> <folder>        Move a rule to a folder (0: the top level)
   rules import <file>             Add the rules of a rule file (TOML), in a folder
   rules export                    Print the stored rules as a rule file
   rules import-opensnitch [<dir>] [--dry-run]
                                   Import OpenSnitch's rules (default /etc/opensnitchd/rules) into a folder
                                   OpenSnitch, listing those that can't be expressed exactly; --dry-run prints the
                                   rule file instead
+  folders                         List the folders
+  folders add <name> [--parent <id>], folders rm <id>
+                                  Add a folder; delete one with the folders and rules in it
+  history [--limit <n>]           The changes to rules and folders, newest first, and who made them
+  undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
@@ -133,6 +139,32 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             }
         }
         Some("rules") => rules(args, version),
+        Some("folders") => folders(args, version),
+        Some("history") => {
+            let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
+            reject_rest(args)?;
+            let mut client = connect(version)?;
+            match client.call(Method::ListChanges(v1::ListChanges { before: 0, limit }))? {
+                v1::response::Result::Changes(page) => {
+                    let mut text = String::new();
+                    for change in &page.changes {
+                        let _ = writeln!(
+                            text,
+                            "{:>6}  batch {:<5} {}  {:<8} {}",
+                            change.id, change.batch, change.time_ms, change.app, change.what
+                        );
+                    }
+                    out(&text)
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some("undo") => {
+            let change: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            connect(version)?.call(Method::Undo(v1::Undo { change }))?;
+            out(&format!("undid the changes of change {change}'s batch\n"))
+        }
         Some("audit") => {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
             reject_rest(args)?;
@@ -179,6 +211,71 @@ fn print_file(result: v1::response::Result) -> Result<(), Error> {
 }
 
 /// `snitchhiker rules ...`.
+/// `folders`: list, add, rename and delete folders.
+fn folders(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let mut client = connect(version)?;
+    match args.subcommand()?.as_deref() {
+        None => {
+            reject_rest(args)?;
+            let v1::response::Result::Rules(list) =
+                client.call(Method::ListRules(v1::ListRules {}))?
+            else {
+                return Err(unexpected());
+            };
+            let mut text = String::new();
+            for folder in &list.folders {
+                let count = list
+                    .rules
+                    .iter()
+                    .filter(|r| r.folder == Some(folder.id))
+                    .count();
+                let _ = writeln!(
+                    text,
+                    "{:>5}  {}{}  ({count} rules){}{}",
+                    if folder.locked {
+                        "-".to_owned()
+                    } else {
+                        folder.id.to_string()
+                    },
+                    folder_path(&list, folder.parent),
+                    folder.name,
+                    if folder.enabled { "" } else { " (disabled)" },
+                    if folder.locked { " (locked)" } else { "" },
+                );
+            }
+            out(&text)
+        }
+        Some("add") => {
+            let name: String = args.free_from_str()?;
+            let parent: Option<u64> = args.opt_value_from_str("--parent")?;
+            reject_rest(args)?;
+            match client.call(Method::AddFolder(v1::AddFolder {
+                folder: Some(v1::Folder {
+                    name,
+                    parent,
+                    enabled: true,
+                    ..v1::Folder::default()
+                }),
+            }))? {
+                v1::response::Result::FolderAdded(added) => {
+                    out(&format!("added folder {}\n", added.id))
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some("rm" | "delete") => {
+            let id: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            client.call(Method::DeleteFolder(v1::DeleteFolder { id }))?;
+            out(&format!(
+                "deleted folder {id}, the folders in it and their rules\n"
+            ))
+        }
+        Some(other) => Err(Error::Usage(format!("unknown folders command `{other}`"))),
+    }
+}
+
 /// `rules import-opensnitch`: OpenSnitch's rule files in `dir`, converted and imported (or printed, `dry_run`).
 fn import_opensnitch(dir: &str, dry_run: bool, version: &str) -> Result<(), Error> {
     let mut files = Vec::new();
@@ -256,6 +353,24 @@ fn rules(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             reject_rest(args)?;
             client.call(Method::DeleteRule(v1::DeleteRule { id }))?;
             out(&format!("deleted rule {id}\n"))
+        }
+        Some("move") => {
+            let id: u64 = args.free_from_str()?;
+            let folder: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            let v1::response::Result::Rules(list) =
+                client.call(Method::ListRules(v1::ListRules {}))?
+            else {
+                return Err(unexpected());
+            };
+            let mut rule = list
+                .rules
+                .into_iter()
+                .find(|r| r.id == id)
+                .ok_or_else(|| Error::Usage(format!("no rule {id}")))?;
+            rule.folder = (folder != 0).then_some(folder);
+            client.call(Method::UpdateRule(v1::UpdateRule { rule: Some(rule) }))?;
+            out(&format!("moved rule {id}\n"))
         }
         Some(which @ ("enable" | "disable")) => {
             let id: u64 = args.free_from_str()?;

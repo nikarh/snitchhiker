@@ -168,6 +168,21 @@ pub fn folder(folder: &Folder, locked: bool) -> v1::Folder {
     }
 }
 
+/// A folder from the wire: its scope checked like conditions in a file.
+pub fn folder_from(wire: &v1::Folder) -> Result<Folder, SpecError> {
+    Ok(Folder {
+        id: wire.id,
+        parent: wire.parent,
+        name: wire.name.clone(),
+        enabled: wire.enabled,
+        scope: wire
+            .scope
+            .as_ref()
+            .map_or_else(Conditions::default, conditions_from)
+            .to_conditions()?,
+    })
+}
+
 /// An address for the wire: 4 bytes for IPv4, 16 for IPv6.
 #[must_use]
 pub fn address(address: IpAddr) -> Vec<u8> {

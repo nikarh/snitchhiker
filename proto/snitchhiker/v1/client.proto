@@ -91,6 +91,12 @@ message Request {
     ImportRules import_rules = 21;
     ExportRules export_rules = 22;
     ListAudit list_audit = 23;
+    UpdateRule update_rule = 24;
+    AddFolder add_folder = 25;
+    UpdateFolder update_folder = 26;
+    DeleteFolder delete_folder = 27;
+    ListChanges list_changes = 28;
+    Undo undo = 29;
   }
 }
 
@@ -108,6 +114,8 @@ message Response {
     RuleFile rule_file = 20;
     AuditPage audit = 23;
     EventBlock event_block = 24;
+    FolderAdded folder_added = 25;
+    ChangePage changes = 26;
   }
 }
 
@@ -256,6 +264,57 @@ message RuleAdded {
 
 message DeleteRule {
   uint64 id = 1;
+}
+
+// Replaces a stored rule (by its id) with this one; locked rules can't be.
+message UpdateRule {
+  Rule rule = 1;
+}
+
+// Its id and locked are ignored.
+message AddFolder {
+  Folder folder = 1;
+}
+
+message FolderAdded {
+  uint64 id = 1;
+}
+
+// Replaces a folder (by its id): its name, parent, enabled and scope.
+message UpdateFolder {
+  Folder folder = 1;
+}
+
+// Deletes a folder with the folders below it and all their rules. More than 20 rules is a dangerous action.
+message DeleteFolder {
+  uint64 id = 1;
+}
+
+// The history of the rules and folders: every change, newest first, `limit` with ids below `before` (0: from the
+// newest).
+message ListChanges {
+  uint64 before = 1;
+  uint32 limit = 2;
+}
+
+message Change {
+  uint64 id = 1;
+  // The changes of one request share a batch, and are undone together.
+  uint64 batch = 2;
+  uint64 time_ms = 3;
+  // Who made it ("desktop", "cli", a device's name).
+  string app = 4;
+  // What changed, for people.
+  string what = 5;
+}
+
+message ChangePage {
+  repeated Change changes = 1;
+}
+
+// Undoes the batch of a change, as a new batch. Refused if something it changed was changed again since.
+message Undo {
+  uint64 change = 1;
 }
 
 message SetRuleEnabled {

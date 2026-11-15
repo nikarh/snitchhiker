@@ -22,7 +22,7 @@ use crate::config::{Config, Mode, Policy, StepUp};
 use crate::hub::{OUTBOUND, Outbox, Outgoing};
 use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
-use crate::store::AuditEntry;
+use crate::store::{AuditEntry, Batch, Error as StoreError, Store, UndoError};
 use snitchhiker_core::rule::{Condition, allows_everything};
 use snitchhiker_proto::columns::{self, EventRow};
 
@@ -315,6 +315,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListPrompts(_)
             | Method::ExportRules(_)
             | Method::ListAudit(_)
+            | Method::ListChanges(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -347,8 +348,14 @@ fn handle(
         Method::GetStatus(_) => R::Status(status(daemon)),
         Method::ListRules(_) => list_rules(daemon),
         Method::AddRule(add) => add_rule(daemon, caller, app, add),
-        Method::DeleteRule(delete) => delete_rule(daemon, delete.id),
-        Method::SetRuleEnabled(set) => set_rule_enabled(daemon, &set),
+        Method::DeleteRule(delete) => delete_rule(daemon, app, delete.id),
+        Method::SetRuleEnabled(set) => set_rule_enabled(daemon, app, &set),
+        Method::UpdateRule(update) => update_rule(daemon, caller, app, &update),
+        Method::AddFolder(add) => add_folder(daemon, app, &add),
+        Method::UpdateFolder(update) => update_folder(daemon, app, &update),
+        Method::DeleteFolder(delete) => delete_folder(daemon, caller, app, delete),
+        Method::ListChanges(list) => list_changes(daemon, &list),
+        Method::Undo(request) => undo(daemon, app, request),
         Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
         Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),
@@ -442,39 +449,247 @@ fn add_rule(daemon: &Daemon, caller: &Caller, app: &str, add: v1::AddRule) -> v1
     {
         return refused;
     }
-    let added = daemon.store().insert_rule(&rule, now_ms());
-    match added
-        .map_err(|e| e.to_string())
-        .and_then(|id| daemon.reload_rules().map(|_| id).map_err(|e| e.to_string()))
-    {
+    match change(daemon, app, |store, batch| store.put_rule(&rule, batch)) {
         Ok(id) => v1::response::Result::RuleAdded(v1::RuleAdded { id }),
+        Err(e) => e,
+    }
+}
+
+/// Runs `apply` as one batch of `app`'s changes, all stored or none, then reloads the rules.
+fn change<T>(
+    daemon: &Daemon,
+    app: &str,
+    apply: impl FnOnce(&Store, &Batch) -> Result<T, StoreError>,
+) -> Result<T, v1::response::Result> {
+    let applied = {
+        let mut store = daemon.store();
+        store
+            .batch(app, now_ms())
+            .and_then(|batch| store.atomically(|store| apply(store, &batch)))
+    };
+    let value = applied.map_err(|e| match e {
+        StoreError::NotFound(what, id) => error(v1::ErrorCode::NotFound, format!("no {what} {id}")),
+        other => internal(other),
+    })?;
+    daemon.reload_rules().map_err(internal)?;
+    Ok(value)
+}
+
+fn locked(id: u64) -> Option<v1::response::Result> {
+    (id & crate::managed::MANAGED_ID != 0)
+        .then(|| error(v1::ErrorCode::Locked, "a default or managed rule or folder"))
+}
+
+fn done<T>(result: Result<T, v1::response::Result>) -> v1::response::Result {
+    result.map_or_else(|e| e, |_| v1::response::Result::Done(v1::Done {}))
+}
+
+fn delete_rule(daemon: &Daemon, app: &str, id: u64) -> v1::response::Result {
+    if let Some(refused) = locked(id) {
+        return refused;
+    }
+    done(change(daemon, app, |store, batch| {
+        if store.remove_rule(id, batch)? {
+            Ok(())
+        } else {
+            Err(StoreError::NotFound("rule", id))
+        }
+    }))
+}
+
+fn set_rule_enabled(daemon: &Daemon, app: &str, set: &v1::SetRuleEnabled) -> v1::response::Result {
+    if let Some(refused) = locked(set.id) {
+        return refused;
+    }
+    done(change(daemon, app, |store, batch| {
+        let mut rule = store
+            .rule(set.id)?
+            .ok_or(StoreError::NotFound("rule", set.id))?;
+        rule.enabled = set.enabled;
+        store.put_rule(&rule, batch)
+    }))
+}
+
+fn update_rule(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    update: &v1::UpdateRule,
+) -> v1::response::Result {
+    let Some(wire) = &update.rule else {
+        return error(v1::ErrorCode::Invalid, "no rule");
+    };
+    if let Some(refused) = locked(wire.id) {
+        return refused;
+    }
+    let rule = match convert::rule_from(wire) {
+        Ok(rule) => rule,
+        Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
+    };
+    let scope = match scope_of(daemon, rule.folder) {
+        Ok(scope) => scope,
+        Err(e) => return internal(e),
+    };
+    if allows_everything(rule.action, rule.conditions.iter().chain(&scope))
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "change the rule \"{}\" to allow every program to connect anywhere",
+                rule.name
+            ),
+        )
+    {
+        return refused;
+    }
+    done(change(daemon, app, |store, batch| {
+        store.put_rule(&rule, batch)
+    }))
+}
+
+fn add_folder(daemon: &Daemon, app: &str, add: &v1::AddFolder) -> v1::response::Result {
+    let Some(wire) = &add.folder else {
+        return error(v1::ErrorCode::Invalid, "no folder");
+    };
+    let mut folder = match convert::folder_from(wire) {
+        Ok(folder) => folder,
+        Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
+    };
+    folder.id = 0;
+    if let Some(refused) = folder.parent.and_then(locked) {
+        return refused;
+    }
+    match change(daemon, app, |store, batch| store.put_folder(&folder, batch)) {
+        Ok(id) => v1::response::Result::FolderAdded(v1::FolderAdded { id }),
+        Err(e) => e,
+    }
+}
+
+fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::response::Result {
+    let Some(wire) = &update.folder else {
+        return error(v1::ErrorCode::Invalid, "no folder");
+    };
+    if let Some(refused) = locked(wire.id).or_else(|| wire.parent.and_then(locked)) {
+        return refused;
+    }
+    let folder = match convert::folder_from(wire) {
+        Ok(folder) => folder,
+        Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
+    };
+    // A folder can't go below itself.
+    let folders = match daemon.store().folders() {
+        Ok(folders) => folders,
+        Err(e) => return internal(e),
+    };
+    let mut next = folder.parent;
+    for _ in 0..=folders.len() {
+        match next {
+            Some(id) if id == folder.id => {
+                return error(v1::ErrorCode::Invalid, "a folder can't go inside itself");
+            }
+            Some(id) => next = folders.iter().find(|f| f.id == id).and_then(|f| f.parent),
+            None => break,
+        }
+    }
+    done(change(daemon, app, |store, batch| {
+        store.put_folder(&folder, batch)
+    }))
+}
+
+/// Deleting more rules than this at once is a dangerous action.
+const DANGEROUS_DELETE: usize = 20;
+
+fn delete_folder(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    delete: v1::DeleteFolder,
+) -> v1::response::Result {
+    let id = delete.id;
+    if let Some(refused) = locked(id) {
+        return refused;
+    }
+    // The rules it holds, below it included.
+    let count = {
+        let store = daemon.store();
+        let folders = match store.folders() {
+            Ok(folders) => folders,
+            Err(e) => return internal(e),
+        };
+        let mut inside = vec![id];
+        let mut index = 0;
+        while let Some(&folder) = inside.get(index) {
+            inside.extend(
+                folders
+                    .iter()
+                    .filter(|f| f.parent == Some(folder))
+                    .map(|f| f.id),
+            );
+            index += 1;
+        }
+        let mut count = 0;
+        for folder in inside {
+            match store.rules_in(folder) {
+                Ok(rules) => count += rules.len(),
+                Err(e) => return internal(e),
+            }
+        }
+        count
+    };
+    if count > DANGEROUS_DELETE
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!("delete a folder of {count} rules"),
+        )
+    {
+        return refused;
+    }
+    done(change(daemon, app, |store, batch| {
+        store
+            .remove_folder(id, batch)?
+            .ok_or(StoreError::NotFound("folder", id))
+    }))
+}
+
+fn list_changes(daemon: &Daemon, list: &v1::ListChanges) -> v1::response::Result {
+    let before = if list.before == 0 {
+        u64::MAX
+    } else {
+        list.before
+    };
+    match daemon.store().changes(before, list.limit.clamp(1, 1000)) {
+        Ok(changes) => v1::response::Result::Changes(v1::ChangePage {
+            changes: changes
+                .into_iter()
+                .map(|c| v1::Change {
+                    id: c.id,
+                    batch: c.batch,
+                    time_ms: c.time_ms,
+                    app: c.app,
+                    what: c.what,
+                })
+                .collect(),
+        }),
         Err(e) => internal(e),
     }
 }
 
-fn delete_rule(daemon: &Daemon, id: u64) -> v1::response::Result {
-    if id & crate::managed::MANAGED_ID != 0 {
-        return error(v1::ErrorCode::Locked, "a default or managed rule");
-    }
-    let deleted = daemon.store().delete_rule(id);
-    match deleted {
-        Ok(true) => reload(daemon),
-        Ok(false) => error(v1::ErrorCode::NotFound, format!("no rule {id}")),
-        Err(e) => internal(e),
-    }
-}
-
-fn set_rule_enabled(daemon: &Daemon, set: &v1::SetRuleEnabled) -> v1::response::Result {
-    if set.id & crate::managed::MANAGED_ID != 0 {
-        return error(v1::ErrorCode::Locked, "a default or managed rule");
-    }
-    let changed = daemon
-        .store()
-        .set_rule_enabled(set.id, set.enabled, now_ms());
-    match changed {
-        Ok(true) => reload(daemon),
-        Ok(false) => error(v1::ErrorCode::NotFound, format!("no rule {}", set.id)),
-        Err(e) => internal(e),
+fn undo(daemon: &Daemon, app: &str, undo: v1::Undo) -> v1::response::Result {
+    let undone = {
+        let mut store = daemon.store();
+        store
+            .batch(app, now_ms())
+            .map_err(UndoError::Store)
+            .and_then(|batch| store.undo(undo.change, &batch))
+    };
+    match undone {
+        Ok(_) => reload(daemon),
+        Err(UndoError::NotFound(id)) => error(v1::ErrorCode::NotFound, format!("no change {id}")),
+        Err(e @ UndoError::Changed(_)) => error(v1::ErrorCode::Invalid, e.to_string()),
+        Err(UndoError::Store(e)) => internal(e),
     }
 }
 
@@ -692,28 +907,22 @@ fn import_rules(
     {
         return refused;
     }
-    let stored = {
-        let mut store = daemon.store();
-        store
-            .insert_folder(&snitchhiker_core::rule::Folder {
+    done(change(daemon, app, |store, batch| {
+        let folder = store.put_folder(
+            &snitchhiker_core::rule::Folder {
                 id: 0,
                 parent: None,
                 name,
                 enabled: true,
                 scope,
-            })
-            .and_then(|folder| {
-                let now = now_ms();
-                rules.into_iter().try_for_each(|mut rule| {
-                    rule.folder = Some(folder);
-                    store.insert_rule(&rule, now).map(|_| ())
-                })
-            })
-    };
-    match stored {
-        Ok(()) => reload(daemon),
-        Err(e) => internal(e),
-    }
+            },
+            batch,
+        )?;
+        rules.into_iter().try_for_each(|mut rule| {
+            rule.folder = Some(folder);
+            store.put_rule(&rule, batch).map(|_| ())
+        })
+    }))
 }
 
 pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {

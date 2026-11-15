@@ -531,3 +531,69 @@ pub fn opensnitch_rules_import_and_apply() -> Result<(), String> {
         &found,
     )
 }
+
+/// Changes are recorded and undone: a folder deleted with its rule comes back with an undo, and its rule decides
+/// connections again.
+pub fn changes_are_recorded_and_undone() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let mut daemon = Running::start("history", "mode = \"enforce\"\nno_match = \"reject\"\n")?;
+    let added = daemon.cli(&["folders", "add", "Tools"])?;
+    let folder = added
+        .trim()
+        .strip_prefix("added folder ")
+        .ok_or("no folder id")?
+        .to_owned();
+    let rule = daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "glob:/usr/bin/python3*",
+        "--port",
+        &port.to_string(),
+        "--name",
+        "python",
+    ])?;
+    let id = rule
+        .trim()
+        .strip_prefix("added rule ")
+        .ok_or("no rule id")?
+        .to_owned();
+    daemon.cli(&["rules", "move", &id, &folder])?;
+    thread::sleep(Duration::from_millis(300));
+    let before = mallory_connects(port)?;
+    daemon.cli(&["folders", "rm", &folder])?;
+    thread::sleep(Duration::from_millis(300));
+    let deleted = mallory_connects(port)?;
+    let history = daemon.cli(&["history"])?;
+    let last = history
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .ok_or("no history")?
+        .to_owned();
+    daemon.cli(&["undo", &last])?;
+    thread::sleep(Duration::from_millis(300));
+    let undone = mallory_connects(port)?;
+    let rules = daemon.cli(&["rules"])?;
+    daemon.stop()?;
+    let found = format!("{history}{rules}before {before}, deleted {deleted}, undone {undone}");
+    check(
+        history.contains("deleted folder \"Tools\"")
+            && history.contains("deleted rule \"python\"")
+            && history.contains("rule \"python\": moved")
+            && history.contains("cli"),
+        "the history doesn't record the changes and who made them",
+        &found,
+    )?;
+    check(
+        before && !deleted && undone,
+        "deleting and undoing didn't take the rule away and bring it back",
+        &found,
+    )?;
+    check(
+        rules.contains("Tools/python"),
+        "the undone rule isn't back in its folder",
+        &found,
+    )
+}

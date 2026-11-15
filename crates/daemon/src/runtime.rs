@@ -75,6 +75,13 @@ pub enum AnswerError {
     Runtime(#[from] Error),
 }
 
+fn placement_error(error: crate::placement::Error) -> AnswerError {
+    match error {
+        crate::placement::Error::Store(e) => AnswerError::Runtime(Error::from(e)),
+        other => AnswerError::Invalid(other.to_string()),
+    }
+}
+
 /// What the deciding threads share.
 pub struct Shared {
     pub config: Config,
@@ -282,23 +289,28 @@ impl Daemon {
                     .ok_or(AnswerError::NotFound)??,
             ),
         };
-        // Into the chosen folder, or the program's own; a folder that can't take it leaves the prompt waiting.
+        // Into the chosen folder, or the program's own.
         let rule = match rule {
-            Some((mut rule, program)) => {
-                crate::placement::place(&mut self.store(), &mut rule, folder, &program).map_err(
-                    |e| match e {
-                        crate::placement::Error::Store(e) => AnswerError::Runtime(Error::from(e)),
-                        other => AnswerError::Invalid(other.to_string()),
-                    },
-                )?;
-                Some(rule)
+            Some((rule, program)) => {
+                // A folder the rule can't go in leaves the prompt waiting.
+                crate::placement::check(&self.store(), folder).map_err(placement_error)?;
+                Some((rule, program))
             }
             None => None,
         };
         let pending = self.shared.broker.take(id).ok_or(AnswerError::NotFound)?;
         let rule_id = match rule {
-            Some(rule) => {
-                let id = self.store().insert_rule(&rule, now).map_err(Error::from)?;
+            Some((mut rule, program)) => {
+                let id = {
+                    let mut store = self.store();
+                    let batch = store.batch(by, now).map_err(Error::from)?;
+                    store
+                        .atomically(|store| {
+                            crate::placement::place(store, &batch, &mut rule, folder, &program)?;
+                            Ok(store.put_rule(&rule, &batch)?)
+                        })
+                        .map_err(placement_error)?
+                };
                 self.reload_rules()?;
                 Some(id)
             }

@@ -7,7 +7,7 @@
 use snitchhiker_core::rule::{Condition, Folder, FolderId, Rule};
 
 use crate::managed::MANAGED_ID;
-use crate::store::{Error as StoreError, Store};
+use crate::store::{Batch, Error as StoreError, Store};
 
 /// The folder programs' folders are made in.
 pub const APPS: &str = "Apps";
@@ -24,20 +24,28 @@ pub enum Error {
 
 /// Puts `rule` in a folder: `chosen`, or the folder of the program it names (made if needed), and leaves out the
 /// conditions the folder's scope already adds. `program` names a folder that has to be made (the executable's name).
+/// Checks that `chosen` (if any) is a folder a rule can go in.
+pub fn check(store: &Store, chosen: Option<FolderId>) -> Result<(), Error> {
+    let Some(id) = chosen else {
+        return Ok(());
+    };
+    if id & MANAGED_ID != 0 {
+        return Err(Error::Locked(id));
+    }
+    store.folder(id)?.map(|_| ()).ok_or(Error::NoFolder(id))
+}
+
+/// Puts `rule` in a folder (see the module), making the program's folder in `batch` if needed.
 pub fn place(
-    store: &mut Store,
+    store: &Store,
+    batch: &Batch,
     rule: &mut Rule,
     chosen: Option<FolderId>,
     program: &str,
 ) -> Result<(), Error> {
     let folders = store.folders()?;
     if let Some(id) = chosen {
-        if id & MANAGED_ID != 0 {
-            return Err(Error::Locked(id));
-        }
-        if !folders.iter().any(|f| f.id == id) {
-            return Err(Error::NoFolder(id));
-        }
+        check(store, chosen)?;
         rule.folder = Some(id);
         strip_scopes(rule, &folders, id);
         return Ok(());
@@ -59,22 +67,28 @@ pub fn place(
             .find(|f| f.parent.is_none() && f.name == APPS && f.scope.is_empty())
         {
             Some(apps) => apps.id,
-            None => store.insert_folder(&Folder {
-                id: 0,
-                parent: None,
-                name: APPS.to_owned(),
-                enabled: true,
-                scope: Vec::new(),
-            })?,
+            None => store.put_folder(
+                &Folder {
+                    id: 0,
+                    parent: None,
+                    name: APPS.to_owned(),
+                    enabled: true,
+                    scope: Vec::new(),
+                },
+                batch,
+            )?,
         };
         let name = free_name(&folders, apps, program);
-        store.insert_folder(&Folder {
-            id: 0,
-            parent: Some(apps),
-            name,
-            enabled: true,
-            scope,
-        })?
+        store.put_folder(
+            &Folder {
+                id: 0,
+                parent: Some(apps),
+                name,
+                enabled: true,
+                scope,
+            },
+            batch,
+        )?
     };
     rule.folder = Some(id);
     let folders = store.folders()?;
@@ -153,14 +167,15 @@ mod tests {
 
     #[test]
     fn a_program_gets_its_folder_once() {
-        let mut store = Store::in_memory().unwrap();
+        let store = Store::in_memory().unwrap();
+        let batch = store.batch("test", 0).unwrap();
         let mut first = rule(vec![exe("/usr/bin/curl"), host()]);
-        place(&mut store, &mut first, None, "curl").unwrap();
+        place(&store, &batch, &mut first, None, "curl").unwrap();
         let mut second = rule(vec![
             exe("/usr/bin/curl"),
             Condition::Port(vec![(443, 443)]),
         ]);
-        place(&mut store, &mut second, None, "curl").unwrap();
+        place(&store, &batch, &mut second, None, "curl").unwrap();
         let folders = store.folders().unwrap();
         let apps = folders.iter().find(|f| f.name == APPS).unwrap();
         let curl = folders.iter().find(|f| f.name == "curl").unwrap();
@@ -176,11 +191,12 @@ mod tests {
 
     #[test]
     fn programs_of_the_same_name_get_folders_of_their_own() {
-        let mut store = Store::in_memory().unwrap();
+        let store = Store::in_memory().unwrap();
+        let batch = store.batch("test", 0).unwrap();
         let mut system = rule(vec![exe("/usr/bin/python3"), host()]);
         let mut venv = rule(vec![exe("/opt/venv/bin/python3"), host()]);
-        place(&mut store, &mut system, None, "python3").unwrap();
-        place(&mut store, &mut venv, None, "python3").unwrap();
+        place(&store, &batch, &mut system, None, "python3").unwrap();
+        place(&store, &batch, &mut venv, None, "python3").unwrap();
         let names: Vec<String> = store
             .folders()
             .unwrap()
@@ -193,18 +209,19 @@ mod tests {
 
     #[test]
     fn rules_for_any_program_stay_at_the_top_and_chosen_folders_are_checked() {
-        let mut store = Store::in_memory().unwrap();
+        let store = Store::in_memory().unwrap();
+        let batch = store.batch("test", 0).unwrap();
         let mut any = rule(vec![host()]);
-        place(&mut store, &mut any, None, "curl").unwrap();
+        place(&store, &batch, &mut any, None, "curl").unwrap();
         assert_eq!(any.folder, None);
         assert_eq!(store.folders().unwrap(), Vec::new());
         let mut chosen = rule(vec![exe("/usr/bin/curl")]);
         assert!(matches!(
-            place(&mut store, &mut chosen, Some(42), "curl"),
+            place(&store, &batch, &mut chosen, Some(42), "curl"),
             Err(Error::NoFolder(42))
         ));
         assert!(matches!(
-            place(&mut store, &mut chosen, Some(MANAGED_ID | 1), "curl"),
+            place(&store, &batch, &mut chosen, Some(MANAGED_ID | 1), "curl"),
             Err(Error::Locked(_))
         ));
     }

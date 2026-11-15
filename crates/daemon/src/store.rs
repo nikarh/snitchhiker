@@ -82,6 +82,22 @@ CREATE TABLE audit (
     outcome INTEGER NOT NULL
 );
 ",
+    // Every change to rules and folders, by whom, with the object before and after (JSON; NULL where it didn't
+    // exist): their history, and what undo puts back. A batch is what one request changed.
+    r"
+CREATE TABLE changes (
+    id INTEGER PRIMARY KEY,
+    batch INTEGER NOT NULL,
+    time_ms INTEGER NOT NULL,
+    app TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    target INTEGER NOT NULL,
+    before TEXT,
+    after TEXT,
+    what TEXT NOT NULL
+);
+CREATE INDEX changes_batch ON changes(batch);
+",
 ];
 
 /// What kind of string a `strings` row is.
@@ -140,6 +156,56 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
+    (
+        "rules.get",
+        "SELECT id, folder, name, enabled, action, tier, expiry, log, notes, conditions FROM rules WHERE id = ?1",
+    ),
+    (
+        "rules.in_folder",
+        "SELECT id, folder, name, enabled, action, tier, expiry, log, notes, conditions FROM rules WHERE folder = ?1",
+    ),
+    (
+        "rules.insert_id",
+        "INSERT INTO rules (id, folder, name, enabled, action, tier, expiry, log, notes, conditions, updated_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+    ),
+    (
+        "rules.update",
+        "UPDATE rules SET folder = ?2, name = ?3, enabled = ?4, action = ?5, tier = ?6, expiry = ?7, log = ?8,
+                          notes = ?9, conditions = ?10, updated_ms = ?11
+         WHERE id = ?1",
+    ),
+    ("folders.get", "SELECT id, parent, name, enabled, scope FROM folders WHERE id = ?1"),
+    ("folders.children", "SELECT id FROM folders WHERE parent = ?1"),
+    (
+        "folders.insert_id",
+        "INSERT INTO folders (id, parent, name, enabled, scope) VALUES (?1, ?2, ?3, ?4, ?5)",
+    ),
+    (
+        "folders.update",
+        "UPDATE folders SET parent = ?2, name = ?3, enabled = ?4, scope = ?5 WHERE id = ?1",
+    ),
+    ("folders.delete", "DELETE FROM folders WHERE id = ?1"),
+    (
+        "changes.insert",
+        "INSERT INTO changes (batch, time_ms, app, kind, target, before, after, what)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    ),
+    (
+        "changes.last_batch",
+        "SELECT batch FROM changes WHERE id = (SELECT max(id) FROM changes)",
+    ),
+    (
+        "changes.page",
+        "SELECT id, batch, time_ms, app, kind, target, before, after, what FROM changes
+         WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    ("changes.batch_of", "SELECT batch FROM changes WHERE id = ?1"),
+    (
+        "changes.in_batch",
+        "SELECT id, batch, time_ms, app, kind, target, before, after, what FROM changes
+         WHERE batch = ?1 ORDER BY id",
+    ),
     (
         "rules.set_enabled",
         "UPDATE rules SET enabled = ?2, updated_ms = ?3 WHERE id = ?1",
@@ -223,6 +289,556 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
 ];
 
+/// One request's changes: who made them, when, and the batch they are grouped in (undone together).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Batch {
+    pub id: u64,
+    pub app: String,
+    pub now_ms: u64,
+}
+
+/// A change to a rule or a folder, as the history keeps it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Change {
+    pub id: u64,
+    pub batch: u64,
+    pub time_ms: u64,
+    pub app: String,
+    /// `rule` or `folder`.
+    pub kind: String,
+    pub target: u64,
+    /// The object before and after, as JSON; `None` where it didn't exist.
+    pub before: Option<String>,
+    pub after: Option<String>,
+    /// What changed, for people.
+    pub what: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UndoError {
+    #[error("no change {0}")]
+    NotFound(u64),
+    #[error("{0} was changed since: undo the later change first")]
+    Changed(String),
+    #[error(transparent)]
+    Store(#[from] Error),
+}
+
+const RULE: &str = "rule";
+const FOLDER: &str = "folder";
+
+/// What changed between two versions of a rule, for people.
+fn describe_rule(before: Option<&Rule>, after: Option<&Rule>) -> String {
+    match (before, after) {
+        (None, Some(after)) => format!("added rule \"{}\"", after.name),
+        (Some(before), None) => format!("deleted rule \"{}\"", before.name),
+        (Some(before), Some(after)) => {
+            let mut parts = Vec::new();
+            if before.name != after.name {
+                parts.push(format!("renamed to \"{}\"", after.name));
+            }
+            if before.enabled != after.enabled {
+                parts.push(
+                    if after.enabled {
+                        "switched on"
+                    } else {
+                        "switched off"
+                    }
+                    .to_owned(),
+                );
+            }
+            if before.action != after.action {
+                parts.push(
+                    format!("action {:?} → {:?}", before.action, after.action).to_lowercase(),
+                );
+            }
+            if before.tier != after.tier {
+                parts.push(format!("tier {:?} → {:?}", before.tier, after.tier).to_lowercase());
+            }
+            if before.folder != after.folder {
+                parts.push("moved".to_owned());
+            }
+            if before.conditions != after.conditions {
+                parts.push("conditions changed".to_owned());
+            }
+            if before.expiry != after.expiry {
+                parts.push("expiry changed".to_owned());
+            }
+            if before.notes != after.notes {
+                parts.push("notes changed".to_owned());
+            }
+            format!("rule \"{}\": {}", before.name, parts.join(", "))
+        }
+        (None, None) => String::new(),
+    }
+}
+
+fn describe_folder(before: Option<&Folder>, after: Option<&Folder>) -> String {
+    match (before, after) {
+        (None, Some(after)) => format!("added folder \"{}\"", after.name),
+        (Some(before), None) => format!("deleted folder \"{}\"", before.name),
+        (Some(before), Some(after)) => {
+            let mut parts = Vec::new();
+            if before.name != after.name {
+                parts.push(format!("renamed to \"{}\"", after.name));
+            }
+            if before.enabled != after.enabled {
+                parts.push(
+                    if after.enabled {
+                        "switched on"
+                    } else {
+                        "switched off"
+                    }
+                    .to_owned(),
+                );
+            }
+            if before.parent != after.parent {
+                parts.push("moved".to_owned());
+            }
+            if before.scope != after.scope {
+                parts.push("scope changed".to_owned());
+            }
+            format!("folder \"{}\": {}", before.name, parts.join(", "))
+        }
+        (None, None) => String::new(),
+    }
+}
+
+/// A rule as `rules.get`, `rules.all` and `rules.in_folder` select it.
+fn rule_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Rule, Error>> {
+    let (id, folder, name, enabled): (i64, Option<i64>, String, bool) =
+        (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+    let (action, tier, expiry, log, notes, conditions): (
+        String,
+        String,
+        String,
+        bool,
+        String,
+        String,
+    ) = (
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+        row.get(9)?,
+    );
+    let corrupt = |what| {
+        move |e: serde_json::Error| Error::Corrupt {
+            what,
+            error: e.to_string(),
+        }
+    };
+    Ok((|| {
+        Ok(Rule {
+            id: id_of(id),
+            folder: folder.map(id_of),
+            name,
+            enabled,
+            action: serde_json::from_str::<Action>(&action).map_err(corrupt("rule action"))?,
+            tier: serde_json::from_str::<Tier>(&tier).map_err(corrupt("rule tier"))?,
+            expiry: serde_json::from_str::<Expiry>(&expiry).map_err(corrupt("rule expiry"))?,
+            log,
+            notes,
+            conditions: serde_json::from_str(&conditions).map_err(corrupt("rule conditions"))?,
+        })
+    })())
+}
+
+fn folder_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Result<Folder, Error>> {
+    let (id, parent, name, enabled, scope): (i64, Option<i64>, String, bool, String) = (
+        row.get(0)?,
+        row.get(1)?,
+        row.get(2)?,
+        row.get(3)?,
+        row.get(4)?,
+    );
+    Ok(serde_json::from_str(&scope)
+        .map_err(|e| Error::Corrupt {
+            what: "folder scope",
+            error: e.to_string(),
+        })
+        .map(|scope| Folder {
+            id: id_of(id),
+            parent: parent.map(id_of),
+            name,
+            enabled,
+            scope,
+        }))
+}
+
+fn change_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Change> {
+    Ok(Change {
+        id: id_of(row.get(0)?),
+        batch: id_of(row.get(1)?),
+        time_ms: id_of(row.get(2)?),
+        app: row.get(3)?,
+        kind: row.get(4)?,
+        target: id_of(row.get(5)?),
+        before: row.get(6)?,
+        after: row.get(7)?,
+        what: row.get(8)?,
+    })
+}
+
+impl Store {
+    /// A new batch of changes, made by `app`.
+    pub fn batch(&self, app: &str, now_ms: u64) -> Result<Batch, Error> {
+        let last: Option<i64> = self
+            .connection
+            .prepare_cached(sql("changes.last_batch")?)?
+            .query_row([], |row| row.get(0))
+            .optional()?;
+        Ok(Batch {
+            id: last.map_or(1, |last| id_of(last) + 1),
+            app: app.to_owned(),
+            now_ms,
+        })
+    }
+
+    pub fn rule(&self, id: RuleId) -> Result<Option<Rule>, Error> {
+        self.connection
+            .prepare_cached(sql("rules.get")?)?
+            .query_row(params![db_id(id)], rule_of)
+            .optional()?
+            .transpose()
+    }
+
+    pub fn folder(&self, id: FolderId) -> Result<Option<Folder>, Error> {
+        self.connection
+            .prepare_cached(sql("folders.get")?)?
+            .query_row(params![db_id(id)], folder_of)
+            .optional()?
+            .transpose()
+    }
+
+    fn record_change(
+        &self,
+        batch: &Batch,
+        kind: &str,
+        target: u64,
+        before: Option<&str>,
+        after: Option<&str>,
+        what: &str,
+    ) -> Result<(), Error> {
+        self.connection
+            .prepare_cached(sql("changes.insert")?)?
+            .execute(params![
+                db_id(batch.id),
+                db_id(batch.now_ms),
+                batch.app,
+                kind,
+                db_id(target),
+                before,
+                after,
+                what,
+            ])?;
+        Ok(())
+    }
+
+    fn write_rule(&self, rule: &Rule, now_ms: u64, statement: &'static str) -> Result<(), Error> {
+        self.connection
+            .prepare_cached(sql(statement)?)?
+            .execute(params![
+                db_id(rule.id),
+                rule.folder.map(db_id),
+                rule.name,
+                rule.enabled,
+                json(&rule.action),
+                json(&rule.tier),
+                json(&rule.expiry),
+                rule.log,
+                rule.notes,
+                json(&rule.conditions),
+                db_id(now_ms),
+            ])?;
+        Ok(())
+    }
+
+    /// Adds a rule (`id` 0) or replaces the rule with its id, recording the change; returns its id. A missing rule
+    /// is `NotFound`.
+    pub fn put_rule(&self, rule: &Rule, batch: &Batch) -> Result<RuleId, Error> {
+        if rule.id == 0 {
+            let id = self.insert_rule(rule, batch.now_ms)?;
+            let stored = Rule { id, ..rule.clone() };
+            self.record_change(
+                batch,
+                RULE,
+                id,
+                None,
+                Some(&json(&stored)),
+                &describe_rule(None, Some(&stored)),
+            )?;
+            return Ok(id);
+        }
+        let before = self.rule(rule.id)?.ok_or(Error::NotFound(RULE, rule.id))?;
+        self.write_rule(rule, batch.now_ms, "rules.update")?;
+        self.record_change(
+            batch,
+            RULE,
+            rule.id,
+            Some(&json(&before)),
+            Some(&json(rule)),
+            &describe_rule(Some(&before), Some(rule)),
+        )?;
+        Ok(rule.id)
+    }
+
+    /// Deletes a rule, recording it; whether it existed.
+    pub fn remove_rule(&self, id: RuleId, batch: &Batch) -> Result<bool, Error> {
+        let Some(before) = self.rule(id)? else {
+            return Ok(false);
+        };
+        self.delete_rule(id)?;
+        self.record_change(
+            batch,
+            RULE,
+            id,
+            Some(&json(&before)),
+            None,
+            &describe_rule(Some(&before), None),
+        )?;
+        Ok(true)
+    }
+
+    /// Adds a folder (`id` 0) or replaces the folder with its id, recording the change; returns its id.
+    pub fn put_folder(&self, folder: &Folder, batch: &Batch) -> Result<FolderId, Error> {
+        if folder.id == 0 {
+            let id = self.insert_folder(folder)?;
+            let stored = Folder {
+                id,
+                ..folder.clone()
+            };
+            self.record_change(
+                batch,
+                FOLDER,
+                id,
+                None,
+                Some(&json(&stored)),
+                &describe_folder(None, Some(&stored)),
+            )?;
+            return Ok(id);
+        }
+        let before = self
+            .folder(folder.id)?
+            .ok_or(Error::NotFound(FOLDER, folder.id))?;
+        self.connection
+            .prepare_cached(sql("folders.update")?)?
+            .execute(params![
+                db_id(folder.id),
+                folder.parent.map(db_id),
+                folder.name,
+                folder.enabled,
+                json(&folder.scope),
+            ])?;
+        self.record_change(
+            batch,
+            FOLDER,
+            folder.id,
+            Some(&json(&before)),
+            Some(&json(folder)),
+            &describe_folder(Some(&before), Some(folder)),
+        )?;
+        Ok(folder.id)
+    }
+
+    /// The rules of a folder (not of the folders below it).
+    pub fn rules_in(&self, folder: FolderId) -> Result<Vec<Rule>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("rules.in_folder")?)?;
+        let rows = statement.query_map(params![db_id(folder)], rule_of)?;
+        rows.map(|row| row?).collect()
+    }
+
+    fn children(&self, folder: FolderId) -> Result<Vec<FolderId>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("folders.children")?)?;
+        let rows = statement.query_map(params![db_id(folder)], |row| row.get::<_, i64>(0))?;
+        Ok(rows.map(|id| id.map(id_of)).collect::<Result<_, _>>()?)
+    }
+
+    /// Deletes a folder, the folders below it and their rules, recording each (rules first, so undoing the batch puts
+    /// the folders back before their rules); the number of rules deleted, or `None` if there was no such folder.
+    pub fn remove_folder(&self, id: FolderId, batch: &Batch) -> Result<Option<usize>, Error> {
+        let Some(folder) = self.folder(id)? else {
+            return Ok(None);
+        };
+        let mut rules = 0;
+        for child in self.children(id)? {
+            rules += self.remove_folder(child, batch)?.unwrap_or(0);
+        }
+        for rule in self.rules_in(id)? {
+            self.remove_rule(rule.id, batch)?;
+            rules += 1;
+        }
+        self.connection
+            .prepare_cached(sql("folders.delete")?)?
+            .execute(params![db_id(id)])?;
+        self.record_change(
+            batch,
+            FOLDER,
+            id,
+            Some(&json(&folder)),
+            None,
+            &describe_folder(Some(&folder), None),
+        )?;
+        Ok(Some(rules))
+    }
+
+    /// Runs `change` in one transaction: all of it is stored, or nothing.
+    pub fn atomically<T, E: From<Error>>(
+        &mut self,
+        change: impl FnOnce(&Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(Error::from)?;
+        let result = change(self)?;
+        transaction.commit().map_err(Error::from)?;
+        Ok(result)
+    }
+
+    /// The newest changes before the id `before` (`u64::MAX` for the newest), at most `limit`.
+    pub fn changes(&self, before: u64, limit: u32) -> Result<Vec<Change>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("changes.page")?)?;
+        let rows = statement.query_map(
+            params![i64::try_from(before).unwrap_or(i64::MAX), limit],
+            change_of,
+        )?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Undoes the batch of change `change`, newest first, as a new batch: every object it touched must still be as
+    /// the batch left it. Returns how many changes were undone.
+    pub fn undo(&mut self, change: u64, batch: &Batch) -> Result<usize, UndoError> {
+        let of: Option<i64> = self
+            .connection
+            .prepare_cached(sql("changes.batch_of").map_err(UndoError::Store)?)
+            .map_err(Error::from)?
+            .query_row(params![db_id(change)], |row| row.get(0))
+            .optional()
+            .map_err(Error::from)?;
+        let undone_batch = of.ok_or(UndoError::NotFound(change))?;
+        let mut statement = self
+            .connection
+            .prepare_cached(sql("changes.in_batch")?)
+            .map_err(Error::from)?;
+        let changes: Vec<Change> = statement
+            .query_map(params![undone_batch], change_of)
+            .map_err(Error::from)?
+            .collect::<Result<_, _>>()
+            .map_err(Error::from)?;
+        drop(statement);
+        // Everything is checked before anything is put back.
+        for change in &changes {
+            let now = match change.kind.as_str() {
+                RULE => self.rule(change.target)?.map(|r| json(&r)),
+                _ => self.folder(change.target)?.map(|f| json(&f)),
+            };
+            if now != change.after {
+                return Err(UndoError::Changed(format!(
+                    "{} {}",
+                    change.kind, change.target
+                )));
+            }
+        }
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .map_err(Error::from)?;
+        for change in changes.iter().rev() {
+            self.restore(change, batch)?;
+        }
+        transaction.commit().map_err(Error::from)?;
+        Ok(changes.len())
+    }
+
+    /// Puts back what `change` found, recording that as a change of `batch`.
+    fn restore(&self, change: &Change, batch: &Batch) -> Result<(), Error> {
+        let corrupt = |e: serde_json::Error| Error::Corrupt {
+            what: "a recorded change",
+            error: e.to_string(),
+        };
+        if change.kind == RULE {
+            let before: Option<Rule> = change
+                .before
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(corrupt)?;
+            let after: Option<Rule> = change
+                .after
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(corrupt)?;
+            match &before {
+                None => {
+                    self.delete_rule(change.target)?;
+                }
+                Some(rule) if after.is_none() => {
+                    self.write_rule(rule, batch.now_ms, "rules.insert_id")?;
+                }
+                Some(rule) => self.write_rule(rule, batch.now_ms, "rules.update")?,
+            }
+            let what = format!("undid: {}", describe_rule(after.as_ref(), before.as_ref()));
+            self.record_change(
+                batch,
+                RULE,
+                change.target,
+                change.after.as_deref(),
+                change.before.as_deref(),
+                &what,
+            )
+        } else {
+            let before: Option<Folder> = change
+                .before
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(corrupt)?;
+            let after: Option<Folder> = change
+                .after
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(corrupt)?;
+            let statement = match (&before, &after) {
+                (None, _) => {
+                    self.connection
+                        .prepare_cached(sql("folders.delete")?)?
+                        .execute(params![db_id(change.target)])?;
+                    None
+                }
+                (Some(_), None) => Some("folders.insert_id"),
+                (Some(_), Some(_)) => Some("folders.update"),
+            };
+            if let (Some(statement), Some(folder)) = (statement, &before) {
+                self.connection
+                    .prepare_cached(sql(statement)?)?
+                    .execute(params![
+                        db_id(folder.id),
+                        folder.parent.map(db_id),
+                        folder.name,
+                        folder.enabled,
+                        json(&folder.scope),
+                    ])?;
+            }
+            let what = format!(
+                "undid: {}",
+                describe_folder(after.as_ref(), before.as_ref())
+            );
+            self.record_change(
+                batch,
+                FOLDER,
+                change.target,
+                change.after.as_deref(),
+                change.before.as_deref(),
+                &what,
+            )
+        }
+    }
+}
+
 /// Tables small enough that scanning them is fine (and SQLite may choose to).
 #[cfg(test)]
 const SCANNABLE: &[&str] = &["folders", "rules"];
@@ -235,6 +851,8 @@ pub enum Error {
     Corrupt { what: &'static str, error: String },
     #[error("no statement named {0}")]
     UnknownStatement(&'static str),
+    #[error("no {0} {1}")]
+    NotFound(&'static str, u64),
 }
 
 impl Event {
@@ -431,7 +1049,7 @@ impl Store {
     }
 
     /// Adds a rule (its `id` is ignored) and returns the id it got.
-    pub fn insert_rule(&mut self, rule: &Rule, now_ms: u64) -> Result<RuleId, Error> {
+    pub fn insert_rule(&self, rule: &Rule, now_ms: u64) -> Result<RuleId, Error> {
         let mut statement = self.connection.prepare_cached(sql("rules.insert")?)?;
         statement.execute(params![
             rule.folder.map(db_id),
@@ -467,13 +1085,13 @@ impl Store {
         Ok(statement.execute([])?)
     }
 
-    pub fn delete_rule(&mut self, id: RuleId) -> Result<bool, Error> {
+    pub fn delete_rule(&self, id: RuleId) -> Result<bool, Error> {
         let mut statement = self.connection.prepare_cached(sql("rules.delete")?)?;
         Ok(statement.execute(params![db_id(id)])? > 0)
     }
 
     /// Adds a folder (its `id` is ignored) and returns the id it got.
-    pub fn insert_folder(&mut self, folder: &Folder) -> Result<FolderId, Error> {
+    pub fn insert_folder(&self, folder: &Folder) -> Result<FolderId, Error> {
         let mut statement = self.connection.prepare_cached(sql("folders.insert")?)?;
         statement.execute(params![
             folder.parent.map(db_id),
@@ -857,7 +1475,7 @@ mod tests {
 
     #[test]
     fn rules_round_trip() {
-        let mut store = Store::in_memory().unwrap();
+        let store = Store::in_memory().unwrap();
         let folder = store
             .insert_folder(&Folder {
                 id: 0,
@@ -888,6 +1506,89 @@ mod tests {
         );
         assert!(store.delete_rule(id).unwrap());
         assert_eq!(store.rules().unwrap(), vec![]);
+    }
+
+    fn sample(name: &str, folder: Option<FolderId>) -> Rule {
+        Rule {
+            id: 0,
+            folder,
+            name: name.into(),
+            enabled: true,
+            action: Action::Allow,
+            tier: Tier::Normal,
+            expiry: Expiry::Never,
+            log: true,
+            notes: String::new(),
+            conditions: vec![Condition::Port(vec![(443, 443)])],
+        }
+    }
+
+    #[test]
+    fn changes_are_recorded_and_undone_by_batch() {
+        let mut store = Store::in_memory().unwrap();
+        // One batch: a folder and two rules in it.
+        let first = store.batch("cli", 1).unwrap();
+        let (folder, a) = store
+            .atomically(|store| {
+                let folder = store.put_folder(
+                    &Folder {
+                        id: 0,
+                        parent: None,
+                        name: "Apps".into(),
+                        enabled: true,
+                        scope: Vec::new(),
+                    },
+                    &first,
+                )?;
+                let a = store.put_rule(&sample("a", Some(folder)), &first)?;
+                store.put_rule(&sample("b", Some(folder)), &first)?;
+                Ok::<_, Error>((folder, a))
+            })
+            .unwrap();
+        // A second: rule a switched off.
+        let second = store.batch("desktop", 2).unwrap();
+        let mut off = store.rule(a).unwrap().unwrap();
+        off.enabled = false;
+        store.put_rule(&off, &second).unwrap();
+        // A third: the folder deleted, with its rules.
+        let third = store.batch("desktop", 3).unwrap();
+        assert_eq!(store.remove_folder(folder, &third).unwrap(), Some(2));
+        assert_eq!(store.rules().unwrap(), Vec::new());
+        let changes = store.changes(u64::MAX, 10).unwrap();
+        let what: Vec<&str> = changes.iter().map(|c| c.what.as_str()).collect();
+        assert_eq!(
+            what,
+            vec![
+                "deleted folder \"Apps\"",
+                "deleted rule \"b\"",
+                "deleted rule \"a\"",
+                "rule \"a\": switched off",
+                "added rule \"b\"",
+                "added rule \"a\"",
+                "added folder \"Apps\""
+            ]
+        );
+        // Undoing the deletion puts the folder and both rules back, as they were.
+        let undo = store.batch("desktop", 4).unwrap();
+        assert_eq!(store.undo(changes[0].id, &undo).unwrap(), 3);
+        let rules = store.rules().unwrap();
+        assert_eq!(rules.len(), 2);
+        assert!(
+            rules
+                .iter()
+                .any(|r| r.id == a && !r.enabled && r.folder == Some(folder))
+        );
+        // The first batch can't be undone now: rule a changed since.
+        let again = store.batch("desktop", 5).unwrap();
+        let first_change = changes.last().unwrap().id;
+        assert!(matches!(
+            store.undo(first_change, &again),
+            Err(UndoError::Changed(_))
+        ));
+        assert!(matches!(
+            store.undo(9999, &again),
+            Err(UndoError::NotFound(9999))
+        ));
     }
 
     #[test]
