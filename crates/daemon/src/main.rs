@@ -4,8 +4,14 @@
 
 use std::ffi::OsString;
 use std::io::{self, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use nix::sys::signal::{SigSet, Signal};
+use snitchhiker_daemon::cli;
+use snitchhiker_daemon::config::{self, Config};
+use snitchhiker_daemon::runtime::Daemon;
+use tracing::{error, info};
 
 /// The version, with the suffix of development builds (`0.1.0-dev+abc1234`).
 const VERSION: &str = env!("SNITCHHIKER_VERSION");
@@ -13,37 +19,31 @@ const VERSION: &str = env!("SNITCHHIKER_VERSION");
 const DAEMON_HELP: &str = "\
 snitchhikerd: Snitchhiker's interactive application firewall daemon
 
-Usage: snitchhikerd [options]
+Usage: snitchhikerd [--config <path>]
        snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
 
 Options:
+  --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)
   -h, --help       Print this help
   -V, --version    Print the version
-";
 
-const CLI_HELP: &str = "\
-snitchhiker: command line of the Snitchhiker application firewall
-
-Usage: snitchhiker <command> [options]
-
-Commands:
-  version          Print the version
-
-Options:
-  -h, --help       Print this help
-  -V, --version    Print the version
+Signals: SIGHUP reloads the rules; SIGTERM and SIGINT stop the daemon.
 ";
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
     #[error(transparent)]
     Args(#[from] pico_args::Error),
+    #[error(transparent)]
+    Cli(#[from] cli::Error),
+    #[error(transparent)]
+    Config(#[from] config::Error),
+    #[error(transparent)]
+    Runtime(#[from] snitchhiker_daemon::runtime::Error),
     #[error("unknown command `{0}`; see --help")]
     UnknownCommand(String),
-    #[error("unexpected arguments: {0:?}")]
-    UnexpectedArguments(Vec<OsString>),
-    #[error("the daemon is not implemented yet")]
-    NotImplemented,
+    #[error("signals: {0}")]
+    Signals(#[from] nix::Error),
     #[error("writing to stdout: {0}")]
     Stdout(#[source] io::Error),
 }
@@ -74,32 +74,6 @@ fn out(text: &str) -> Result<(), Error> {
         .map_err(Error::Stdout)
 }
 
-fn finish(args: pico_args::Arguments) -> Result<(), Error> {
-    let rest = args.finish();
-    if rest.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::UnexpectedArguments(rest))
-    }
-}
-
-fn run_cli(mut args: pico_args::Arguments) -> Result<(), Error> {
-    if args.contains(["-h", "--help"]) {
-        return out(CLI_HELP);
-    }
-    if args.contains(["-V", "--version"]) {
-        return out(&format!("snitchhiker {VERSION}\n"));
-    }
-    match args.subcommand()?.as_deref() {
-        Some("version") => {
-            finish(args)?;
-            out(&format!("snitchhiker {VERSION}\n"))
-        }
-        None => out(CLI_HELP),
-        Some(other) => Err(Error::UnknownCommand(other.to_owned())),
-    }
-}
-
 fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     if args.contains(["-h", "--help"]) {
         return out(DAEMON_HELP);
@@ -107,19 +81,53 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     if args.contains(["-V", "--version"]) {
         return out(&format!("snitchhikerd {VERSION}\n"));
     }
+    let config_path: Option<PathBuf> = args.opt_value_from_str("--config")?;
     if let Some(command) = args.subcommand()? {
         return match command.as_str() {
-            "cli" => run_cli(args),
+            "cli" => Ok(cli::run(args, VERSION)?),
             other => Err(Error::UnknownCommand(other.to_owned())),
         };
     }
-    finish(args)?;
-    Err(Error::NotImplemented)
+    let config = Config::load(&config_path.unwrap_or_else(|| PathBuf::from(config::DEFAULT_PATH)))?;
+
+    // Signals are taken synchronously in this thread; blocked before any thread starts, so none of them gets one.
+    let mut signals = SigSet::empty();
+    for signal in [Signal::SIGTERM, Signal::SIGINT, Signal::SIGHUP] {
+        signals.add(signal);
+    }
+    signals.thread_block()?;
+
+    info!(version = VERSION, "starting");
+    let daemon = Daemon::start(config)?;
+    write_pidfile();
+    // SIGHUP reloads; SIGTERM or SIGINT end the loop.
+    while signals.wait()? == Signal::SIGHUP {
+        match daemon.reload_rules() {
+            Ok(count) => info!(rules = count, "rules reloaded"),
+            Err(error) => error!(%error, "reloading the rules; keeping the previous ones"),
+        }
+    }
+    let _ = std::fs::remove_file(cli::PIDFILE);
+    daemon.stop();
+    Ok(())
+}
+
+fn write_pidfile() {
+    let path = Path::new(cli::PIDFILE);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Err(error) = std::fs::write(path, format!("{}\n", std::process::id())) {
+        error!(%error, "writing the pidfile; the command line can't ask for reloads");
+    }
 }
 
 fn main() -> ExitCode {
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
         .with_writer(io::stderr)
         .init();
 
@@ -132,12 +140,12 @@ fn main() -> ExitCode {
     let args = pico_args::Arguments::from_vec(raw);
     let result = match personality(argv0.as_ref()) {
         Personality::Daemon => run_daemon(args),
-        Personality::Cli => run_cli(args),
+        Personality::Cli => cli::run(args, VERSION).map_err(Error::from),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            tracing::error!("{error}");
+            error!("{error}");
             ExitCode::FAILURE
         }
     }

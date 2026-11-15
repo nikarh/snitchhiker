@@ -1,0 +1,314 @@
+//! The running daemon: the table, the attribution programs, one deciding thread per queue, and the writer.
+//!
+//! The packet path: receive → parse the headers → look the flow's owner up (eBPF) → the process's facts (cached) →
+//! the rules (an immutable set, swapped atomically on change) → verdict, and an event to the writer's queue. Nothing
+//! on it waits for the database, and a full event queue drops the event (counted), never the verdict.
+
+use std::os::unix::fs::MetadataExt as _;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use arc_swap::ArcSwap;
+use snitchhiker_core::engine::{Facts, RuleSet};
+use snitchhiker_core::rule::{Action, ContextKind};
+use snitchhiker_ebpf::{Attribution, FlowKey};
+use snitchhiker_netfilter::netlink::{Socket, Writer};
+use snitchhiker_netfilter::nftables::{Table, encode_install, encode_remove};
+use snitchhiker_netfilter::packet;
+use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
+use tracing::{error, info, warn};
+
+use crate::config::{Config, Fail, Mode};
+use crate::process::{HostNamespaces, ProcessCache};
+use crate::store::{Event, Source, Store};
+
+/// Events waiting for the writer; beyond this they are dropped (and counted).
+const EVENT_QUEUE: usize = 65_536;
+/// Events written per transaction at most.
+const BATCH: usize = 1024;
+/// How long the writer waits to fill a batch.
+const BATCH_WAIT: Duration = Duration::from_millis(100);
+/// How often old history is pruned, and how many rows per chunk.
+const PRUNE_EVERY: Duration = Duration::from_secs(600);
+const PRUNE_CHUNK: u32 = 10_000;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("netlink: {0}")]
+    Netlink(#[from] std::io::Error),
+    #[error("eBPF: {0}")]
+    Ebpf(#[from] snitchhiker_ebpf::Error),
+    #[error("store: {0}")]
+    Store(#[from] crate::store::Error),
+    #[error("rules: {0}")]
+    Rules(#[from] snitchhiker_core::engine::CompileError),
+}
+
+/// What the deciding threads share.
+pub struct Shared {
+    pub config: Config,
+    pub rules: ArcSwap<RuleSet>,
+    attribution: Attribution,
+    netns: u32,
+    host: HostNamespaces,
+    events: SyncSender<Event>,
+    pub dropped_events: AtomicU64,
+    pub decided: AtomicU64,
+}
+
+/// The daemon, running.
+pub struct Daemon {
+    pub shared: Arc<Shared>,
+    store: Arc<Mutex<Store>>,
+    table: Table,
+}
+
+impl Daemon {
+    /// Opens the store, compiles the rules, installs the table, loads the attribution programs and starts the
+    /// deciding threads and the writer.
+    pub fn start(config: Config) -> Result<Self, Error> {
+        if let Some(parent) = config.database.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let store = Store::open(&config.database)?;
+        let rules = RuleSet::compile(&store.folders()?, &store.rules()?)?;
+        info!(rules = rules.len(), "rules loaded");
+        // The programs first: from the moment the table is in place, every new flow's owner must be known.
+        let attribution = Attribution::load()?;
+        let table = Table {
+            queue: config.queue,
+            queues: config.queues,
+            bypass: config.fail == Fail::Open,
+            ..Table::default()
+        };
+        install(&table)?;
+        info!(queues = config.queues, mode = ?config.mode, "table installed");
+
+        let (sender, receiver) = sync_channel(EVENT_QUEUE);
+        let store = Arc::new(Mutex::new(store));
+        let shared = Arc::new(Shared {
+            rules: ArcSwap::from_pointee(rules),
+            attribution,
+            netns: u32::try_from(std::fs::metadata("/proc/self/ns/net")?.ino()).unwrap_or(0),
+            host: HostNamespaces::read()?,
+            events: sender,
+            dropped_events: AtomicU64::new(0),
+            decided: AtomicU64::new(0),
+            config,
+        });
+        for offset in 0..shared.config.queues {
+            let number = shared.config.queue + offset;
+            let queue = Queue::bind(number)?;
+            let shared = Arc::clone(&shared);
+            thread::Builder::new()
+                .name(format!("queue-{number}"))
+                .spawn(move || {
+                    if let Err(error) = decide_loop(&shared, queue) {
+                        error!(%error, queue = number, "deciding thread stopped");
+                    }
+                })?;
+        }
+        {
+            let store = Arc::clone(&store);
+            let retention = Duration::from_secs(u64::from(shared.config.retention_days) * 86_400);
+            thread::Builder::new()
+                .name("writer".to_owned())
+                .spawn(move || write_loop(&store, &receiver, retention))?;
+        }
+        Ok(Self {
+            shared,
+            store,
+            table,
+        })
+    }
+
+    /// Reads the rules again and swaps them in.
+    pub fn reload_rules(&self) -> Result<usize, Error> {
+        let rules = {
+            let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+            RuleSet::compile(&store.folders()?, &store.rules()?)?
+        };
+        let count = rules.len();
+        self.shared.rules.store(Arc::new(rules));
+        Ok(count)
+    }
+
+    /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
+    /// nothing new gets out until the daemon is back.
+    pub fn stop(self) {
+        if self.shared.config.fail == Fail::Open
+            && let Err(error) = remove(&self.table.name)
+        {
+            warn!(%error, "removing the table");
+        }
+        info!(
+            decided = self.shared.decided.load(Ordering::Relaxed),
+            dropped_events = self.shared.dropped_events.load(Ordering::Relaxed),
+            "stopped"
+        );
+    }
+}
+
+fn install(table: &Table) -> std::io::Result<()> {
+    let mut socket = Socket::open()?;
+    let mut writer = Writer::new();
+    let batch = encode_install(&mut writer, table, 1);
+    socket.transact(&writer, batch.first, batch.last)
+}
+
+fn remove(name: &str) -> std::io::Result<()> {
+    let mut socket = Socket::open()?;
+    let mut writer = Writer::new();
+    let batch = encode_remove(&mut writer, name, 1);
+    socket.transact(&writer, batch.first, batch.last)
+}
+
+fn decide_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
+    let mut processes = ProcessCache::new(shared.host);
+    let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
+    loop {
+        verdicts.clear();
+        for packet in queue.receive()? {
+            verdicts.push((packet.id, decide(shared, &mut processes, &packet)));
+        }
+        for &(id, verdict) in &verdicts {
+            queue.verdict(id, verdict)?;
+        }
+    }
+}
+
+/// Unix time in milliseconds.
+#[must_use]
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+fn context_code(context: ContextKind) -> u8 {
+    match context {
+        ContextKind::Host | ContextKind::Any => 0,
+        ContextKind::Container => 1,
+        ContextKind::Vm => 2,
+        ContextKind::Netns => 3,
+    }
+}
+
+/// The verdict for one packet, recording what happened.
+fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) -> Verdict {
+    shared.decided.fetch_add(1, Ordering::Relaxed);
+    let Some(headers) = packet::parse(queued.payload) else {
+        // Not IPv4 or IPv6: nothing rules speak about.
+        return Verdict::Accept;
+    };
+    let key = FlowKey {
+        netns: shared.netns,
+        protocol: headers.protocol,
+        source_port: headers.source_port,
+        destination: headers.destination,
+        destination_port: headers.destination_port,
+    };
+    let owner = shared.attribution.owner(&key);
+    let process = owner.and_then(|owner| processes.get(owner.pid));
+    let now = now_ms();
+    let uid = process
+        .as_ref()
+        .map(|p| p.uid)
+        .or(owner.map(|o| o.uid))
+        .or(queued.uid)
+        .unwrap_or(u32::MAX);
+    let empty: &[String] = &[];
+    let facts = Facts {
+        exe: process.as_ref().map_or("", |p| p.exe.as_str()),
+        apps: empty,
+        cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
+        ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
+        uid,
+        home: process.as_ref().and_then(|p| p.home.as_deref()),
+        hosts: &[],
+        address: headers.destination,
+        port: headers.destination_port,
+        protocol: headers.protocol,
+        context: process.as_ref().map_or(ContextKind::Host, |p| p.context),
+        now_ms: now,
+    };
+    let rules = shared.rules.load();
+    let decision = rules.decide(&facts);
+    let (action, source, rule) = match decision {
+        Some(decision) => (decision.action, Source::Rule, Some(decision.rule)),
+        None => (shared.config.no_match, Source::Policy, None),
+    };
+    let (verdict, source) = match shared.config.mode {
+        Mode::Monitor => (Verdict::Accept, Source::Monitor),
+        Mode::Enforce => (
+            if action == Action::Allow {
+                Verdict::Accept
+            } else {
+                Verdict::Drop
+            },
+            source,
+        ),
+    };
+    let event = Event {
+        time_ms: now,
+        exe: process
+            .as_ref()
+            .map_or_else(|| Arc::from(""), |p| Arc::from(p.exe.as_str())),
+        host: None,
+        uid,
+        pid: owner.map_or(0, |o| o.pid),
+        protocol: headers.protocol,
+        address: headers.destination,
+        port: headers.destination_port,
+        context: context_code(facts.context),
+        action,
+        source,
+        rule,
+    };
+    if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
+        shared.events.try_send(event)
+    {
+        shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+    }
+    verdict
+}
+
+fn write_loop(store: &Mutex<Store>, events: &Receiver<Event>, retention: Duration) {
+    let mut batch = Vec::with_capacity(BATCH);
+    let mut last_prune = Instant::now();
+    loop {
+        batch.clear();
+        match events.recv_timeout(PRUNE_EVERY) {
+            Ok(event) => batch.push(event),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return,
+        }
+        let deadline = Instant::now() + BATCH_WAIT;
+        while batch.len() < BATCH {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match events.recv_timeout(left) {
+                Ok(event) => batch.push(event),
+                Err(_) => break,
+            }
+        }
+        let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
+        if !batch.is_empty()
+            && let Err(error) = store.record(&batch)
+        {
+            error!(%error, events = batch.len(), "recording events");
+        }
+        if last_prune.elapsed() >= PRUNE_EVERY {
+            last_prune = Instant::now();
+            let cutoff =
+                now_ms().saturating_sub(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
+            while let Ok(pruned) = store.prune(cutoff, PRUNE_CHUNK) {
+                if pruned < PRUNE_CHUNK as usize {
+                    break;
+                }
+            }
+        }
+    }
+}
