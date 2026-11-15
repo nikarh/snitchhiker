@@ -36,7 +36,7 @@ Commands:
                                   rule file to review and import
   prompts                         The connections waiting for an answer
   prompts watch                   Print prompts as they open and close (until interrupted)
-  prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|day|forever>]
+  prompts answer <id> <allow|deny|reject> [--suggestion <n>] [--duration <once|restart|hour|12h|forever>]
                                   Answer a prompt: the rule is made from suggestion n (0, the narrowest, by default)
   version                         Print the version
 
@@ -236,7 +236,7 @@ fn prompts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 Some("once") => v1::Duration::Once,
                 Some("restart") => v1::Duration::UntilRestart,
                 Some("hour") => v1::Duration::Hour,
-                Some("day") => v1::Duration::HalfDay,
+                Some("12h") => v1::Duration::HalfDay,
                 Some(other) => return Err(Error::Usage(format!("unknown duration `{other}`"))),
             };
             reject_rest(args)?;
