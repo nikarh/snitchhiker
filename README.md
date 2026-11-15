@@ -8,8 +8,10 @@ Snitchhiker is an interactive application firewall for Linux. Every outbound con
 that made it (and to its container or VM), matched against your rules, and when nothing matches you are asked: on the
 desktop, or on your phone, for any number of machines including headless servers.
 
-**Status: early development.** Nothing is usable yet. The design, the milestones and what is done are in
-[docs/plan.md](docs/plan.md).
+**Status: early development.** The daemon and its command line work: interception, attribution, rules, monitor and
+learn, prompts answered from the command line, and the client protocol. The desktop app, remote access and the
+Android app are in development. The documentation is in [site/](site/src/content/docs/) (published with the
+releases); the design, the milestones and what is done are in [docs/plan.md](docs/plan.md).
 
 ## Parts
 
