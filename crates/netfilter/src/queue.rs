@@ -3,7 +3,9 @@
 //! A [`Queue`] is bound to one queue number and is read by one thread. Packets are views into the receive buffer, and
 //! verdicts are written into a buffer of their own, so a steady stream of packets allocates nothing.
 
-use std::io;
+use std::fs::File;
+use std::io::{self, Write as _};
+use std::os::fd::AsFd as _;
 
 use netlink_sys::{Socket as RawSocket, SocketAddr, protocols::NETLINK_NETFILTER};
 
@@ -158,11 +160,51 @@ impl Queue {
         Ok(parse(&self.receive))
     }
 
+    /// A handle that decides this queue's packets from another thread (packets held for a prompt). The kernel takes
+    /// verdicts only from the socket the queue is bound to; the handle writes to a duplicate of its descriptor, which
+    /// is the same socket.
+    pub fn verdict_writer(&self) -> io::Result<VerdictWriter> {
+        Ok(VerdictWriter {
+            socket: File::from(self.socket.as_fd().try_clone_to_owned()?),
+            number: self.number,
+            buffer: Writer::new(),
+        })
+    }
+
     /// Decides what happens to a held packet.
     pub fn verdict(&mut self, id: u32, verdict: Verdict) -> io::Result<()> {
         encode_verdict(&mut self.send, self.number, id, verdict);
         self.socket.send(self.send.bytes(), 0)?;
         Ok(())
+    }
+}
+
+/// Decides a queue's packets from another thread: see [`Queue::verdict_writer`].
+#[derive(Debug)]
+pub struct VerdictWriter {
+    socket: File,
+    number: u16,
+    buffer: Writer,
+}
+
+impl VerdictWriter {
+    #[must_use]
+    pub fn number(&self) -> u16 {
+        self.number
+    }
+
+    pub fn verdict(&mut self, id: u32, verdict: Verdict) -> io::Result<()> {
+        encode_verdict(&mut self.buffer, self.number, id, verdict);
+        // One write is one datagram: one netlink message.
+        let written = (&self.socket).write(self.buffer.bytes())?;
+        if written == self.buffer.bytes().len() {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                "short netlink write",
+            ))
+        }
     }
 }
 
