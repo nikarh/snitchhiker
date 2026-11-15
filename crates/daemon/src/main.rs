@@ -134,6 +134,9 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
         };
     }
     let config = Config::load(&config_path)?;
+    // Everything the daemon creates (the database with the history and the audit trail, SQLite's journals, the
+    // pidfile) is root's alone, wherever it is put; the sockets get their modes set explicitly.
+    nix::sys::stat::umask(nix::sys::stat::Mode::from_bits_truncate(0o077));
 
     // Signals are taken synchronously in this thread; blocked before any thread starts, so none of them gets one.
     let mut signals = SigSet::empty();
