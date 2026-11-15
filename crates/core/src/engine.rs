@@ -72,12 +72,45 @@ enum Compiled {
     Cmdline(Vec<Pattern>),
     Parent(Vec<Pattern>),
     Uid(Vec<u32>),
-    Host(Vec<HostPattern>),
+    Host(Vec<HostMatcher>),
     Net(Vec<IpNet>),
     Port(Vec<(u16, u16)>),
     Protocol(Vec<u8>),
     Context(ContextKind),
     Not(Box<Compiled>),
+}
+
+/// A host pattern, ready to match: names and suffixes as they are, regular expressions compiled (case-insensitive,
+/// over the whole name).
+#[derive(Debug, Clone)]
+enum HostMatcher {
+    Pattern(HostPattern),
+    Regex(Pattern),
+}
+
+impl HostMatcher {
+    fn compile(pattern: &HostPattern) -> Result<Self, PatternError> {
+        Ok(match pattern {
+            HostPattern::Regex(regex) => Self::Regex(Pattern::compile(
+                &crate::pattern::PatternSource::Regex(format!("(?i){regex}")),
+            )?),
+            other => Self::Pattern(other.clone()),
+        })
+    }
+
+    fn matches(&self, host: &str) -> bool {
+        match self {
+            Self::Pattern(pattern) => pattern.matches(host),
+            Self::Regex(regex) => regex.matches(host.strip_suffix('.').unwrap_or(host), None),
+        }
+    }
+
+    fn specificity(&self) -> u32 {
+        match self {
+            Self::Pattern(pattern) => pattern.specificity(),
+            Self::Regex(_) => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -310,7 +343,12 @@ fn compile_condition(condition: &Condition) -> Result<Compiled, PatternError> {
         Condition::Cmdline(p) => Compiled::Cmdline(patterns(p)?),
         Condition::Parent(p) => Compiled::Parent(patterns(p)?),
         Condition::Uid(uids) => Compiled::Uid(uids.clone()),
-        Condition::Host(hosts) => Compiled::Host(hosts.clone()),
+        Condition::Host(hosts) => Compiled::Host(
+            hosts
+                .iter()
+                .map(HostMatcher::compile)
+                .collect::<Result<_, _>>()?,
+        ),
         Condition::Net(networks) => Compiled::Net(networks.iter().flat_map(expand).collect()),
         Condition::Port(ranges) => Compiled::Port(ranges.clone()),
         Condition::Protocol(protocols) => Compiled::Protocol(protocols.clone()),
@@ -335,7 +373,7 @@ fn specificity(condition: &Compiled) -> u32 {
         Compiled::Exe(p) | Compiled::App(p) | Compiled::Cmdline(p) | Compiled::Parent(p) => {
             p.iter().map(Pattern::specificity).min().unwrap_or(0) * 10
         }
-        Compiled::Host(p) => p.iter().map(HostPattern::specificity).min().unwrap_or(0),
+        Compiled::Host(p) => p.iter().map(HostMatcher::specificity).min().unwrap_or(0),
         Compiled::Net(nets) => nets
             .iter()
             .map(|n| u32::from(n.prefix_len()))
@@ -451,6 +489,32 @@ mod tests {
             set.decide(&facts("/usr/bin/wget", &["example.com"], 443)),
             None
         );
+    }
+
+    #[test]
+    fn regular_expressions_match_whole_host_names_in_any_case() {
+        let set = RuleSet::compile(
+            &[],
+            &[rule(
+                1,
+                Action::Allow,
+                vec![host(r"re:(.*\.)?example\.(com|org)")],
+            )],
+        )
+        .unwrap();
+        for name in ["example.com", "API.Example.org", "a.b.example.com."] {
+            assert!(
+                set.decide(&facts("/usr/bin/curl", &[name], 443)).is_some(),
+                "{name}"
+            );
+        }
+        for name in ["example.net", "notexample.com", "example.com.evil.net"] {
+            assert!(
+                set.decide(&facts("/usr/bin/curl", &[name], 443)).is_none(),
+                "{name}"
+            );
+        }
+        assert!(HostPattern::try_from("re:(".to_owned()).is_err());
     }
 
     #[test]

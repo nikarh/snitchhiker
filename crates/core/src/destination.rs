@@ -7,18 +7,21 @@ use std::str::FromStr;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
-/// A host name pattern: `example.com` (that name only) or `*.example.com` (any name under it, at any depth, but not
-/// `example.com` itself). Names compare case-insensitively, without a trailing dot.
+/// A host name pattern: `example.com` (that name only), `*.example.com` (any name under it, at any depth, but not
+/// `example.com` itself), or `re:<regular expression>` matched against the whole name. Names compare
+/// case-insensitively, without a trailing dot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub enum HostPattern {
     Exact(String),
     /// The suffix, with its leading dot: `.example.com`.
     Subdomains(String),
+    /// A regular expression over the whole name, as written (without `re:`); the engine compiles it.
+    Regex(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("invalid host pattern `{0}`: a name, or `*.` and a name")]
+#[error("invalid host pattern `{0}`: a name, `*.` and a name, or `re:` and a regular expression")]
 pub struct HostPatternError(String);
 
 impl HostPattern {
@@ -33,6 +36,8 @@ impl HostPattern {
                         .get(host.len() - suffix.len()..)
                         .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
             }
+            // Compiled and matched by the engine; uncompiled, a regular expression matches nothing.
+            Self::Regex(_) => false,
         }
     }
 
@@ -42,6 +47,7 @@ impl HostPattern {
         match self {
             Self::Exact(_) => 1000,
             Self::Subdomains(suffix) => u32::try_from(suffix.matches('.').count()).unwrap_or(0),
+            Self::Regex(_) => 0,
         }
     }
 }
@@ -50,6 +56,11 @@ impl TryFrom<String> for HostPattern {
     type Error = HostPatternError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
+        if let Some(regex) = text.strip_prefix("re:") {
+            return regex::Regex::new(regex)
+                .map(|_| Self::Regex(regex.to_owned()))
+                .map_err(|_| HostPatternError(text));
+        }
         let trimmed = text.trim().trim_end_matches('.').to_ascii_lowercase();
         let (wildcard, name) = match trimmed.strip_prefix("*.") {
             Some(name) => (true, name),
@@ -85,6 +96,7 @@ impl fmt::Display for HostPattern {
         match self {
             Self::Exact(name) => f.write_str(name),
             Self::Subdomains(suffix) => write!(f, "*{suffix}"),
+            Self::Regex(regex) => write!(f, "re:{regex}"),
         }
     }
 }

@@ -4,6 +4,7 @@
 pub mod destination;
 pub mod engine;
 pub mod generalize;
+pub mod opensnitch;
 pub mod pattern;
 pub mod rule;
 pub mod spec;
