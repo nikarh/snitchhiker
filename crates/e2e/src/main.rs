@@ -9,6 +9,7 @@ use std::time::Instant;
 
 mod attribution;
 mod daemon;
+mod escape;
 mod local_auth;
 mod names;
 mod nftables;
@@ -80,6 +81,19 @@ const SCENARIOS: &[Scenario] = &[
     (
         "daemon/service-starts-ready-and-stops",
         daemon::service_starts_ready_and_stops,
+    ),
+    ("escape/tcp-fast-open", escape::tcp_fast_open),
+    ("escape/udp-sendto", escape::udp_sendto),
+    ("escape/ipv6-and-mapped-ipv4", escape::ipv6_and_mapped_ipv4),
+    ("escape/icmp-ping-socket", escape::icmp_ping_socket),
+    (
+        "escape/raw-sockets-need-privileges",
+        escape::raw_sockets_need_privileges,
+    ),
+    ("escape/spoofed-process-name", escape::spoofed_process_name),
+    (
+        "escape/allowed-path-in-a-private-mount-namespace",
+        escape::allowed_path_in_a_private_mount_namespace,
     ),
     (
         "names/host-rules-match-resolved-names",
