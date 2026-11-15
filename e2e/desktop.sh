@@ -38,7 +38,7 @@ scripts/ui-vm.sh "${shots}/edit" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
-click 66 247
+click 66 283
 click 1095 113
 click 545 192
 click 955 665

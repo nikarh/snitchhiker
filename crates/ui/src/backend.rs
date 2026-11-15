@@ -41,6 +41,8 @@ pub enum Request {
         change: u64,
     },
     Explore(v1::Explore),
+    Connections,
+    Kill(v1::KillConnection),
 }
 
 /// What the node tells the app.
@@ -66,6 +68,8 @@ pub enum Update {
     Changes(Vec<v1::Change>),
     /// The Explorer's groups.
     Explored(Vec<v1::ExploreRow>),
+    /// The live connections.
+    Connections(Vec<v1::LiveConnection>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -203,12 +207,15 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         }))?,
         Request::Undo { change } => client.call(Method::Undo(v1::Undo { change: *change }))?,
         Request::Explore(explore) => client.call(Method::Explore(explore.clone()))?,
+        Request::Connections => client.call(Method::ListConnections(v1::ListConnections {}))?,
+        Request::Kill(kill) => client.call(Method::KillConnection(kill.clone()))?,
     };
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
         R::Rules(rules) => Some(Update::Rules(rules)),
         R::Changes(page) => Some(Update::Changes(page.changes)),
         R::Explored(page) => Some(Update::Explored(page.rows)),
+        R::Connections(list) => Some(Update::Connections(list.connections)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

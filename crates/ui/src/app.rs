@@ -15,6 +15,7 @@ use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use crate::backend::{Request, Update};
 use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
+use crate::views::connections::ConnectionsTable;
 use crate::views::editor;
 use crate::views::events::EventsTable;
 use crate::views::explorer::Explorer;
@@ -28,6 +29,7 @@ pub enum Page {
     Prompts,
     Events,
     Explorer,
+    Connections,
     Rules,
     History,
     Status,
@@ -41,6 +43,7 @@ pub struct App {
     rules: Entity<TableState<RulesTable>>,
     history: Entity<History>,
     explorer: Entity<Explorer>,
+    connections: Entity<TableState<ConnectionsTable>>,
     status: Entity<Status>,
     requests: mpsc::Sender<Request>,
 }
@@ -68,6 +71,13 @@ impl App {
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
+        let connections = cx.new(|cx| {
+            TableState::new(
+                ConnectionsTable::new(model.clone(), requests.clone()),
+                window,
+                cx,
+            )
+        });
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
         for request in [
@@ -104,7 +114,14 @@ impl App {
                             let _ = requests.send(Request::Status);
                             let _ = requests.send(Request::Changes);
                         }
-                        Changed::Events => app.events.update(cx, TableState::refresh),
+                        Changed::Events => {
+                            app.events.update(cx, TableState::refresh);
+                            // New connections: the live list is listed again while it is shown.
+                            if app.page == Page::Connections {
+                                let _ = requests.send(Request::Connections);
+                            }
+                        }
+                        Changed::Connections => app.connections.update(cx, TableState::refresh),
                         Changed::Rules => app.rules.update(cx, TableState::refresh),
                         Changed::Prompts if !app.model.read(cx).prompts.is_empty() => {
                             app.page = Page::Prompts;
@@ -131,6 +148,7 @@ impl App {
             rules,
             history,
             explorer,
+            connections,
             status,
             requests: own_requests,
         }
@@ -150,6 +168,9 @@ impl App {
                 app.page = page;
                 if page == Page::Explorer {
                     app.explorer.read(cx).query();
+                }
+                if page == Page::Connections {
+                    let _ = app.requests.send(Request::Connections);
                 }
                 cx.notify();
             }))
@@ -183,6 +204,12 @@ impl Render for App {
                             cx,
                         ))
                         .child(self.item(Page::Explorer, "Explorer".into(), IconName::ChartPie, cx))
+                        .child(self.item(
+                            Page::Connections,
+                            "Connections".into(),
+                            IconName::Globe,
+                            cx,
+                        ))
                         .child(self.item(Page::Rules, "Rules".into(), IconName::BookOpen, cx))
                         .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
                         .child(self.item(Page::Status, "Status".into(), IconName::Info, cx)),
@@ -212,6 +239,23 @@ impl Render for App {
             }
             Page::History => self.history.clone().into_any_element(),
             Page::Explorer => self.explorer.clone().into_any_element(),
+            Page::Connections => {
+                let requests = self.requests.clone();
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex().p_2().child(
+                            Button::new("refresh-connections")
+                                .small()
+                                .label("Refresh")
+                                .on_click(move |_, _, _| {
+                                    let _ = requests.send(Request::Connections);
+                                }),
+                        ),
+                    )
+                    .child(DataTable::new(&self.connections))
+                    .into_any_element()
+            }
             Page::Status => self.status.clone().into_any_element(),
         };
         h_flex()

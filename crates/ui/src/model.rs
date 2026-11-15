@@ -97,6 +97,8 @@ pub struct Model {
     pub changes: Vec<v1::Change>,
     /// The Explorer's groups, as last asked.
     pub explored: Vec<v1::ExploreRow>,
+    /// The live connections, as last listed.
+    pub connections: Vec<v1::LiveConnection>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -113,6 +115,7 @@ pub enum Changed {
     RulesOnNode,
     /// The prompts are to be shown.
     ShowPrompts,
+    Connections,
 }
 
 impl Model {
@@ -168,6 +171,10 @@ impl Model {
             Update::Explored(rows) => {
                 self.explored = rows;
                 Changed::Status
+            }
+            Update::Connections(connections) => {
+                self.connections = connections;
+                Changed::Connections
             }
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::Failed(error) => {
