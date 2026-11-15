@@ -67,6 +67,9 @@ Commands:
                                   Connections of the last n hours (default 24), allowed and blocked, and their bytes,
                                   grouped by program (default), host, port or user, busiest first; --where narrows
                                   them to one program, host, port or user
+  connections                     The live TCP connections and connected UDP sockets, with their programs
+  kill <tcp|udp> <local address:port> <remote address:port>
+                                  Close a live connection, as a reject does
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections
@@ -146,6 +149,8 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
         Some("history") => history(args, version),
+        Some("connections") => connections(args, version),
+        Some("kill") => kill_connection(args, version),
         Some("undo") => {
             let change: u64 = args.free_from_str()?;
             reject_rest(args)?;
@@ -285,6 +290,69 @@ fn history(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         _ => Err(unexpected()),
     }
+}
+
+/// `connections`.
+fn connections(args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    reject_rest(args)?;
+    match connect(version)?.call(Method::ListConnections(v1::ListConnections {}))? {
+        v1::response::Result::Connections(list) => {
+            let mut text = String::new();
+            for c in &list.connections {
+                let address = |bytes: &[u8], port: u32| {
+                    convert::address_from(bytes).map_or_else(String::new, |a| {
+                        std::net::SocketAddr::new(a, u16::try_from(port).unwrap_or(0)).to_string()
+                    })
+                };
+                let _ = writeln!(
+                    text,
+                    "{:<4} {:<11} {:<22} -> {:<22} uid {:<6} {}{}  out {} in {}",
+                    if c.protocol == 6 { "tcp" } else { "udp" },
+                    c.state,
+                    address(&c.local, c.local_port),
+                    address(&c.remote, c.remote_port),
+                    c.uid,
+                    if c.exe.is_empty() { "?" } else { &c.exe },
+                    if c.host.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", c.host)
+                    },
+                    c.bytes_out,
+                    c.bytes_in,
+                );
+            }
+            out(&text)
+        }
+        _ => Err(unexpected()),
+    }
+}
+
+/// `kill`.
+fn kill_connection(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let protocol: String = args.free_from_str()?;
+    let local: std::net::SocketAddr = args.free_from_str()?;
+    let remote: std::net::SocketAddr = args.free_from_str()?;
+    reject_rest(args)?;
+    let protocol = match protocol.as_str() {
+        "tcp" => 6,
+        "udp" => 17,
+        other => {
+            return Err(Error::Usage(format!(
+                "unknown protocol `{other}` (tcp, udp)"
+            )));
+        }
+    };
+    connect(version)?.call(Method::KillConnection(v1::KillConnection {
+        protocol,
+        local: convert::address(local.ip()),
+        local_port: u32::from(local.port()),
+        remote: convert::address(remote.ip()),
+        remote_port: u32::from(remote.port()),
+    }))?;
+    out("closed\n")
 }
 
 /// `folders`: list, add, rename and delete folders.

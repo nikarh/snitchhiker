@@ -319,6 +319,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListAudit(_)
             | Method::ListChanges(_)
             | Method::Explore(_)
+            | Method::ListConnections(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -360,6 +361,11 @@ fn handle(
         Method::ListChanges(list) => list_changes(daemon, &list),
         Method::Undo(request) => undo(daemon, app, request),
         Method::Explore(explore) => self::explore(daemon, &explore),
+        Method::ListConnections(_) => match daemon.connections() {
+            Ok(connections) => R::Connections(v1::ConnectionList { connections }),
+            Err(e) => internal(e),
+        },
+        Method::KillConnection(kill) => kill_connection(daemon, &kill),
         Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
         Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),
@@ -1227,6 +1233,37 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
             })
             .collect(),
     })
+}
+
+fn kill_connection(daemon: &Daemon, kill: &v1::KillConnection) -> v1::response::Result {
+    let (Some(local), Some(remote)) = (
+        convert::address_from(&kill.local),
+        convert::address_from(&kill.remote),
+    ) else {
+        return error(v1::ErrorCode::Invalid, "addresses are 4 or 16 bytes");
+    };
+    let (Ok(protocol), Ok(local_port), Ok(remote_port)) = (
+        u8::try_from(kill.protocol),
+        u16::try_from(kill.local_port),
+        u16::try_from(kill.remote_port),
+    ) else {
+        return error(v1::ErrorCode::Invalid, "not a protocol or a port");
+    };
+    let id = snitchhiker_netfilter::sockdiag::SocketId {
+        protocol,
+        local,
+        local_port,
+        remote,
+        remote_port,
+    };
+    match daemon.kill(&id) {
+        Ok(()) => v1::response::Result::Done(v1::Done {}),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => error(
+            v1::ErrorCode::NotFound,
+            "no such connection (it may have closed)",
+        ),
+        Err(e) => internal(e),
+    }
 }
 
 #[cfg(test)]

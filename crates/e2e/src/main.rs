@@ -163,6 +163,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::changes_are_recorded_and_undone,
     ),
     (
+        "daemon/connections-are-listed-and-killed",
+        daemon::connections_are_listed_and_killed,
+    ),
+    (
         "daemon/opensnitch-rules-import-and-apply",
         daemon::opensnitch_rules_import_and_apply,
     ),

@@ -217,6 +217,78 @@ impl Daemon {
         self.store.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The live TCP connections and connected UDP sockets, each with its program as the attribution programs
+    /// recorded it when it opened (unknown for inbound sockets, and for ones older than the daemon).
+    pub fn connections(&self) -> std::io::Result<Vec<v1::LiveConnection>> {
+        let sockets = SockDiag::open()?.list()?;
+        let bytes: HashMap<u64, (u64, u64)> = self
+            .shared
+            .attribution
+            .socket_bytes()
+            .map(|(cookie, sent, read)| (cookie, (sent, read)))
+            .collect();
+        let mut processes = ProcessCache::new(self.shared.host);
+        let names = self
+            .shared
+            .names
+            .read()
+            .unwrap_or_else(PoisonError::into_inner);
+        let now = now_ms();
+        let plain = |address: std::net::IpAddr| match address {
+            std::net::IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(address, std::net::IpAddr::V4),
+            v4 @ std::net::IpAddr::V4(_) => v4,
+        };
+        Ok(sockets
+            .iter()
+            .map(|socket| {
+                let remote = plain(socket.id.remote);
+                let key = FlowKey {
+                    netns: self.shared.netns,
+                    protocol: socket.id.protocol,
+                    source_port: socket.id.local_port,
+                    destination: remote,
+                    destination_port: socket.id.remote_port,
+                };
+                let owner = self.shared.attribution.owner(&key);
+                let process = owner.and_then(|o| processes.get(o.pid, o.start_boottime));
+                let pid = owner.map_or(0, |o| o.pid);
+                let (sent, read) = bytes.get(&socket.cookie).copied().unwrap_or_default();
+                v1::LiveConnection {
+                    protocol: u32::from(socket.id.protocol),
+                    local: convert::address(plain(socket.id.local)),
+                    local_port: u32::from(socket.id.local_port),
+                    remote: convert::address(remote),
+                    remote_port: u32::from(socket.id.remote_port),
+                    state: snitchhiker_netfilter::sockdiag::state_name(
+                        socket.id.protocol,
+                        socket.state,
+                    )
+                    .to_owned(),
+                    uid: owner.map_or(socket.uid, |o| o.uid),
+                    pid,
+                    exe: process
+                        .as_ref()
+                        .map_or_else(String::new, |p| p.exe.to_string()),
+                    host: names
+                        .lookup(pid, remote, now)
+                        .first()
+                        .map_or_else(String::new, ToString::to_string),
+                    bytes_out: sent,
+                    bytes_in: read,
+                    context: convert::context(
+                        process.as_ref().map_or(ContextKind::Host, |p| p.context),
+                    )
+                    .into(),
+                }
+            })
+            .collect())
+    }
+
+    /// Closes a live socket (as `reject` does): its program's next call fails with `ECONNABORTED`.
+    pub fn kill(&self, id: &SocketId) -> std::io::Result<()> {
+        SockDiag::open()?.destroy(id)
+    }
+
     /// Answers a prompt: makes a rule of the chosen suggestion (or `conditions`) unless `duration` is once, then
     /// decides every connection waiting on it. Returns the rule made, if any.
     pub fn answer_prompt(

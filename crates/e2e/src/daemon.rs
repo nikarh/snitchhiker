@@ -597,3 +597,53 @@ pub fn changes_are_recorded_and_undone() -> Result<(), String> {
         &found,
     )
 }
+
+/// A live connection is listed with its program, and killing it makes the program's next send fail.
+pub fn connections_are_listed_and_killed() -> Result<(), String> {
+    let (listener, port) = listener()?;
+    let mut daemon = Running::start("connections", "mode = \"monitor\"\n")?;
+    let script = format!(
+        "import socket, time, sys\ns = socket.create_connection(('127.0.0.1', {port}))\nprint(s.getsockname()[1], flush=True)\n\
+         time.sleep(3)\ntry:\n    s.send(b'x')\n    s.send(b'y')\n    print('alive', flush=True)\nexcept OSError as e:\n    print('killed', e, flush=True)"
+    );
+    let mut python = Command::new("runuser")
+        .args(["-u", "mallory", "--", "python3", "-c", &script])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let _accepted = listener.accept().map_err(|e| e.to_string())?;
+    let mut lines = std::io::BufRead::lines(std::io::BufReader::new(
+        python.stdout.take().ok_or("no stdout")?,
+    ));
+    let local_port = lines.next().and_then(Result::ok).unwrap_or_default();
+    let listed = daemon.cli(&["connections"])?;
+    let killed = daemon.cli(&[
+        "kill",
+        "tcp",
+        &format!("127.0.0.1:{local_port}"),
+        &format!("127.0.0.1:{port}"),
+    ]);
+    let outcome = lines.next().and_then(Result::ok).unwrap_or_default();
+    let _ = python.wait();
+    daemon.stop()?;
+    let found = format!("{listed}kill: {killed:?}\npython: {outcome}");
+    let line = listed
+        .lines()
+        // The connecting end: python's port on the local side (the listener's end has it on the remote side).
+        .find(|line| {
+            line.split("->")
+                .next()
+                .is_some_and(|local| local.contains(&format!("127.0.0.1:{local_port} ")))
+        })
+        .unwrap_or_default();
+    check(
+        line.contains("established") && line.contains("python3") && line.contains("uid 1001"),
+        "the connection isn't listed with its program and user",
+        &found,
+    )?;
+    check(
+        killed.is_ok() && outcome.starts_with("killed"),
+        "killing the connection didn't make the program's next send fail",
+        &found,
+    )
+}

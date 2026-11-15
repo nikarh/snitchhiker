@@ -98,6 +98,8 @@ message Request {
     ListChanges list_changes = 28;
     Undo undo = 29;
     Explore explore = 30;
+    ListConnections list_connections = 31;
+    KillConnection kill_connection = 32;
   }
 }
 
@@ -118,6 +120,7 @@ message Response {
     FolderAdded folder_added = 25;
     ChangePage changes = 26;
     ExplorePage explored = 27;
+    ConnectionList connections = 28;
   }
 }
 
@@ -608,4 +611,43 @@ message ExploreRow {
 
 message ExplorePage {
   repeated ExploreRow rows = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Connections: the machine's live TCP connections and connected UDP sockets, with their programs.
+
+message ListConnections {}
+
+message LiveConnection {
+  uint32 protocol = 1;
+  // 4 bytes (IPv4) or 16 (IPv6).
+  bytes local = 2;
+  uint32 local_port = 3;
+  bytes remote = 4;
+  uint32 remote_port = 5;
+  // "established", "opening", "closing", "connected" (UDP), ...
+  string state = 6;
+  uint32 uid = 7;
+  // 0, and exe empty, for sockets whose opening the node didn't see: inbound ones (accepted), and ones older than
+  // the daemon.
+  uint32 pid = 8;
+  string exe = 9;
+  // The name the program looked up for the remote address, if any.
+  string host = 10;
+  uint64 bytes_out = 11;
+  uint64 bytes_in = 12;
+  Context context = 13;
+}
+
+message ConnectionList {
+  repeated LiveConnection connections = 1;
+}
+
+// Closes a live socket, as a reject does: its program's next call fails.
+message KillConnection {
+  uint32 protocol = 1;
+  bytes local = 2;
+  uint32 local_port = 3;
+  bytes remote = 4;
+  uint32 remote_port = 5;
 }
