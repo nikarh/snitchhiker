@@ -11,7 +11,8 @@ use rusqlite::{Connection, OptionalExtension as _, params};
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
 
 /// The schema, applied in order; the index of the last one applied is kept in `PRAGMA user_version`.
-const MIGRATIONS: &[&str] = &[r"
+const MIGRATIONS: &[&str] = &[
+    r"
 CREATE TABLE folders (
     id INTEGER PRIMARY KEY,
     parent INTEGER REFERENCES folders(id) ON DELETE CASCADE,
@@ -61,7 +62,14 @@ CREATE TABLE events (
 CREATE INDEX events_time ON events(time_ms);
 CREATE INDEX events_exe ON events(exe, seq);
 CREATE INDEX events_host ON events(host, seq);
-"];
+",
+    r"
+ALTER TABLE events ADD COLUMN cookie INTEGER;
+ALTER TABLE events ADD COLUMN bytes_out INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE events ADD COLUMN bytes_in INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX events_cookie ON events(cookie, seq) WHERE cookie IS NOT NULL;
+",
+];
 
 /// What kind of string a `strings` row is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -98,6 +106,8 @@ pub struct Event {
     pub action: Action,
     pub source: Source,
     pub rule: Option<RuleId>,
+    /// The socket's cookie, to attribute its bytes to this event; `None` when the socket isn't known.
+    pub cookie: Option<u64>,
 }
 
 /// Named statements; the only SQL the daemon runs.
@@ -127,15 +137,22 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     (
         "events.insert",
-        "INSERT INTO events (time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        "INSERT INTO events (time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule,
+                             cookie)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
     ),
     (
         "events.page",
         "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
-                e.action, e.source, e.rule
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.seq < ?1 ORDER BY e.seq DESC LIMIT ?2",
+    ),
+    // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
+    (
+        "events.bytes",
+        "UPDATE events SET bytes_out = ?2, bytes_in = ?3
+         WHERE seq = (SELECT seq FROM events WHERE cookie = ?1 ORDER BY seq DESC LIMIT 1)",
     ),
     (
         "events.prune",
@@ -173,6 +190,8 @@ pub struct StoredEvent {
     pub action: Action,
     pub source: u8,
     pub rule: Option<RuleId>,
+    pub bytes_out: u64,
+    pub bytes_in: u64,
 }
 
 pub struct Store {
@@ -366,6 +385,7 @@ impl Store {
                     action_code(event.action),
                     event.source as u8,
                     event.rule.map(db_id),
+                    event.cookie.map(db_id),
                 ])?;
         }
         transaction.commit()?;
@@ -399,9 +419,24 @@ impl Store {
                 action: action_from(row.get(10)?),
                 source: row.get(11)?,
                 rule: row.get::<_, Option<i64>>(12)?.map(id_of),
+                bytes_out: id_of(row.get(13)?),
+                bytes_in: id_of(row.get(14)?),
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Records a socket's byte counts (totals so far) on its newest event.
+    pub fn record_bytes(&mut self, counts: &[(u64, u64, u64)]) -> Result<(), Error> {
+        let transaction = self.connection.unchecked_transaction()?;
+        {
+            let mut statement = self.connection.prepare_cached(sql("events.bytes")?)?;
+            for &(cookie, sent, read) in counts {
+                statement.execute(params![db_id(cookie), db_id(sent), db_id(read)])?;
+            }
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     /// Deletes up to `limit` of the events older than `before_ms`; returns how many. Called in small chunks, so pruning
@@ -496,6 +531,7 @@ mod tests {
             action: Action::Allow,
             source: Source::Rule,
             rule: Some(1),
+            cookie: Some(seq),
         }
     }
 
@@ -556,6 +592,20 @@ mod tests {
             .query_row("SELECT count(*) FROM strings", [], |r| r.get(0))
             .unwrap();
         assert_eq!(strings, 3);
+    }
+
+    #[test]
+    fn bytes_go_to_the_sockets_newest_event() {
+        let mut store = Store::in_memory().unwrap();
+        let mut first = event(1, "/usr/bin/curl", None);
+        let mut second = event(2, "/usr/bin/curl", None);
+        first.cookie = Some(77);
+        second.cookie = Some(77);
+        store.record(&[first, second]).unwrap();
+        store.record_bytes(&[(77, 1000, 5000)]).unwrap();
+        let page = store.events(i64::MAX, 10).unwrap();
+        assert_eq!((page[0].bytes_out, page[0].bytes_in), (1000, 5000));
+        assert_eq!((page[1].bytes_out, page[1].bytes_in), (0, 0));
     }
 
     #[test]

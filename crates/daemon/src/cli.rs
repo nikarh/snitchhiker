@@ -277,7 +277,7 @@ fn list_events(store: &Store, limit: u32) -> Result<(), Error> {
     for event in store.events(i64::MAX, limit)? {
         let _ = writeln!(
             text,
-            "{:>8}  {:<6} uid {:<6} {} -> {}:{} proto {}{}",
+            "{:>8}  {:<6} uid {:<6} {} -> {}:{} proto {} out {} in {}{}",
             event.seq,
             format!("{:?}", event.action).to_lowercase(),
             event.uid,
@@ -289,6 +289,8 @@ fn list_events(store: &Store, limit: u32) -> Result<(), Error> {
             event.host.as_deref().unwrap_or(&event.address.to_string()),
             event.port,
             event.protocol,
+            event.bytes_out,
+            event.bytes_in,
             event
                 .rule
                 .map_or_else(String::new, |r| format!(" (rule {r})")),

@@ -4,6 +4,7 @@
 //! the rules (an immutable set, swapped atomically on change) → verdict, and an event to the writer's queue. Nothing
 //! on it waits for the database, and a full event queue drops the event (counted), never the verdict.
 
+use std::collections::HashMap;
 use std::os::unix::fs::MetadataExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
@@ -36,6 +37,8 @@ const BATCH_WAIT: Duration = Duration::from_millis(100);
 /// How much of a DNS answer is copied: a whole UDP answer, as large as resolvers send without EDNS tricks.
 const DNS_COPY: u32 = 4096;
 const DNS_PORT: u16 = 53;
+/// How often byte counts are written to the history.
+const BYTES_EVERY: Duration = Duration::from_secs(5);
 /// How often old history is pruned, and how many rows per chunk.
 const PRUNE_EVERY: Duration = Duration::from_secs(600);
 const PRUNE_CHUNK: u32 = 10_000;
@@ -137,10 +140,11 @@ impl Daemon {
         }
         {
             let store = Arc::clone(&store);
+            let shared = Arc::clone(&shared);
             let retention = Duration::from_secs(u64::from(shared.config.retention_days) * 86_400);
             thread::Builder::new()
                 .name("writer".to_owned())
-                .spawn(move || write_loop(&store, &receiver, retention))?;
+                .spawn(move || write_loop(&shared, &store, &receiver, retention))?;
         }
         Ok(Self {
             shared,
@@ -368,6 +372,7 @@ fn decide(
         action,
         source,
         rule,
+        cookie: owner.map(|o| o.cookie),
     };
     if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
         shared.events.try_send(event)
@@ -384,12 +389,20 @@ fn decide(
     (verdict, reject)
 }
 
-fn write_loop(store: &Mutex<Store>, events: &Receiver<Event>, retention: Duration) {
+fn write_loop(
+    shared: &Shared,
+    store: &Mutex<Store>,
+    events: &Receiver<Event>,
+    retention: Duration,
+) {
     let mut batch = Vec::with_capacity(BATCH);
     let mut last_prune = Instant::now();
+    let mut last_bytes = Instant::now();
+    let mut counted: HashMap<u64, (u64, u64)> = HashMap::new();
+    let mut changed: Vec<(u64, u64, u64)> = Vec::new();
     loop {
         batch.clear();
-        match events.recv_timeout(PRUNE_EVERY) {
+        match events.recv_timeout(BYTES_EVERY) {
             Ok(event) => batch.push(event),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
@@ -407,6 +420,23 @@ fn write_loop(store: &Mutex<Store>, events: &Receiver<Event>, retention: Duratio
             && let Err(error) = store.record(&batch)
         {
             error!(%error, events = batch.len(), "recording events");
+        }
+        if last_bytes.elapsed() >= BYTES_EVERY {
+            last_bytes = Instant::now();
+            changed.clear();
+            let mut live: HashMap<u64, (u64, u64)> = HashMap::with_capacity(counted.len());
+            for (cookie, sent, read) in shared.attribution.socket_bytes() {
+                if counted.get(&cookie) != Some(&(sent, read)) {
+                    changed.push((cookie, sent, read));
+                }
+                live.insert(cookie, (sent, read));
+            }
+            counted = live;
+            if !changed.is_empty()
+                && let Err(error) = store.record_bytes(&changed)
+            {
+                error!(%error, "recording byte counts");
+            }
         }
         if last_prune.elapsed() >= PRUNE_EVERY {
             last_prune = Instant::now();
