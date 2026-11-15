@@ -1,0 +1,17 @@
+[package]
+name = "snitchhiker-netfilter"
+description = "nf_tables and NFQUEUE over netlink, without libnftables, for Snitchhiker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+netlink-sys = "0.9.0"
