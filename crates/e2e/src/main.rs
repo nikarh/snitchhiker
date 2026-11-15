@@ -14,6 +14,7 @@ mod local_auth;
 mod names;
 mod nftables;
 mod perf;
+mod pointer;
 mod prompts;
 mod queue;
 mod stepup;
@@ -226,6 +227,19 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--click"), Some(x), Some(y)) = (
+        args.get(1).map(String::as_str),
+        args.get(2).and_then(|x| x.parse().ok()),
+        args.get(3).and_then(|y| y.parse().ok()),
+    ) {
+        return match pointer::click(x, y) {
+            Ok(()) => std::process::ExitCode::SUCCESS,
+            Err(error) => {
+                let _ = writeln!(io::stderr(), "click: {error}");
+                std::process::ExitCode::FAILURE
+            }
+        };
     }
     if let (Some("--hand-off"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
         return local_auth::hand_off(socket);

@@ -2,20 +2,23 @@
 # Runs the desktop app in the node VM (e2e/vm.sh) against the daemon there, as an ordinary user under a headless sway,
 # and takes a screenshot of it: installed setgid and registered as a trusted client, the way its package installs it.
 #
-#   scripts/ui-vm.sh <screenshot.png> [setup] [daemon.toml]
+#   scripts/ui-vm.sh <output dir> [setup] [daemon.toml]
 #
-# setup: a shell snippet run as root in the VM once the app is up (to make history, or connections to prompt for).
+# setup: a shell snippet run as root in the VM once the app is up (to make history, or connections to prompt for). It
+# can call `click <x> <y>` (a click of the virtual pointer, through snitchhiker-e2e) and `shot <name>` (a screenshot,
+# <name>.png in the output dir); a screenshot `final.png` is taken after it.
 # daemon.toml: settings for the daemon meanwhile; the packaged file is put back afterwards.
 #
 # Nothing of this runs on the host but the build and the copies.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-out=${1:?usage: scripts/ui-vm.sh <screenshot.png> [setup]}
+out=${1:?usage: scripts/ui-vm.sh <output dir> [setup] [daemon.toml]}
 setup=${2:-}
 config=${3:-}
-cargo build -q --release -p snitchhiker-ui
+cargo build -q --release -p snitchhiker-ui -p snitchhiker-e2e
 e2e/vm.sh node up >/dev/null
 e2e/vm.sh node put target/release/snitchhiker-ui /tmp/snitchhiker-ui
+e2e/vm.sh node put target/release/snitchhiker-e2e /tmp/snitchhiker-e2e-ui
 e2e/vm.sh node ssh "sudo bash -s" <<SCRIPT
 set -euo pipefail
 install -o root -g snitchhiker-ui -m 2755 /tmp/snitchhiker-ui /usr/bin/snitchhiker-ui
@@ -41,11 +44,18 @@ runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WLR_BACKENDS=headless 
   ' </dev/null >/dev/null 2>&1 &
 for _ in \$(seq 50); do [ -S /run/user/\$uid/wayland-1 ] && break; sleep 0.1; done
 sleep 4
+rm -rf /tmp/ui-shots && install -d -m 755 /tmp/ui-shots
+session() { runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=wayland-1 "\$@"; }
+click() { session /tmp/snitchhiker-e2e-ui --click "\$1" "\$2"; sleep 1; }
+shot() { session grim - > "/tmp/ui-shots/\$1.png"; }
 ${setup}
 sleep 2
-runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=wayland-1 grim /tmp/ui.png
+shot final
 cp /tmp/daemon.toml.packaged /etc/snitchhiker/daemon.toml
 systemctl restart snitchhikerd
 SCRIPT
-e2e/vm.sh node ssh "cat /tmp/ui.png" > "${out}"
+mkdir -p "${out}"
+for shot in $(e2e/vm.sh node ssh "ls /tmp/ui-shots"); do
+  e2e/vm.sh node ssh "cat /tmp/ui-shots/${shot}" > "${out}/${shot}"
+done
 e2e/vm.sh node ssh "cat /tmp/ui.log" | tail -20 >&2
