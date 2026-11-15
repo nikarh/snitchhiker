@@ -91,9 +91,58 @@ jobs:
           if-no-files-found: error
           retention-days: 3
 
+  android:
+    name: Build (Android)
+    if: >-
+      github.repository_owner == 'nikarh'
+      && (github.event_name != 'release' || startsWith(github.event.release.tag_name, 'v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The app signing key.
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: android
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install_args: java gradle http:android-cmdline-tools cargo:cargo-ndk
+      - run: mise run android:sdk
+      # Both flavours, signed with the release key: `foss` (UnifiedPush, for F-Droid and direct installs) and `play`
+      # (FCM, with the Firebase project in the FCM_* variables when there is one).
+      - name: Build
+        env:
+          SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          FCM_PROJECT_ID: ${{ vars.FCM_PROJECT_ID }}
+          FCM_APP_ID: ${{ vars.FCM_APP_ID }}
+          FCM_API_KEY: ${{ vars.FCM_API_KEY }}
+          FCM_SENDER_ID: ${{ vars.FCM_SENDER_ID }}
+        run: |
+          set -euo pipefail
+          keystore=$(mktemp)
+          base64 -d <<< "$ANDROID_KEYSTORE_BASE64" > "$keystore"
+          export ANDROID_KEYSTORE=$keystore ANDROID_KEY_ALIAS=snitchhiker ANDROID_KEY_PASSWORD=$ANDROID_KEYSTORE_PASSWORD
+          mise run android:build
+          rm -f "$keystore"
+          mkdir -p out
+          cp android/app/build/outputs/apk/foss/release/app-foss-release.apk out/snitchhiker-android-foss.apk
+          cp android/app/build/outputs/apk/play/release/app-play-release.apk out/snitchhiker-android-play.apk
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-android
+          path: out/*
+          if-no-files-found: error
+          retention-days: 3
+
   upload:
     name: Sign and upload
-    needs: [build]
+    needs: [build, android]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     environment: release
