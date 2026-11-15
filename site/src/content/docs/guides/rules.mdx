@@ -64,7 +64,7 @@ For a process in a container, `exe` is the path inside the container.
 
 ### Hosts and networks
 
-A `host` pattern is a name (that name only) or `*.` and a name (any name below it at any depth, not the name itself). Names compare case-insensitively.
+A `host` pattern is a name (that name only), `*.` and a name (any name below it at any depth, not the name itself), or `re:` and a regular expression matched against the whole name. Names compare case-insensitively, regular expressions included.
 
 Connections are made to addresses, so a `host` condition holds when the address is known by that name. Snitchhiker learns names from the DNS answers processes receive (see [How it works](/internals/how-it-works/#names)). A connection to an address nobody looked up has no name, and no `host` condition holds for it; use `net` for those.
 

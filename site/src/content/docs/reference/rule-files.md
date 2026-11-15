@@ -56,7 +56,7 @@ Every condition is a list; it holds when any of its values does, and a rule hold
 | `parent` | patterns |
 | `app` | patterns (reserved) |
 | `uid` | numbers |
-| `host` | `name` or `*.name` |
+| `host` | `name`, `*.name`, or `re:` and a regular expression over the whole name (case-insensitive) |
 | `net` | addresses, CIDR ranges, aliases (`loopback`, `lan`, `multicast`, `imds`, `cgnat`) |
 | `port` | `"443"` or `"8000-8999"`, as strings |
 | `protocol` | `"tcp"`, `"udp"`, `"icmp"`, `"icmpv6"` or a protocol number as a string |

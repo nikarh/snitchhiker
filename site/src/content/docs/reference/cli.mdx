@@ -32,6 +32,7 @@ The daemon's version, mode and policy, and its counters: rules in effect, connec
 | `rules enable <id>`, `rules disable <id>` | Switch a rule on or off |
 | `rules import <file>` | Add the rules of a [rule file](/reference/rule-files/), in a new folder (named by the file's `[folder]`, or after the file) |
 | `rules export` | Print the stored rules as a rule file |
+| `rules import-opensnitch [<dir>] [--dry-run]` | Import OpenSnitch's rules (default `/etc/opensnitchd/rules`) into a folder `OpenSnitch`; see [Moving from OpenSnitch](/guides/opensnitch/) |
 
 Locked rules (the System folder and the files in `rules.d`) can't be deleted, switched or changed from here.
 
