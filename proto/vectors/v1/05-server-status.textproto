@@ -1,0 +1,13 @@
+# message: snitchhiker.v1.ServerFrame
+response {
+  id: 1
+  status {
+    daemon_version: "0.1.0"
+    mode: MODE_ENFORCE
+    no_match: POLICY_ASK
+    decided: 1234
+    rules: 12
+    pending_prompts: 1
+    clients: 2
+  }
+}

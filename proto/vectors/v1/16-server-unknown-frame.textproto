@@ -1,0 +1,4 @@
+# message: snitchhiker.v1.ServerFrame
+# decode-only
+# A frame of a kind this version doesn't know (field 20 of ServerFrame, an empty message): it decodes to a frame with
+# no body, which a client ignores.

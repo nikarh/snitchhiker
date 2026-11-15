@@ -1,0 +1,4 @@
+# message: snitchhiker.v1.ServerFrame
+refusal {
+  reason: "this node speaks protocol 1, not 2"
+}

@@ -1,0 +1,24 @@
+# message: snitchhiker.v1.ServerFrame
+# One connection to 2001:db8::1 on port 443, decided by rule 18.
+response {
+  id: 6
+  events {
+    events {
+      seq: 99
+      time_ms: 1763200001000
+      exe: "/usr/bin/curl"
+      host: "api.example.com"
+      uid: 1000
+      pid: 4242
+      protocol: 6
+      address: "\040\001\015\270\000\000\000\000\000\000\000\000\000\000\000\001"
+      port: 443
+      context: CONTEXT_HOST
+      action: ACTION_ALLOW
+      source: SOURCE_RULE
+      rule: 18
+      bytes_out: 517
+      bytes_in: 4096
+    }
+  }
+}

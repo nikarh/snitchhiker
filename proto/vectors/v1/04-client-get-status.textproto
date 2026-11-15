@@ -1,0 +1,5 @@
+# message: snitchhiker.v1.ClientFrame
+request {
+  id: 1
+  get_status {}
+}

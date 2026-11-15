@@ -1,0 +1,37 @@
+# message: snitchhiker.v1.ServerFrame
+# A prompt for curl run by uid 1000 connecting to 192.0.2.10:443 over TCP.
+notice {
+  subscription: 1
+  prompt {
+    id: 7
+    created_ms: 1763200000000
+    expires_ms: 1763200030000
+    exe: "/usr/bin/curl"
+    cmdline: "curl https://api.example.com/"
+    uid: 1000
+    user: "ada"
+    pid: 4242
+    hosts: "api.example.com"
+    address: "\300\000\002\012"
+    port: 443
+    protocol: 6
+    context: CONTEXT_HOST
+    waiting: 1
+    suggestions {
+      label: "curl → api.example.com:443"
+      conditions {
+        exe: "/usr/bin/curl"
+        host: "api.example.com"
+        port: "443"
+        protocol: "tcp"
+      }
+    }
+    suggestions {
+      label: "curl → anywhere"
+      conditions {
+        exe: "/usr/bin/curl"
+      }
+      broad: true
+    }
+  }
+}

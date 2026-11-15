@@ -1,0 +1,8 @@
+# message: snitchhiker.v1.ServerFrame
+welcome {
+  daemon_version: "0.1.0"
+  node_name: "workstation"
+  node_epoch: 1
+  capabilities: "prompts"
+  role: ROLE_ADMIN
+}

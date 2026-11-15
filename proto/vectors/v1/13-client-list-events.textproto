@@ -1,0 +1,7 @@
+# message: snitchhiker.v1.ClientFrame
+request {
+  id: 6
+  list_events {
+    limit: 50
+  }
+}

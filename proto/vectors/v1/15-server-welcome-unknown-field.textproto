@@ -1,0 +1,10 @@
+# message: snitchhiker.v1.ServerFrame
+# decode-only
+# 02-server-welcome with field 99 (a varint, 1) added to the Welcome, as a newer node may send: a decoder skips it.
+welcome {
+  daemon_version: "0.1.0"
+  node_name: "workstation"
+  node_epoch: 1
+  capabilities: "prompts"
+  role: ROLE_ADMIN
+}

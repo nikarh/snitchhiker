@@ -23,4 +23,6 @@ prost-build = "0.14.6"
 protox = "0.10.0"
 
 [dev-dependencies]
+prost-reflect = { version = "0.16.5", features = ["text-format"] }
+protox = "0.10.0"
 toml = "1.2.1"

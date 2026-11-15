@@ -1,0 +1,7 @@
+# message: snitchhiker.v1.ClientFrame
+request {
+  id: 4
+  subscribe {
+    topic: TOPIC_PROMPTS
+  }
+}

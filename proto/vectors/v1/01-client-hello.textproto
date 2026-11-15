@@ -1,0 +1,7 @@
+# message: snitchhiker.v1.ClientFrame
+# The first frame after the preamble.
+hello {
+  app: "desktop"
+  app_version: "0.1.0"
+  capabilities: "prompts"
+}

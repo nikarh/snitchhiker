@@ -1,0 +1,18 @@
+# message: snitchhiker.v1.ClientFrame
+request {
+  id: 2
+  add_rule {
+    rule {
+      name: "curl API"
+      enabled: true
+      action: ACTION_ALLOW
+      tier: TIER_NORMAL
+      conditions {
+        exe: "/usr/bin/curl"
+        host: "api.example.com"
+        port: "443"
+        protocol: "tcp"
+      }
+    }
+  }
+}

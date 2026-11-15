@@ -1,0 +1,8 @@
+# message: snitchhiker.v1.ServerFrame
+response {
+  id: 3
+  error {
+    code: ERROR_CODE_LOCKED
+    message: "a managed rule: change it in its file"
+  }
+}

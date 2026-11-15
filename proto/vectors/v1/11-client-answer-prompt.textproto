@@ -1,0 +1,9 @@
+# message: snitchhiker.v1.ClientFrame
+request {
+  id: 5
+  answer_prompt {
+    id: 7
+    action: ACTION_ALLOW
+    duration: DURATION_FOREVER
+  }
+}

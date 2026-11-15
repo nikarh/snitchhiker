@@ -1,0 +1,10 @@
+# message: snitchhiker.v1.ServerFrame
+notice {
+  subscription: 1
+  prompt_resolved {
+    id: 7
+    action: ACTION_ALLOW
+    by: "desktop"
+    rule: 18
+  }
+}
