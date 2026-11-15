@@ -1,14 +1,23 @@
-//! Closing a local socket by its addresses (`sock_diag` `SOCK_DESTROY`): how a rejected connection fails at once
-//! instead of timing out. The program's `connect()` or next send returns `ECONNABORTED`.
+//! Local sockets through `sock_diag`: listing the live connections (`SOCK_DIAG_BY_FAMILY` dumps), and closing one by its
+//! addresses (`SOCK_DESTROY`), which is how a rejected connection fails at once instead of timing out: the program's
+//! `connect()` or next send returns `ECONNABORTED`.
 
 use std::io;
 use std::net::IpAddr;
 
 use netlink_sys::{Socket as RawSocket, SocketAddr, protocols::NETLINK_SOCK_DIAG};
 
-use crate::netlink::{NLM_F_ACK, NLM_F_REQUEST, NLMSG_ERROR, ack_error, messages};
+use crate::netlink::{NLM_F_ACK, NLM_F_REQUEST, NLMSG_DONE, NLMSG_ERROR, ack_error, messages};
 
+const SOCK_DIAG_BY_FAMILY: u16 = 20;
 const SOCK_DESTROY: u16 = 21;
+const NLM_F_DUMP: u16 = 0x300;
+/// TCP connections that have, or are getting, a peer: established, opening and closing; not listening sockets nor
+/// `TIME_WAIT` ones (no process holds those).
+const TCP_LIVE: u32 =
+    (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 8) | (1 << 9) | (1 << 11);
+/// Connected UDP sockets (established, in the kernel's terms).
+const UDP_CONNECTED: u32 = 1 << 1;
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 10;
 /// Every TCP state: the socket is found whatever state it is in.
@@ -23,6 +32,31 @@ pub struct SocketId {
     pub local_port: u16,
     pub remote: IpAddr,
     pub remote_port: u16,
+}
+
+/// A live socket, as `sock_diag` lists it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LiveSocket {
+    pub id: SocketId,
+    /// The kernel's state number (TCP's: 1 established, 2 SYN sent, ...).
+    pub state: u8,
+    pub uid: u32,
+    pub inode: u32,
+    /// The kernel's socket cookie: what the attribution programs count bytes by.
+    pub cookie: u64,
+}
+
+/// A TCP or UDP state's name.
+#[must_use]
+pub fn state_name(protocol: u8, state: u8) -> &'static str {
+    match (protocol, state) {
+        (17, 1) => "connected",
+        (_, 1) => "established",
+        (_, 2) => "opening",
+        (_, 3) => "accepted",
+        (_, 4 | 5 | 8 | 9 | 11) => "closing",
+        _ => "other",
+    }
 }
 
 /// A `sock_diag` netlink socket.
@@ -47,6 +81,42 @@ impl SockDiag {
         })
     }
 
+    /// The live TCP connections and connected UDP sockets, IPv4 and IPv6.
+    pub fn list(&mut self) -> io::Result<Vec<LiveSocket>> {
+        let mut found = Vec::new();
+        for (protocol, states) in [(6_u8, TCP_LIVE), (17, UDP_CONNECTED)] {
+            for family in [AF_INET, AF_INET6] {
+                self.sequence = self.sequence.wrapping_add(1);
+                encode_dump(&mut self.request, family, protocol, states, self.sequence);
+                self.socket.send(&self.request, 0)?;
+                'receive: loop {
+                    self.receive.clear();
+                    self.receive.reserve(64 * 1024);
+                    self.socket.recv(&mut self.receive, 0)?;
+                    for message in messages(&self.receive) {
+                        if message.sequence != self.sequence {
+                            continue;
+                        }
+                        match message.kind {
+                            NLMSG_DONE => break 'receive,
+                            NLMSG_ERROR => match ack_error(message.body) {
+                                0 => break 'receive,
+                                code => return Err(io::Error::from_raw_os_error(-code)),
+                            },
+                            SOCK_DIAG_BY_FAMILY => {
+                                if let Some(socket) = decode(message.body, protocol) {
+                                    found.push(socket);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        Ok(found)
+    }
+
     /// Closes the socket; `NotFound` when there is none (it may have closed already).
     pub fn destroy(&mut self, id: &SocketId) -> io::Result<()> {
         self.sequence = self.sequence.wrapping_add(1);
@@ -65,6 +135,58 @@ impl SockDiag {
             }
         }
     }
+}
+
+/// Writes a `SOCK_DIAG_BY_FAMILY` dump request for one family, protocol and set of states.
+pub fn encode_dump(out: &mut Vec<u8>, family: u8, protocol: u8, states: u32, sequence: u32) {
+    out.clear();
+    out.extend_from_slice(&0_u32.to_ne_bytes());
+    out.extend_from_slice(&SOCK_DIAG_BY_FAMILY.to_ne_bytes());
+    out.extend_from_slice(&(NLM_F_REQUEST | NLM_F_DUMP).to_ne_bytes());
+    out.extend_from_slice(&sequence.to_ne_bytes());
+    out.extend_from_slice(&0_u32.to_ne_bytes());
+    out.extend_from_slice(&[family, protocol, 0, 0]);
+    out.extend_from_slice(&states.to_ne_bytes());
+    // An empty inet_diag_sockid: every socket.
+    out.extend_from_slice(&[0_u8; 40]);
+    out.extend_from_slice(&0_u32.to_ne_bytes());
+    out.extend_from_slice(&NO_COOKIE.to_ne_bytes());
+    out.extend_from_slice(&NO_COOKIE.to_ne_bytes());
+    let length = u32::try_from(out.len()).unwrap_or(u32::MAX);
+    if let Some(field) = out.get_mut(0..4) {
+        field.copy_from_slice(&length.to_ne_bytes());
+    }
+}
+
+/// Reads a `struct inet_diag_msg`.
+fn decode(body: &[u8], protocol: u8) -> Option<LiveSocket> {
+    let family = *body.first()?;
+    let state = *body.get(1)?;
+    let port = |at: usize| Some(u16::from_be_bytes(body.get(at..at + 2)?.try_into().ok()?));
+    let address = |at: usize| -> Option<IpAddr> {
+        let bytes: [u8; 16] = body.get(at..at + 16)?.try_into().ok()?;
+        Some(if family == AF_INET {
+            IpAddr::from([bytes[0], bytes[1], bytes[2], bytes[3]])
+        } else {
+            IpAddr::from(bytes)
+        })
+    };
+    let word = |at: usize| Some(u32::from_ne_bytes(body.get(at..at + 4)?.try_into().ok()?));
+    let id = SocketId {
+        protocol,
+        local_port: port(4)?,
+        remote_port: port(6)?,
+        local: address(8)?,
+        remote: address(24)?,
+    };
+    let cookie = u64::from(word(44)?) | (u64::from(word(48)?) << 32);
+    Some(LiveSocket {
+        id,
+        state,
+        uid: word(64)?,
+        inode: word(68)?,
+        cookie,
+    })
 }
 
 /// Writes the `SOCK_DESTROY` request: a netlink header and `struct inet_diag_req_v2`.
@@ -113,6 +235,32 @@ pub fn encode_destroy(out: &mut Vec<u8>, id: &SocketId, sequence: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_an_inet_diag_message() {
+        let mut body = vec![AF_INET, 1, 0, 0];
+        body.extend_from_slice(&40000_u16.to_be_bytes());
+        body.extend_from_slice(&443_u16.to_be_bytes());
+        let mut local = [0_u8; 16];
+        local[..4].copy_from_slice(&[192, 0, 2, 1]);
+        let mut remote = [0_u8; 16];
+        remote[..4].copy_from_slice(&[198, 51, 100, 7]);
+        body.extend_from_slice(&local);
+        body.extend_from_slice(&remote);
+        body.extend_from_slice(&0_u32.to_ne_bytes());
+        body.extend_from_slice(&7_u32.to_ne_bytes());
+        body.extend_from_slice(&1_u32.to_ne_bytes());
+        // expires, rqueue, wqueue, uid, inode
+        for value in [0_u32, 0, 0, 1000, 4242] {
+            body.extend_from_slice(&value.to_ne_bytes());
+        }
+        let socket = decode(&body, 6).unwrap();
+        assert_eq!(socket.id.local, "192.0.2.1".parse::<IpAddr>().unwrap());
+        assert_eq!(socket.id.remote_port, 443);
+        assert_eq!((socket.state, socket.uid, socket.inode), (1, 1000, 4242));
+        assert_eq!(socket.cookie, 7 | (1 << 32));
+        assert_eq!(state_name(6, 1), "established");
+    }
 
     #[test]
     fn writes_an_inet_diag_request() {
