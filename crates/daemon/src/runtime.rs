@@ -107,7 +107,7 @@ pub struct Shared {
 /// The daemon, running. Shared by the signal handler and the API's threads.
 pub struct Daemon {
     pub shared: Arc<Shared>,
-    store: Arc<Mutex<Store>>,
+    store: Arc<crate::locked::Locked>,
     table: Table,
     /// A change of the system firewall waiting to be confirmed.
     trial: Mutex<Trial>,
@@ -147,7 +147,7 @@ impl Daemon {
         let mut store = store;
         store.delete_until_restart()?;
         let (sender, receiver) = sync_channel(EVENT_QUEUE);
-        let store = Arc::new(Mutex::new(store));
+        let store = Arc::new(crate::locked::Locked::new(store));
         let mut queues = Vec::with_capacity(usize::from(config.queues));
         let mut writers = Vec::with_capacity(usize::from(config.queues));
         for offset in 0..config.queues {
@@ -155,13 +155,7 @@ impl Daemon {
             writers.push(queue.verdict_writer()?);
             queues.push(queue);
         }
-        let policy = Effective::of(
-            &config,
-            &store
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .policy()?,
-        );
+        let policy = Effective::of(&config, &store.lock().policy()?);
         let broker = Broker::new(writers, Duration::from_secs(policy.prompt_timeout_secs));
         let shared = Arc::new(Shared {
             rules: ArcSwap::from_pointee(rules),
@@ -208,15 +202,9 @@ impl Daemon {
                 .name("writer".to_owned())
                 .spawn(move || write_loop(&shared, &store, &receiver))?;
         }
-        check_marker(
-            &shared,
-            &store.lock().unwrap_or_else(PoisonError::into_inner),
-        );
+        check_marker(&shared, &store.lock());
         // The system firewall as last set: a rule the kernel refuses mustn't keep the daemon from deciding.
-        let firewall = store
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .system_firewall()?;
+        let firewall = store.lock().system_firewall()?;
         if let Err(error) = crate::system::apply(&firewall, &shared.config) {
             error!(%error, "installing the system firewall");
         }
@@ -320,8 +308,9 @@ impl Daemon {
     }
 
     /// The store, for the API's reads and writes.
-    pub fn store(&self) -> std::sync::MutexGuard<'_, Store> {
-        self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    #[track_caller]
+    pub fn store(&self) -> crate::locked::Guard<'_> {
+        self.store.lock()
     }
 
     /// The live TCP connections and connected UDP sockets, each with its program as the attribution programs
@@ -686,11 +675,7 @@ impl Daemon {
 
     /// Applies the policy as the store has it (after a client changed it, or an undo).
     pub fn reload_policy(&self) -> Result<Effective, Error> {
-        let overrides = self
-            .store
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .policy()?;
+        let overrides = self.store.lock().policy()?;
         let effective = Effective::of(&self.shared.config, &overrides);
         self.shared
             .broker
@@ -701,7 +686,7 @@ impl Daemon {
 
     pub fn reload_rules(&self) -> Result<usize, Error> {
         let rules = {
-            let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
+            let store = self.store.lock();
             compile(&self.shared.config, &store)?
         };
         let count = rules.len();
@@ -1207,7 +1192,7 @@ fn check_losses(shared: &Shared, store: &Store, seen: &mut (u64, u64)) {
     *seen = (dropped, queued.max(seen.1));
 }
 
-fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
+fn write_loop(shared: &Shared, store: &crate::locked::Locked, events: &Receiver<Event>) {
     let mut batch = Vec::with_capacity(BATCH);
     let mut engine = crate::alerts::Engine::default();
     let mut rules_seen = u64::MAX;
@@ -1233,7 +1218,7 @@ fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
                 Err(_) => break,
             }
         }
-        let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut store = store.lock();
         let generation = shared.alert_rules_changed.load(Ordering::Relaxed);
         if generation != rules_seen {
             rules_seen = generation;
