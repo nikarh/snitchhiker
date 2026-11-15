@@ -61,6 +61,12 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `ListRules` | `RuleList` | Every folder and rule, locked ones included |
 | `AddRule` | `RuleAdded` | Stores a rule; returns its id |
 | `DeleteRule` | `Done` | |
+| `UpdateRule` | `Done` | Replaces a stored rule; an allow-everything rule needs step-up |
+| `AddFolder` | `FolderAdded` | |
+| `UpdateFolder` | `Done` | Its name, parent, enabled and scope; a folder can't go inside itself |
+| `DeleteFolder` | `Done` | With the folders below it and their rules; more than 20 rules needs step-up |
+| `ListChanges` | `ChangePage` | The history of rules and folders, newest first |
+| `Undo` | `Done` | Undoes a change's batch, unless changed again since |
 | `SetRuleEnabled` | `Done` | |
 | `ListAudit` | `AuditPage` | Dangerous actions asked for, newest first: `limit` entries with `id` below `before` (0: from the newest) |
 | `ImportRules` | `Done` | A [rule file](/reference/rule-files/) as TOML, into a new folder; checked as a whole first |

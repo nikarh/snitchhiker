@@ -29,6 +29,7 @@ The daemon's version, mode and policy, and its counters: rules in effect, connec
 | `rules` | List the rules: id (`-` for locked ones), action, tier, folder path and name, and conditions |
 | `rules add <allow\|deny\|reject> [conditions] [--name <n>] [--tier <override\|normal\|fallback>]` | Add a rule |
 | `rules rm <id>` | Delete a rule |
+| `rules move <id> <folder>` | Move a rule to a folder (`0`: the top level) |
 | `rules enable <id>`, `rules disable <id>` | Switch a rule on or off |
 | `rules import <file>` | Add the rules of a [rule file](/reference/rule-files/), in a new folder (named by the file's `[folder]`, or after the file) |
 | `rules export` | Print the stored rules as a rule file |
@@ -52,6 +53,23 @@ Conditions of `rules add`, all of which must hold; repeat an option for alternat
 sudo snitchhiker rules add allow --exe /usr/bin/ssh --port 22 --name SSH
 sudo snitchhiker rules add deny --host '*.example.net' --tier override
 ```
+
+## `folders`
+
+| Command | |
+| --- | --- |
+| `folders` | List the folders, with their path and how many rules each holds |
+| `folders add <name> [--parent <id>]` | Add a folder |
+| `folders rm <id>` | Delete a folder, the folders in it and all their rules. More than 20 rules is a [dangerous action](/internals/security/#dangerous-actions-need-more-than-a-session) |
+
+## `history` and `undo`
+
+```text
+snitchhiker history [--limit <n>]
+snitchhiker undo <change>
+```
+
+`history` lists the changes to rules and folders, newest first (50 by default): id, batch, time, who made it (`cli`, `desktop`, a prompt answered from either) and what changed. `undo` undoes every change of a change's batch, as a new batch; it is refused when something it would put back was changed again since. See [Rules](/guides/rules/#history-and-undo).
 
 ## `events`
 

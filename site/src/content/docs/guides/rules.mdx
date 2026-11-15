@@ -108,6 +108,17 @@ The daemon has one built-in folder, **System**, with a single rule: everything t
 
 Files in `/etc/snitchhiker/rules.d/*.toml` hold rules a machine's provisioning sets (Ansible, cloud-init): a fleet's baseline. They are in the [rule file format](/reference/rule-files/), read at start and on `systemctl reload snitchhikerd`, and shown to clients as **locked**: they can be seen but not changed or deleted, apart from by editing the file. An invalid file stops the daemon from starting; on a reload, the daemon keeps the rules it had and logs why.
 
+## History and undo
+
+Every change to rules and folders is recorded: who made it (the command line, the desktop app, a prompt's answer, an import), when, and the rule or folder before and after. The changes of one request form a batch: deleting a folder records it and every rule that went with it.
+
+An undo puts a batch back as it was, newest change first, and is recorded itself, so it can be undone too. It is refused when something it would put back was changed again since: undo the later change first.
+
+```bash
+sudo snitchhiker history
+sudo snitchhiker undo 42
+```
+
 ## Managing rules from the command line
 
 ```bash
