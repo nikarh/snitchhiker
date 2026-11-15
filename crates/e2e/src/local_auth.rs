@@ -25,6 +25,49 @@ const UNREGISTERED: &str = "/usr/local/libexec/snitchhiker-test-other";
 /// A copy mallory owns: no setgid bit, nothing root vouches for.
 const MALLORY_COPY: &str = "/tmp/mallory-client";
 
+/// The client side against the daemon itself: the protocol's handshake on its client socket, then a rule listing.
+pub fn protocol_client(socket: &str) -> std::process::ExitCode {
+    let mut out = std::io::stdout().lock();
+    match snitchhiker_client::Client::connect(Path::new(socket), "e2e", "0") {
+        Ok(mut client) => {
+            let role = client.welcome().role();
+            let listed = client.call(snitchhiker_proto::v1::request::Method::ListRules(
+                snitchhiker_proto::v1::ListRules {},
+            ));
+            let _ = writeln!(out, "welcome {role:?}, rules listed: {}", listed.is_ok());
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _ = writeln!(out, "connect: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Against the daemon: the registered setgid client gets in with the admin role; a plain copy can't connect.
+pub fn daemon_client_socket() -> Result<(), String> {
+    // Installs the clients (serve() does), then runs the daemon with the registered one as a trusted client.
+    let _ = serve("daemon-setup", 0o660)?;
+    let mut daemon = crate::daemon::Running::start(
+        "client-socket",
+        &format!("mode = \"monitor\"\ntrusted_clients = [\"{CLIENT}\"]\n"),
+    )?;
+    let socket = "/run/snitchhiker/client.sock";
+    let (registered_ok, registered) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    let (copy_ok, copy) = as_mallory(MALLORY_COPY, &["--protocol-client", socket])?;
+    daemon.stop()?;
+    check(
+        registered_ok && registered.contains("welcome Admin, rules listed: true"),
+        "the registered client didn't get in",
+        &registered,
+    )?;
+    check(
+        !copy_ok && copy.contains("Permission denied"),
+        "a plain copy could connect to the client socket",
+        &copy,
+    )
+}
+
 /// The client side: connects, says what the server answered, and exits 0 only when accepted.
 pub fn client(socket: &str, hold: bool) -> std::process::ExitCode {
     let mut out = std::io::stdout().lock();

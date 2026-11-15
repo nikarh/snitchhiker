@@ -66,6 +66,10 @@ const SCENARIOS: &[Scenario] = &[
         "local-auth/same-user-cannot-attach-or-read-memory",
         local_auth::same_user_cannot_attach_or_read_memory,
     ),
+    (
+        "local-auth/daemon-client-socket",
+        local_auth::daemon_client_socket,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",
@@ -142,6 +146,11 @@ const VM_MARKER: &str = "/var/lib/snitchhiker-e2e-ready";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
+    if let (Some("--protocol-client"), Some(socket)) =
+        (args.get(1).map(String::as_str), args.get(2))
+    {
+        return local_auth::protocol_client(socket);
+    }
     if let (Some("--client"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
         return local_auth::client(socket, args.get(3).is_some_and(|a| a == "--hold"));
     }
