@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ADMIN_SOCKET","CLIENT_SOCKET","RUN_DIR"],"fn":["connected","group_id","spawn"]};
+window.SIDEBAR_ITEMS = {"constant":["ADMIN_SOCKET","AGENT_SOCKET","CLIENT_SOCKET","RUN_DIR"],"fn":["connected","group_id","spawn"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["AnswerError","Error"],"fn":["now_ms"],"struct":["Daemon","Shared"]};
+window.SIDEBAR_ITEMS = {"enum":["AnswerError","Error"],"fn":["asks","now_ms","policy_action"],"struct":["Daemon","Shared"]};

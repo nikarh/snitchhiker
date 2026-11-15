@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ADMIN_SOCKET","CLIENT_SOCKET"],"enum":["Error"],"struct":["Client"]};
+window.SIDEBAR_ITEMS = {"constant":["ADMIN_SOCKET","AGENT_SOCKET","CLIENT_SOCKET"],"enum":["Error"],"struct":["Client"]};

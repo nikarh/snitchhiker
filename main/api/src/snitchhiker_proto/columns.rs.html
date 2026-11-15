@@ -161,306 +161,321 @@
 <a href=#161 id=161 data-nosnippet>161</a>    </span>Width(u16, u16, usize),
 <a href=#162 id=162 data-nosnippet>162</a>    <span class="attr">#[error(<span class="string">"column {0} is missing"</span>)]
 <a href=#163 id=163 data-nosnippet>163</a>    </span>Missing(u16),
-<a href=#164 id=164 data-nosnippet>164</a>    <span class="attr">#[error(<span class="string">"rows span more than a block can: seq or time beyond u32 of the first row"</span>)]
-<a href=#165 id=165 data-nosnippet>165</a>    </span>Span,
-<a href=#166 id=166 data-nosnippet>166</a>}
-<a href=#167 id=167 data-nosnippet>167</a>
-<a href=#168 id=168 data-nosnippet>168</a><span class="attr">#[derive(FromBytes, KnownLayout, Immutable, Unaligned)]
-<a href=#169 id=169 data-nosnippet>169</a>#[repr(C)]
-<a href=#170 id=170 data-nosnippet>170</a></span><span class="kw">struct </span>Header {
-<a href=#171 id=171 data-nosnippet>171</a>    magic: [u8; <span class="number">4</span>],
-<a href=#172 id=172 data-nosnippet>172</a>    version: U16,
-<a href=#173 id=173 data-nosnippet>173</a>    columns: U16,
-<a href=#174 id=174 data-nosnippet>174</a>    rows: U32,
-<a href=#175 id=175 data-nosnippet>175</a>    reserved: U32,
-<a href=#176 id=176 data-nosnippet>176</a>    base_seq: U64,
-<a href=#177 id=177 data-nosnippet>177</a>    base_time: U64,
-<a href=#178 id=178 data-nosnippet>178</a>}
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a><span class="attr">#[derive(FromBytes, KnownLayout, Immutable, Unaligned, IntoBytes)]
-<a href=#181 id=181 data-nosnippet>181</a>#[repr(C)]
-<a href=#182 id=182 data-nosnippet>182</a></span><span class="kw">struct </span>Entry {
-<a href=#183 id=183 data-nosnippet>183</a>    id: U16,
-<a href=#184 id=184 data-nosnippet>184</a>    width: U16,
-<a href=#185 id=185 data-nosnippet>185</a>    offset: U32,
-<a href=#186 id=186 data-nosnippet>186</a>}
-<a href=#187 id=187 data-nosnippet>187</a>
-<a href=#188 id=188 data-nosnippet>188</a><span class="doccomment">/// Encodes `rows` as an event block into `out` (cleared first). The rows must be ordered by seq, and span less than
-<a href=#189 id=189 data-nosnippet>189</a>/// u32 of seq and of milliseconds from the first; callers split larger ranges into several blocks.
-<a href=#190 id=190 data-nosnippet>190</a></span><span class="kw">pub fn </span>encode_events(rows: <span class="kw-2">&amp;</span>[EventRow], out: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), BlockError&gt; {
-<a href=#191 id=191 data-nosnippet>191</a>    out.clear();
-<a href=#192 id=192 data-nosnippet>192</a>    <span class="kw">let </span>first = rows.first().copied().unwrap_or_default();
-<a href=#193 id=193 data-nosnippet>193</a>    <span class="kw">let </span>count = u32::try_from(rows.len()).map_err(|<span class="kw">_</span>| BlockError::Span)<span class="question-mark">?</span>;
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>columns = Column::ALL;
-<a href=#195 id=195 data-nosnippet>195</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>EVENT_MAGIC);
-<a href=#196 id=196 data-nosnippet>196</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>VERSION.to_le_bytes());
-<a href=#197 id=197 data-nosnippet>197</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>u16::try_from(columns.len()).unwrap_or(<span class="number">0</span>).to_le_bytes());
-<a href=#198 id=198 data-nosnippet>198</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>count.to_le_bytes());
-<a href=#199 id=199 data-nosnippet>199</a>    out.extend_from_slice(<span class="kw-2">&amp;</span><span class="number">0_u32</span>.to_le_bytes());
-<a href=#200 id=200 data-nosnippet>200</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>first.seq.to_le_bytes());
-<a href=#201 id=201 data-nosnippet>201</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>first.time_ms.to_le_bytes());
-<a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">let </span><span class="kw-2">mut </span>offset = HEADER + columns.len() * DIRECTORY_ENTRY;
-<a href=#203 id=203 data-nosnippet>203</a>    <span class="kw">for </span>column <span class="kw">in </span>columns {
-<a href=#204 id=204 data-nosnippet>204</a>        <span class="kw">let </span>entry = Entry {
-<a href=#205 id=205 data-nosnippet>205</a>            id: U16::new(column <span class="kw">as </span>u16),
-<a href=#206 id=206 data-nosnippet>206</a>            width: U16::new(u16::try_from(column.width()).unwrap_or(<span class="number">0</span>)),
-<a href=#207 id=207 data-nosnippet>207</a>            offset: U32::new(u32::try_from(offset).map_err(|<span class="kw">_</span>| BlockError::Span)<span class="question-mark">?</span>),
-<a href=#208 id=208 data-nosnippet>208</a>        };
-<a href=#209 id=209 data-nosnippet>209</a>        out.extend_from_slice(entry.as_bytes());
-<a href=#210 id=210 data-nosnippet>210</a>        offset += column.width() * rows.len();
-<a href=#211 id=211 data-nosnippet>211</a>    }
-<a href=#212 id=212 data-nosnippet>212</a>    out.reserve(offset - out.len());
-<a href=#213 id=213 data-nosnippet>213</a>    <span class="kw">for </span>column <span class="kw">in </span>columns {
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
-<a href=#215 id=215 data-nosnippet>215</a>            write_value(out, column, row, <span class="kw-2">&amp;</span>first)<span class="question-mark">?</span>;
-<a href=#216 id=216 data-nosnippet>216</a>        }
-<a href=#217 id=217 data-nosnippet>217</a>    }
-<a href=#218 id=218 data-nosnippet>218</a>    <span class="prelude-val">Ok</span>(())
-<a href=#219 id=219 data-nosnippet>219</a>}
-<a href=#220 id=220 data-nosnippet>220</a>
-<a href=#221 id=221 data-nosnippet>221</a><span class="doccomment">/// Appends one value of `column`, for `row`, to `out`.
-<a href=#222 id=222 data-nosnippet>222</a></span><span class="kw">fn </span>write_value(
-<a href=#223 id=223 data-nosnippet>223</a>    out: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;,
-<a href=#224 id=224 data-nosnippet>224</a>    column: Column,
-<a href=#225 id=225 data-nosnippet>225</a>    row: <span class="kw-2">&amp;</span>EventRow,
-<a href=#226 id=226 data-nosnippet>226</a>    first: <span class="kw-2">&amp;</span>EventRow,
-<a href=#227 id=227 data-nosnippet>227</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), BlockError&gt; {
-<a href=#228 id=228 data-nosnippet>228</a>    <span class="kw">let </span>delta = |value: u64, base: u64| {
-<a href=#229 id=229 data-nosnippet>229</a>        u32::try_from(value.wrapping_sub(base)).map_err(|<span class="kw">_</span>| BlockError::Span)
-<a href=#230 id=230 data-nosnippet>230</a>    };
-<a href=#231 id=231 data-nosnippet>231</a>    <span class="kw">match </span>column {
-<a href=#232 id=232 data-nosnippet>232</a>        Column::Seq =&gt; out.extend_from_slice(
-<a href=#233 id=233 data-nosnippet>233</a>            <span class="kw-2">&amp;</span>delta(row.seq.cast_unsigned(), first.seq.cast_unsigned())<span class="question-mark">?</span>.to_le_bytes(),
-<a href=#234 id=234 data-nosnippet>234</a>        ),
-<a href=#235 id=235 data-nosnippet>235</a>        Column::Time =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>delta(row.time_ms, first.time_ms)<span class="question-mark">?</span>.to_le_bytes()),
-<a href=#236 id=236 data-nosnippet>236</a>        Column::Exe =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.exe.to_le_bytes()),
-<a href=#237 id=237 data-nosnippet>237</a>        Column::Host =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.host.to_le_bytes()),
-<a href=#238 id=238 data-nosnippet>238</a>        Column::Uid =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.uid.to_le_bytes()),
-<a href=#239 id=239 data-nosnippet>239</a>        Column::Pid =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.pid.to_le_bytes()),
-<a href=#240 id=240 data-nosnippet>240</a>        Column::Address =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.address),
-<a href=#241 id=241 data-nosnippet>241</a>        Column::Port =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.port.to_le_bytes()),
-<a href=#242 id=242 data-nosnippet>242</a>        Column::Protocol =&gt; out.push(row.protocol),
-<a href=#243 id=243 data-nosnippet>243</a>        Column::Context =&gt; out.push(row.context),
-<a href=#244 id=244 data-nosnippet>244</a>        Column::Action =&gt; out.push(row.action),
-<a href=#245 id=245 data-nosnippet>245</a>        Column::Source =&gt; out.push(row.source),
-<a href=#246 id=246 data-nosnippet>246</a>        Column::Rule =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.rule.to_le_bytes()),
-<a href=#247 id=247 data-nosnippet>247</a>        Column::BytesOut =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.bytes_out.to_le_bytes()),
-<a href=#248 id=248 data-nosnippet>248</a>        Column::BytesIn =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.bytes_in.to_le_bytes()),
-<a href=#249 id=249 data-nosnippet>249</a>    }
-<a href=#250 id=250 data-nosnippet>250</a>    <span class="prelude-val">Ok</span>(())
-<a href=#251 id=251 data-nosnippet>251</a>}
-<a href=#252 id=252 data-nosnippet>252</a>
-<a href=#253 id=253 data-nosnippet>253</a><span class="doccomment">/// An event block, read in place: the columns are slices of the received buffer.
-<a href=#254 id=254 data-nosnippet>254</a></span><span class="attr">#[derive(Debug, Clone, Copy)]
-<a href=#255 id=255 data-nosnippet>255</a></span><span class="kw">pub struct </span>EventBlock&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#256 id=256 data-nosnippet>256</a>    rows: usize,
-<a href=#257 id=257 data-nosnippet>257</a>    base_seq: i64,
-<a href=#258 id=258 data-nosnippet>258</a>    base_time: u64,
-<a href=#259 id=259 data-nosnippet>259</a>    seq: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#260 id=260 data-nosnippet>260</a>    time: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#261 id=261 data-nosnippet>261</a>    exe: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#262 id=262 data-nosnippet>262</a>    host: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#263 id=263 data-nosnippet>263</a>    uid: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#264 id=264 data-nosnippet>264</a>    pid: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
-<a href=#265 id=265 data-nosnippet>265</a>    address: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[u8; <span class="number">16</span>]],
-<a href=#266 id=266 data-nosnippet>266</a>    port: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U16],
-<a href=#267 id=267 data-nosnippet>267</a>    protocol: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#268 id=268 data-nosnippet>268</a>    context: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#269 id=269 data-nosnippet>269</a>    action: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#270 id=270 data-nosnippet>270</a>    source: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-<a href=#271 id=271 data-nosnippet>271</a>    rule: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
-<a href=#272 id=272 data-nosnippet>272</a>    bytes_out: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
-<a href=#273 id=273 data-nosnippet>273</a>    bytes_in: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
-<a href=#274 id=274 data-nosnippet>274</a>}
-<a href=#275 id=275 data-nosnippet>275</a>
-<a href=#276 id=276 data-nosnippet>276</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; EventBlock&lt;<span class="lifetime">'a</span>&gt; {
-<a href=#277 id=277 data-nosnippet>277</a>    <span class="doccomment">/// Reads a block's header and finds its columns; no value is copied.
-<a href=#278 id=278 data-nosnippet>278</a>    </span><span class="kw">pub fn </span>parse(block: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, BlockError&gt; {
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="kw">let </span>(header, <span class="kw">_</span>) = Header::ref_from_prefix(block).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
-<a href=#280 id=280 data-nosnippet>280</a>        <span class="kw">if </span>header.magic != EVENT_MAGIC {
-<a href=#281 id=281 data-nosnippet>281</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Magic);
-<a href=#282 id=282 data-nosnippet>282</a>        }
-<a href=#283 id=283 data-nosnippet>283</a>        <span class="kw">if </span>header.version.get() != VERSION {
-<a href=#284 id=284 data-nosnippet>284</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Version(header.version.get()));
-<a href=#285 id=285 data-nosnippet>285</a>        }
-<a href=#286 id=286 data-nosnippet>286</a>        <span class="kw">let </span>rows = usize::try_from(header.rows.get()).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
-<a href=#287 id=287 data-nosnippet>287</a>        <span class="kw">let </span>count = usize::from(header.columns.get());
-<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">let </span>directory = block
-<a href=#289 id=289 data-nosnippet>289</a>            .get(HEADER..HEADER + count * DIRECTORY_ENTRY)
-<a href=#290 id=290 data-nosnippet>290</a>            .ok_or(BlockError::Truncated)<span class="question-mark">?</span>;
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>entries = &lt;[Entry]&gt;::ref_from_bytes(directory).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>find = |column: Column| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8], BlockError&gt; {
-<a href=#293 id=293 data-nosnippet>293</a>            <span class="kw">let </span>entry = entries
-<a href=#294 id=294 data-nosnippet>294</a>                .iter()
-<a href=#295 id=295 data-nosnippet>295</a>                .find(|e| Column::from_id(e.id.get()) == <span class="prelude-val">Some</span>(column))
-<a href=#296 id=296 data-nosnippet>296</a>                .ok_or(BlockError::Missing(column <span class="kw">as </span>u16))<span class="question-mark">?</span>;
-<a href=#297 id=297 data-nosnippet>297</a>            <span class="kw">if </span>usize::from(entry.width.get()) != column.width() {
-<a href=#298 id=298 data-nosnippet>298</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Width(
-<a href=#299 id=299 data-nosnippet>299</a>                    entry.id.get(),
-<a href=#300 id=300 data-nosnippet>300</a>                    entry.width.get(),
-<a href=#301 id=301 data-nosnippet>301</a>                    column.width(),
-<a href=#302 id=302 data-nosnippet>302</a>                ));
-<a href=#303 id=303 data-nosnippet>303</a>            }
-<a href=#304 id=304 data-nosnippet>304</a>            <span class="kw">let </span>start = usize::try_from(entry.offset.get()).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
-<a href=#305 id=305 data-nosnippet>305</a>            block
-<a href=#306 id=306 data-nosnippet>306</a>                .get(start..start + rows * column.width())
-<a href=#307 id=307 data-nosnippet>307</a>                .ok_or(BlockError::Truncated)
-<a href=#308 id=308 data-nosnippet>308</a>        };
-<a href=#309 id=309 data-nosnippet>309</a>        <span class="kw">let </span>u32s =
-<a href=#310 id=310 data-nosnippet>310</a>            |c| find(c).and_then(|b| &lt;[U32]&gt;::ref_from_bytes(b).map_err(|<span class="kw">_</span>| BlockError::Truncated));
-<a href=#311 id=311 data-nosnippet>311</a>        <span class="kw">let </span>u64s =
-<a href=#312 id=312 data-nosnippet>312</a>            |c| find(c).and_then(|b| &lt;[U64]&gt;::ref_from_bytes(b).map_err(|<span class="kw">_</span>| BlockError::Truncated));
-<a href=#313 id=313 data-nosnippet>313</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-<a href=#314 id=314 data-nosnippet>314</a>            rows,
-<a href=#315 id=315 data-nosnippet>315</a>            base_seq: i64::from_le_bytes(header.base_seq.get().to_le_bytes()),
-<a href=#316 id=316 data-nosnippet>316</a>            base_time: header.base_time.get(),
-<a href=#317 id=317 data-nosnippet>317</a>            seq: u32s(Column::Seq)<span class="question-mark">?</span>,
-<a href=#318 id=318 data-nosnippet>318</a>            time: u32s(Column::Time)<span class="question-mark">?</span>,
-<a href=#319 id=319 data-nosnippet>319</a>            exe: u32s(Column::Exe)<span class="question-mark">?</span>,
-<a href=#320 id=320 data-nosnippet>320</a>            host: u32s(Column::Host)<span class="question-mark">?</span>,
-<a href=#321 id=321 data-nosnippet>321</a>            uid: u32s(Column::Uid)<span class="question-mark">?</span>,
-<a href=#322 id=322 data-nosnippet>322</a>            pid: u32s(Column::Pid)<span class="question-mark">?</span>,
-<a href=#323 id=323 data-nosnippet>323</a>            address: &lt;[[u8; <span class="number">16</span>]]&gt;::ref_from_bytes(find(Column::Address)<span class="question-mark">?</span>)
-<a href=#324 id=324 data-nosnippet>324</a>                .map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>,
-<a href=#325 id=325 data-nosnippet>325</a>            port: &lt;[U16]&gt;::ref_from_bytes(find(Column::Port)<span class="question-mark">?</span>)
-<a href=#326 id=326 data-nosnippet>326</a>                .map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>,
-<a href=#327 id=327 data-nosnippet>327</a>            protocol: find(Column::Protocol)<span class="question-mark">?</span>,
-<a href=#328 id=328 data-nosnippet>328</a>            context: find(Column::Context)<span class="question-mark">?</span>,
-<a href=#329 id=329 data-nosnippet>329</a>            action: find(Column::Action)<span class="question-mark">?</span>,
-<a href=#330 id=330 data-nosnippet>330</a>            source: find(Column::Source)<span class="question-mark">?</span>,
-<a href=#331 id=331 data-nosnippet>331</a>            rule: u64s(Column::Rule)<span class="question-mark">?</span>,
-<a href=#332 id=332 data-nosnippet>332</a>            bytes_out: u64s(Column::BytesOut)<span class="question-mark">?</span>,
-<a href=#333 id=333 data-nosnippet>333</a>            bytes_in: u64s(Column::BytesIn)<span class="question-mark">?</span>,
-<a href=#334 id=334 data-nosnippet>334</a>        })
-<a href=#335 id=335 data-nosnippet>335</a>    }
-<a href=#336 id=336 data-nosnippet>336</a>
-<a href=#337 id=337 data-nosnippet>337</a>    <span class="attr">#[must_use]
-<a href=#338 id=338 data-nosnippet>338</a>    </span><span class="kw">pub const fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-<a href=#339 id=339 data-nosnippet>339</a>        <span class="self">self</span>.rows
+<a href=#164 id=164 data-nosnippet>164</a>    <span class="attr">#[error(
+<a href=#165 id=165 data-nosnippet>165</a>        <span class="string">"rows span more than a block can: seq beyond u32 of the first row, or times beyond u32 of the earliest"
+<a href=#166 id=166 data-nosnippet>166</a>    </span>)]
+<a href=#167 id=167 data-nosnippet>167</a>    </span>Span,
+<a href=#168 id=168 data-nosnippet>168</a>}
+<a href=#169 id=169 data-nosnippet>169</a>
+<a href=#170 id=170 data-nosnippet>170</a><span class="attr">#[derive(FromBytes, KnownLayout, Immutable, Unaligned)]
+<a href=#171 id=171 data-nosnippet>171</a>#[repr(C)]
+<a href=#172 id=172 data-nosnippet>172</a></span><span class="kw">struct </span>Header {
+<a href=#173 id=173 data-nosnippet>173</a>    magic: [u8; <span class="number">4</span>],
+<a href=#174 id=174 data-nosnippet>174</a>    version: U16,
+<a href=#175 id=175 data-nosnippet>175</a>    columns: U16,
+<a href=#176 id=176 data-nosnippet>176</a>    rows: U32,
+<a href=#177 id=177 data-nosnippet>177</a>    reserved: U32,
+<a href=#178 id=178 data-nosnippet>178</a>    base_seq: U64,
+<a href=#179 id=179 data-nosnippet>179</a>    base_time: U64,
+<a href=#180 id=180 data-nosnippet>180</a>}
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a><span class="attr">#[derive(FromBytes, KnownLayout, Immutable, Unaligned, IntoBytes)]
+<a href=#183 id=183 data-nosnippet>183</a>#[repr(C)]
+<a href=#184 id=184 data-nosnippet>184</a></span><span class="kw">struct </span>Entry {
+<a href=#185 id=185 data-nosnippet>185</a>    id: U16,
+<a href=#186 id=186 data-nosnippet>186</a>    width: U16,
+<a href=#187 id=187 data-nosnippet>187</a>    offset: U32,
+<a href=#188 id=188 data-nosnippet>188</a>}
+<a href=#189 id=189 data-nosnippet>189</a>
+<a href=#190 id=190 data-nosnippet>190</a><span class="doccomment">/// Encodes `rows` as an event block into `out` (cleared first). The rows must be ordered by seq, and span less than
+<a href=#191 id=191 data-nosnippet>191</a>/// u32 of seq and of milliseconds from the first; callers split larger ranges into several blocks.
+<a href=#192 id=192 data-nosnippet>192</a></span><span class="kw">pub fn </span>encode_events(rows: <span class="kw-2">&amp;</span>[EventRow], out: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;(), BlockError&gt; {
+<a href=#193 id=193 data-nosnippet>193</a>    out.clear();
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">let </span>first = rows.first().copied().unwrap_or_default();
+<a href=#195 id=195 data-nosnippet>195</a>    <span class="comment">// Times are offsets from the earliest: the clock may have stepped back between two rows (a later row earlier).
+<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">let </span>base_time = rows.iter().map(|r| r.time_ms).min().unwrap_or(<span class="number">0</span>);
+<a href=#197 id=197 data-nosnippet>197</a>    <span class="kw">let </span>count = u32::try_from(rows.len()).map_err(|<span class="kw">_</span>| BlockError::Span)<span class="question-mark">?</span>;
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">let </span>columns = Column::ALL;
+<a href=#199 id=199 data-nosnippet>199</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>EVENT_MAGIC);
+<a href=#200 id=200 data-nosnippet>200</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>VERSION.to_le_bytes());
+<a href=#201 id=201 data-nosnippet>201</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>u16::try_from(columns.len()).unwrap_or(<span class="number">0</span>).to_le_bytes());
+<a href=#202 id=202 data-nosnippet>202</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>count.to_le_bytes());
+<a href=#203 id=203 data-nosnippet>203</a>    out.extend_from_slice(<span class="kw-2">&amp;</span><span class="number">0_u32</span>.to_le_bytes());
+<a href=#204 id=204 data-nosnippet>204</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>first.seq.to_le_bytes());
+<a href=#205 id=205 data-nosnippet>205</a>    out.extend_from_slice(<span class="kw-2">&amp;</span>base_time.to_le_bytes());
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="kw">let </span><span class="kw-2">mut </span>offset = HEADER + columns.len() * DIRECTORY_ENTRY;
+<a href=#207 id=207 data-nosnippet>207</a>    <span class="kw">for </span>column <span class="kw">in </span>columns {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>entry = Entry {
+<a href=#209 id=209 data-nosnippet>209</a>            id: U16::new(column <span class="kw">as </span>u16),
+<a href=#210 id=210 data-nosnippet>210</a>            width: U16::new(u16::try_from(column.width()).unwrap_or(<span class="number">0</span>)),
+<a href=#211 id=211 data-nosnippet>211</a>            offset: U32::new(u32::try_from(offset).map_err(|<span class="kw">_</span>| BlockError::Span)<span class="question-mark">?</span>),
+<a href=#212 id=212 data-nosnippet>212</a>        };
+<a href=#213 id=213 data-nosnippet>213</a>        out.extend_from_slice(entry.as_bytes());
+<a href=#214 id=214 data-nosnippet>214</a>        offset += column.width() * rows.len();
+<a href=#215 id=215 data-nosnippet>215</a>    }
+<a href=#216 id=216 data-nosnippet>216</a>    out.reserve(offset - out.len());
+<a href=#217 id=217 data-nosnippet>217</a>    <span class="kw">for </span>column <span class="kw">in </span>columns {
+<a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">for </span>row <span class="kw">in </span>rows {
+<a href=#219 id=219 data-nosnippet>219</a>            write_value(out, column, row, <span class="kw-2">&amp;</span>first, base_time)<span class="question-mark">?</span>;
+<a href=#220 id=220 data-nosnippet>220</a>        }
+<a href=#221 id=221 data-nosnippet>221</a>    }
+<a href=#222 id=222 data-nosnippet>222</a>    <span class="prelude-val">Ok</span>(())
+<a href=#223 id=223 data-nosnippet>223</a>}
+<a href=#224 id=224 data-nosnippet>224</a>
+<a href=#225 id=225 data-nosnippet>225</a><span class="doccomment">/// Appends one value of `column`, for `row`, to `out`.
+<a href=#226 id=226 data-nosnippet>226</a></span><span class="kw">fn </span>write_value(
+<a href=#227 id=227 data-nosnippet>227</a>    out: <span class="kw-2">&amp;mut </span>Vec&lt;u8&gt;,
+<a href=#228 id=228 data-nosnippet>228</a>    column: Column,
+<a href=#229 id=229 data-nosnippet>229</a>    row: <span class="kw-2">&amp;</span>EventRow,
+<a href=#230 id=230 data-nosnippet>230</a>    first: <span class="kw-2">&amp;</span>EventRow,
+<a href=#231 id=231 data-nosnippet>231</a>    base_time: u64,
+<a href=#232 id=232 data-nosnippet>232</a>) -&gt; <span class="prelude-ty">Result</span>&lt;(), BlockError&gt; {
+<a href=#233 id=233 data-nosnippet>233</a>    <span class="kw">let </span>delta = |value: u64, base: u64| {
+<a href=#234 id=234 data-nosnippet>234</a>        u32::try_from(value.wrapping_sub(base)).map_err(|<span class="kw">_</span>| BlockError::Span)
+<a href=#235 id=235 data-nosnippet>235</a>    };
+<a href=#236 id=236 data-nosnippet>236</a>    <span class="kw">match </span>column {
+<a href=#237 id=237 data-nosnippet>237</a>        Column::Seq =&gt; out.extend_from_slice(
+<a href=#238 id=238 data-nosnippet>238</a>            <span class="kw-2">&amp;</span>delta(row.seq.cast_unsigned(), first.seq.cast_unsigned())<span class="question-mark">?</span>.to_le_bytes(),
+<a href=#239 id=239 data-nosnippet>239</a>        ),
+<a href=#240 id=240 data-nosnippet>240</a>        Column::Time =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>delta(row.time_ms, base_time)<span class="question-mark">?</span>.to_le_bytes()),
+<a href=#241 id=241 data-nosnippet>241</a>        Column::Exe =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.exe.to_le_bytes()),
+<a href=#242 id=242 data-nosnippet>242</a>        Column::Host =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.host.to_le_bytes()),
+<a href=#243 id=243 data-nosnippet>243</a>        Column::Uid =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.uid.to_le_bytes()),
+<a href=#244 id=244 data-nosnippet>244</a>        Column::Pid =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.pid.to_le_bytes()),
+<a href=#245 id=245 data-nosnippet>245</a>        Column::Address =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.address),
+<a href=#246 id=246 data-nosnippet>246</a>        Column::Port =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.port.to_le_bytes()),
+<a href=#247 id=247 data-nosnippet>247</a>        Column::Protocol =&gt; out.push(row.protocol),
+<a href=#248 id=248 data-nosnippet>248</a>        Column::Context =&gt; out.push(row.context),
+<a href=#249 id=249 data-nosnippet>249</a>        Column::Action =&gt; out.push(row.action),
+<a href=#250 id=250 data-nosnippet>250</a>        Column::Source =&gt; out.push(row.source),
+<a href=#251 id=251 data-nosnippet>251</a>        Column::Rule =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.rule.to_le_bytes()),
+<a href=#252 id=252 data-nosnippet>252</a>        Column::BytesOut =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.bytes_out.to_le_bytes()),
+<a href=#253 id=253 data-nosnippet>253</a>        Column::BytesIn =&gt; out.extend_from_slice(<span class="kw-2">&amp;</span>row.bytes_in.to_le_bytes()),
+<a href=#254 id=254 data-nosnippet>254</a>    }
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="prelude-val">Ok</span>(())
+<a href=#256 id=256 data-nosnippet>256</a>}
+<a href=#257 id=257 data-nosnippet>257</a>
+<a href=#258 id=258 data-nosnippet>258</a><span class="doccomment">/// An event block, read in place: the columns are slices of the received buffer.
+<a href=#259 id=259 data-nosnippet>259</a></span><span class="attr">#[derive(Debug, Clone, Copy)]
+<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">pub struct </span>EventBlock&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#261 id=261 data-nosnippet>261</a>    rows: usize,
+<a href=#262 id=262 data-nosnippet>262</a>    base_seq: i64,
+<a href=#263 id=263 data-nosnippet>263</a>    base_time: u64,
+<a href=#264 id=264 data-nosnippet>264</a>    seq: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#265 id=265 data-nosnippet>265</a>    time: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#266 id=266 data-nosnippet>266</a>    exe: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#267 id=267 data-nosnippet>267</a>    host: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#268 id=268 data-nosnippet>268</a>    uid: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#269 id=269 data-nosnippet>269</a>    pid: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U32],
+<a href=#270 id=270 data-nosnippet>270</a>    address: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[[u8; <span class="number">16</span>]],
+<a href=#271 id=271 data-nosnippet>271</a>    port: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U16],
+<a href=#272 id=272 data-nosnippet>272</a>    protocol: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#273 id=273 data-nosnippet>273</a>    context: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#274 id=274 data-nosnippet>274</a>    action: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#275 id=275 data-nosnippet>275</a>    source: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+<a href=#276 id=276 data-nosnippet>276</a>    rule: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
+<a href=#277 id=277 data-nosnippet>277</a>    bytes_out: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
+<a href=#278 id=278 data-nosnippet>278</a>    bytes_in: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[U64],
+<a href=#279 id=279 data-nosnippet>279</a>}
+<a href=#280 id=280 data-nosnippet>280</a>
+<a href=#281 id=281 data-nosnippet>281</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; EventBlock&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="doccomment">/// Reads a block's header and finds its columns; no value is copied.
+<a href=#283 id=283 data-nosnippet>283</a>    </span><span class="kw">pub fn </span>parse(block: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, BlockError&gt; {
+<a href=#284 id=284 data-nosnippet>284</a>        <span class="kw">let </span>(header, <span class="kw">_</span>) = Header::ref_from_prefix(block).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>        <span class="kw">if </span>header.magic != EVENT_MAGIC {
+<a href=#286 id=286 data-nosnippet>286</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Magic);
+<a href=#287 id=287 data-nosnippet>287</a>        }
+<a href=#288 id=288 data-nosnippet>288</a>        <span class="kw">if </span>header.version.get() != VERSION {
+<a href=#289 id=289 data-nosnippet>289</a>            <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Version(header.version.get()));
+<a href=#290 id=290 data-nosnippet>290</a>        }
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw">let </span>rows = usize::try_from(header.rows.get()).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw">let </span>count = usize::from(header.columns.get());
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw">let </span>directory = block
+<a href=#294 id=294 data-nosnippet>294</a>            .get(HEADER..HEADER + count * DIRECTORY_ENTRY)
+<a href=#295 id=295 data-nosnippet>295</a>            .ok_or(BlockError::Truncated)<span class="question-mark">?</span>;
+<a href=#296 id=296 data-nosnippet>296</a>        <span class="kw">let </span>entries = &lt;[Entry]&gt;::ref_from_bytes(directory).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span>find = |column: Column| -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8], BlockError&gt; {
+<a href=#298 id=298 data-nosnippet>298</a>            <span class="kw">let </span>entry = entries
+<a href=#299 id=299 data-nosnippet>299</a>                .iter()
+<a href=#300 id=300 data-nosnippet>300</a>                .find(|e| Column::from_id(e.id.get()) == <span class="prelude-val">Some</span>(column))
+<a href=#301 id=301 data-nosnippet>301</a>                .ok_or(BlockError::Missing(column <span class="kw">as </span>u16))<span class="question-mark">?</span>;
+<a href=#302 id=302 data-nosnippet>302</a>            <span class="kw">if </span>usize::from(entry.width.get()) != column.width() {
+<a href=#303 id=303 data-nosnippet>303</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(BlockError::Width(
+<a href=#304 id=304 data-nosnippet>304</a>                    entry.id.get(),
+<a href=#305 id=305 data-nosnippet>305</a>                    entry.width.get(),
+<a href=#306 id=306 data-nosnippet>306</a>                    column.width(),
+<a href=#307 id=307 data-nosnippet>307</a>                ));
+<a href=#308 id=308 data-nosnippet>308</a>            }
+<a href=#309 id=309 data-nosnippet>309</a>            <span class="kw">let </span>start = usize::try_from(entry.offset.get()).map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>;
+<a href=#310 id=310 data-nosnippet>310</a>            block
+<a href=#311 id=311 data-nosnippet>311</a>                .get(start..start + rows * column.width())
+<a href=#312 id=312 data-nosnippet>312</a>                .ok_or(BlockError::Truncated)
+<a href=#313 id=313 data-nosnippet>313</a>        };
+<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>u32s =
+<a href=#315 id=315 data-nosnippet>315</a>            |c| find(c).and_then(|b| &lt;[U32]&gt;::ref_from_bytes(b).map_err(|<span class="kw">_</span>| BlockError::Truncated));
+<a href=#316 id=316 data-nosnippet>316</a>        <span class="kw">let </span>u64s =
+<a href=#317 id=317 data-nosnippet>317</a>            |c| find(c).and_then(|b| &lt;[U64]&gt;::ref_from_bytes(b).map_err(|<span class="kw">_</span>| BlockError::Truncated));
+<a href=#318 id=318 data-nosnippet>318</a>        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+<a href=#319 id=319 data-nosnippet>319</a>            rows,
+<a href=#320 id=320 data-nosnippet>320</a>            base_seq: i64::from_le_bytes(header.base_seq.get().to_le_bytes()),
+<a href=#321 id=321 data-nosnippet>321</a>            base_time: header.base_time.get(),
+<a href=#322 id=322 data-nosnippet>322</a>            seq: u32s(Column::Seq)<span class="question-mark">?</span>,
+<a href=#323 id=323 data-nosnippet>323</a>            time: u32s(Column::Time)<span class="question-mark">?</span>,
+<a href=#324 id=324 data-nosnippet>324</a>            exe: u32s(Column::Exe)<span class="question-mark">?</span>,
+<a href=#325 id=325 data-nosnippet>325</a>            host: u32s(Column::Host)<span class="question-mark">?</span>,
+<a href=#326 id=326 data-nosnippet>326</a>            uid: u32s(Column::Uid)<span class="question-mark">?</span>,
+<a href=#327 id=327 data-nosnippet>327</a>            pid: u32s(Column::Pid)<span class="question-mark">?</span>,
+<a href=#328 id=328 data-nosnippet>328</a>            address: &lt;[[u8; <span class="number">16</span>]]&gt;::ref_from_bytes(find(Column::Address)<span class="question-mark">?</span>)
+<a href=#329 id=329 data-nosnippet>329</a>                .map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>,
+<a href=#330 id=330 data-nosnippet>330</a>            port: &lt;[U16]&gt;::ref_from_bytes(find(Column::Port)<span class="question-mark">?</span>)
+<a href=#331 id=331 data-nosnippet>331</a>                .map_err(|<span class="kw">_</span>| BlockError::Truncated)<span class="question-mark">?</span>,
+<a href=#332 id=332 data-nosnippet>332</a>            protocol: find(Column::Protocol)<span class="question-mark">?</span>,
+<a href=#333 id=333 data-nosnippet>333</a>            context: find(Column::Context)<span class="question-mark">?</span>,
+<a href=#334 id=334 data-nosnippet>334</a>            action: find(Column::Action)<span class="question-mark">?</span>,
+<a href=#335 id=335 data-nosnippet>335</a>            source: find(Column::Source)<span class="question-mark">?</span>,
+<a href=#336 id=336 data-nosnippet>336</a>            rule: u64s(Column::Rule)<span class="question-mark">?</span>,
+<a href=#337 id=337 data-nosnippet>337</a>            bytes_out: u64s(Column::BytesOut)<span class="question-mark">?</span>,
+<a href=#338 id=338 data-nosnippet>338</a>            bytes_in: u64s(Column::BytesIn)<span class="question-mark">?</span>,
+<a href=#339 id=339 data-nosnippet>339</a>        })
 <a href=#340 id=340 data-nosnippet>340</a>    }
 <a href=#341 id=341 data-nosnippet>341</a>
 <a href=#342 id=342 data-nosnippet>342</a>    <span class="attr">#[must_use]
-<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">pub const fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-<a href=#344 id=344 data-nosnippet>344</a>        <span class="self">self</span>.rows == <span class="number">0
-<a href=#345 id=345 data-nosnippet>345</a>    </span>}
+<a href=#343 id=343 data-nosnippet>343</a>    </span><span class="kw">pub const fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="self">self</span>.rows
+<a href=#345 id=345 data-nosnippet>345</a>    }
 <a href=#346 id=346 data-nosnippet>346</a>
-<a href=#347 id=347 data-nosnippet>347</a>    <span class="doccomment">/// Row `index`; `None` past the end.
-<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="attr">#[must_use]
-<a href=#349 id=349 data-nosnippet>349</a>    </span><span class="kw">pub fn </span>row(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; <span class="prelude-ty">Option</span>&lt;EventRow&gt; {
-<a href=#350 id=350 data-nosnippet>350</a>        <span class="prelude-val">Some</span>(EventRow {
-<a href=#351 id=351 data-nosnippet>351</a>            seq: <span class="self">self
-<a href=#352 id=352 data-nosnippet>352</a>                </span>.base_seq
-<a href=#353 id=353 data-nosnippet>353</a>                .wrapping_add(i64::from(<span class="self">self</span>.seq.get(index)<span class="question-mark">?</span>.get())),
-<a href=#354 id=354 data-nosnippet>354</a>            time_ms: <span class="self">self
-<a href=#355 id=355 data-nosnippet>355</a>                </span>.base_time
-<a href=#356 id=356 data-nosnippet>356</a>                .wrapping_add(u64::from(<span class="self">self</span>.time.get(index)<span class="question-mark">?</span>.get())),
-<a href=#357 id=357 data-nosnippet>357</a>            exe: <span class="self">self</span>.exe.get(index)<span class="question-mark">?</span>.get(),
-<a href=#358 id=358 data-nosnippet>358</a>            host: <span class="self">self</span>.host.get(index)<span class="question-mark">?</span>.get(),
-<a href=#359 id=359 data-nosnippet>359</a>            uid: <span class="self">self</span>.uid.get(index)<span class="question-mark">?</span>.get(),
-<a href=#360 id=360 data-nosnippet>360</a>            pid: <span class="self">self</span>.pid.get(index)<span class="question-mark">?</span>.get(),
-<a href=#361 id=361 data-nosnippet>361</a>            address: <span class="kw-2">*</span><span class="self">self</span>.address.get(index)<span class="question-mark">?</span>,
-<a href=#362 id=362 data-nosnippet>362</a>            port: <span class="self">self</span>.port.get(index)<span class="question-mark">?</span>.get(),
-<a href=#363 id=363 data-nosnippet>363</a>            protocol: <span class="kw-2">*</span><span class="self">self</span>.protocol.get(index)<span class="question-mark">?</span>,
-<a href=#364 id=364 data-nosnippet>364</a>            context: <span class="kw-2">*</span><span class="self">self</span>.context.get(index)<span class="question-mark">?</span>,
-<a href=#365 id=365 data-nosnippet>365</a>            action: <span class="kw-2">*</span><span class="self">self</span>.action.get(index)<span class="question-mark">?</span>,
-<a href=#366 id=366 data-nosnippet>366</a>            source: <span class="kw-2">*</span><span class="self">self</span>.source.get(index)<span class="question-mark">?</span>,
-<a href=#367 id=367 data-nosnippet>367</a>            rule: <span class="self">self</span>.rule.get(index)<span class="question-mark">?</span>.get(),
-<a href=#368 id=368 data-nosnippet>368</a>            bytes_out: <span class="self">self</span>.bytes_out.get(index)<span class="question-mark">?</span>.get(),
-<a href=#369 id=369 data-nosnippet>369</a>            bytes_in: <span class="self">self</span>.bytes_in.get(index)<span class="question-mark">?</span>.get(),
-<a href=#370 id=370 data-nosnippet>370</a>        })
-<a href=#371 id=371 data-nosnippet>371</a>    }
-<a href=#372 id=372 data-nosnippet>372</a>
-<a href=#373 id=373 data-nosnippet>373</a>    <span class="doccomment">/// The rows, in order.
-<a href=#374 id=374 data-nosnippet>374</a>    </span><span class="kw">pub fn </span>rows(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = EventRow&gt; + <span class="lifetime">'_ </span>{
-<a href=#375 id=375 data-nosnippet>375</a>        (<span class="number">0</span>..<span class="self">self</span>.rows).filter_map(|i| <span class="self">self</span>.row(i))
+<a href=#347 id=347 data-nosnippet>347</a>    <span class="attr">#[must_use]
+<a href=#348 id=348 data-nosnippet>348</a>    </span><span class="kw">pub const fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+<a href=#349 id=349 data-nosnippet>349</a>        <span class="self">self</span>.rows == <span class="number">0
+<a href=#350 id=350 data-nosnippet>350</a>    </span>}
+<a href=#351 id=351 data-nosnippet>351</a>
+<a href=#352 id=352 data-nosnippet>352</a>    <span class="doccomment">/// Row `index`; `None` past the end.
+<a href=#353 id=353 data-nosnippet>353</a>    </span><span class="attr">#[must_use]
+<a href=#354 id=354 data-nosnippet>354</a>    </span><span class="kw">pub fn </span>row(<span class="kw-2">&amp;</span><span class="self">self</span>, index: usize) -&gt; <span class="prelude-ty">Option</span>&lt;EventRow&gt; {
+<a href=#355 id=355 data-nosnippet>355</a>        <span class="prelude-val">Some</span>(EventRow {
+<a href=#356 id=356 data-nosnippet>356</a>            seq: <span class="self">self
+<a href=#357 id=357 data-nosnippet>357</a>                </span>.base_seq
+<a href=#358 id=358 data-nosnippet>358</a>                .wrapping_add(i64::from(<span class="self">self</span>.seq.get(index)<span class="question-mark">?</span>.get())),
+<a href=#359 id=359 data-nosnippet>359</a>            time_ms: <span class="self">self
+<a href=#360 id=360 data-nosnippet>360</a>                </span>.base_time
+<a href=#361 id=361 data-nosnippet>361</a>                .wrapping_add(u64::from(<span class="self">self</span>.time.get(index)<span class="question-mark">?</span>.get())),
+<a href=#362 id=362 data-nosnippet>362</a>            exe: <span class="self">self</span>.exe.get(index)<span class="question-mark">?</span>.get(),
+<a href=#363 id=363 data-nosnippet>363</a>            host: <span class="self">self</span>.host.get(index)<span class="question-mark">?</span>.get(),
+<a href=#364 id=364 data-nosnippet>364</a>            uid: <span class="self">self</span>.uid.get(index)<span class="question-mark">?</span>.get(),
+<a href=#365 id=365 data-nosnippet>365</a>            pid: <span class="self">self</span>.pid.get(index)<span class="question-mark">?</span>.get(),
+<a href=#366 id=366 data-nosnippet>366</a>            address: <span class="kw-2">*</span><span class="self">self</span>.address.get(index)<span class="question-mark">?</span>,
+<a href=#367 id=367 data-nosnippet>367</a>            port: <span class="self">self</span>.port.get(index)<span class="question-mark">?</span>.get(),
+<a href=#368 id=368 data-nosnippet>368</a>            protocol: <span class="kw-2">*</span><span class="self">self</span>.protocol.get(index)<span class="question-mark">?</span>,
+<a href=#369 id=369 data-nosnippet>369</a>            context: <span class="kw-2">*</span><span class="self">self</span>.context.get(index)<span class="question-mark">?</span>,
+<a href=#370 id=370 data-nosnippet>370</a>            action: <span class="kw-2">*</span><span class="self">self</span>.action.get(index)<span class="question-mark">?</span>,
+<a href=#371 id=371 data-nosnippet>371</a>            source: <span class="kw-2">*</span><span class="self">self</span>.source.get(index)<span class="question-mark">?</span>,
+<a href=#372 id=372 data-nosnippet>372</a>            rule: <span class="self">self</span>.rule.get(index)<span class="question-mark">?</span>.get(),
+<a href=#373 id=373 data-nosnippet>373</a>            bytes_out: <span class="self">self</span>.bytes_out.get(index)<span class="question-mark">?</span>.get(),
+<a href=#374 id=374 data-nosnippet>374</a>            bytes_in: <span class="self">self</span>.bytes_in.get(index)<span class="question-mark">?</span>.get(),
+<a href=#375 id=375 data-nosnippet>375</a>        })
 <a href=#376 id=376 data-nosnippet>376</a>    }
 <a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// The executables' string ids, without decoding the rest: for filtering and counting in place.
-<a href=#379 id=379 data-nosnippet>379</a>    </span><span class="kw">pub fn </span>exe_ids(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = u32&gt; + <span class="lifetime">'_ </span>{
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="self">self</span>.exe.iter().map(|v| v.get())
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="doccomment">/// The rows, in order.
+<a href=#379 id=379 data-nosnippet>379</a>    </span><span class="kw">pub fn </span>rows(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = EventRow&gt; + <span class="lifetime">'_ </span>{
+<a href=#380 id=380 data-nosnippet>380</a>        (<span class="number">0</span>..<span class="self">self</span>.rows).filter_map(|i| <span class="self">self</span>.row(i))
 <a href=#381 id=381 data-nosnippet>381</a>    }
-<a href=#382 id=382 data-nosnippet>382</a>}
-<a href=#383 id=383 data-nosnippet>383</a>
-<a href=#384 id=384 data-nosnippet>384</a><span class="attr">#[cfg(test)]
-<a href=#385 id=385 data-nosnippet>385</a></span><span class="kw">mod </span>tests {
-<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#387 id=387 data-nosnippet>387</a>
-<a href=#388 id=388 data-nosnippet>388</a>    <span class="kw">fn </span>row(seq: i64) -&gt; EventRow {
-<a href=#389 id=389 data-nosnippet>389</a>        EventRow {
-<a href=#390 id=390 data-nosnippet>390</a>            seq,
-<a href=#391 id=391 data-nosnippet>391</a>            time_ms: <span class="number">1_763_200_000_000 </span>+ u64::try_from(seq).unwrap() * <span class="number">7</span>,
-<a href=#392 id=392 data-nosnippet>392</a>            exe: <span class="number">3</span>,
-<a href=#393 id=393 data-nosnippet>393</a>            host: u32::try_from(seq % <span class="number">2</span>).unwrap(),
-<a href=#394 id=394 data-nosnippet>394</a>            uid: <span class="number">1000</span>,
-<a href=#395 id=395 data-nosnippet>395</a>            pid: <span class="number">4242</span>,
-<a href=#396 id=396 data-nosnippet>396</a>            address: [<span class="number">0x20</span>, <span class="number">0x01</span>, <span class="number">0x0d</span>, <span class="number">0xb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>],
-<a href=#397 id=397 data-nosnippet>397</a>            port: <span class="number">443</span>,
-<a href=#398 id=398 data-nosnippet>398</a>            protocol: <span class="number">6</span>,
-<a href=#399 id=399 data-nosnippet>399</a>            context: <span class="number">1</span>,
-<a href=#400 id=400 data-nosnippet>400</a>            action: <span class="number">1</span>,
-<a href=#401 id=401 data-nosnippet>401</a>            source: <span class="number">1</span>,
-<a href=#402 id=402 data-nosnippet>402</a>            rule: <span class="number">18</span>,
-<a href=#403 id=403 data-nosnippet>403</a>            bytes_out: <span class="number">517</span>,
-<a href=#404 id=404 data-nosnippet>404</a>            bytes_in: u64::MAX,
-<a href=#405 id=405 data-nosnippet>405</a>        }
-<a href=#406 id=406 data-nosnippet>406</a>    }
-<a href=#407 id=407 data-nosnippet>407</a>
-<a href=#408 id=408 data-nosnippet>408</a>    <span class="attr">#[test]
-<a href=#409 id=409 data-nosnippet>409</a>    </span><span class="kw">fn </span>round_trips() {
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">let </span>rows: Vec&lt;EventRow&gt; = (<span class="number">100</span>..<span class="number">164</span>).map(row).collect();
-<a href=#411 id=411 data-nosnippet>411</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
-<a href=#412 id=412 data-nosnippet>412</a>        encode_events(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;mut </span>block).unwrap();
-<a href=#413 id=413 data-nosnippet>413</a>        <span class="kw">let </span>parsed = EventBlock::parse(<span class="kw-2">&amp;</span>block).unwrap();
-<a href=#414 id=414 data-nosnippet>414</a>        <span class="macro">assert_eq!</span>(parsed.len(), rows.len());
-<a href=#415 id=415 data-nosnippet>415</a>        <span class="macro">assert_eq!</span>(parsed.rows().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(), rows);
-<a href=#416 id=416 data-nosnippet>416</a>        <span class="macro">assert!</span>(parsed.exe_ids().all(|id| id == <span class="number">3</span>));
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="macro">assert_eq!</span>(parsed.row(<span class="number">64</span>), <span class="prelude-val">None</span>);
-<a href=#418 id=418 data-nosnippet>418</a>        <span class="comment">// 70 bytes a row (six u32, the address, a u16, four u8, three u64), and the header and directory.
-<a href=#419 id=419 data-nosnippet>419</a>        </span><span class="macro">assert_eq!</span>(block.len(), HEADER + <span class="number">15 </span>* DIRECTORY_ENTRY + <span class="number">64 </span>* <span class="number">70</span>);
-<a href=#420 id=420 data-nosnippet>420</a>    }
-<a href=#421 id=421 data-nosnippet>421</a>
-<a href=#422 id=422 data-nosnippet>422</a>    <span class="attr">#[test]
-<a href=#423 id=423 data-nosnippet>423</a>    </span><span class="kw">fn </span>empty_blocks_are_fine() {
-<a href=#424 id=424 data-nosnippet>424</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
-<a href=#425 id=425 data-nosnippet>425</a>        encode_events(<span class="kw-2">&amp;</span>[], <span class="kw-2">&amp;mut </span>block).unwrap();
-<a href=#426 id=426 data-nosnippet>426</a>        <span class="macro">assert!</span>(EventBlock::parse(<span class="kw-2">&amp;</span>block).unwrap().is_empty());
-<a href=#427 id=427 data-nosnippet>427</a>    }
-<a href=#428 id=428 data-nosnippet>428</a>
-<a href=#429 id=429 data-nosnippet>429</a>    <span class="attr">#[test]
-<a href=#430 id=430 data-nosnippet>430</a>    </span><span class="kw">fn </span>unknown_columns_are_skipped_and_wrong_widths_refused() {
-<a href=#431 id=431 data-nosnippet>431</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
-<a href=#432 id=432 data-nosnippet>432</a>        encode_events(<span class="kw-2">&amp;</span>[row(<span class="number">1</span>)], <span class="kw-2">&amp;mut </span>block).unwrap();
-<a href=#433 id=433 data-nosnippet>433</a>        <span class="comment">// Rename the first column (seq) to an unknown id: it is then missing.
-<a href=#434 id=434 data-nosnippet>434</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>unknown = block.clone();
-<a href=#435 id=435 data-nosnippet>435</a>        unknown[HEADER..HEADER + <span class="number">2</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">99_u16</span>.to_le_bytes());
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">assert_eq!</span>(
-<a href=#437 id=437 data-nosnippet>437</a>            EventBlock::parse(<span class="kw-2">&amp;</span>unknown).err(),
-<a href=#438 id=438 data-nosnippet>438</a>            <span class="prelude-val">Some</span>(BlockError::Missing(<span class="number">1</span>))
-<a href=#439 id=439 data-nosnippet>439</a>        );
-<a href=#440 id=440 data-nosnippet>440</a>        <span class="kw">let </span><span class="kw-2">mut </span>wide = block.clone();
-<a href=#441 id=441 data-nosnippet>441</a>        wide[HEADER + <span class="number">2</span>..HEADER + <span class="number">4</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">8_u16</span>.to_le_bytes());
-<a href=#442 id=442 data-nosnippet>442</a>        <span class="macro">assert_eq!</span>(
-<a href=#443 id=443 data-nosnippet>443</a>            EventBlock::parse(<span class="kw-2">&amp;</span>wide).err(),
-<a href=#444 id=444 data-nosnippet>444</a>            <span class="prelude-val">Some</span>(BlockError::Width(<span class="number">1</span>, <span class="number">8</span>, <span class="number">4</span>))
-<a href=#445 id=445 data-nosnippet>445</a>        );
-<a href=#446 id=446 data-nosnippet>446</a>        <span class="macro">assert_eq!</span>(
-<a href=#447 id=447 data-nosnippet>447</a>            EventBlock::parse(<span class="kw-2">&amp;</span>block[..<span class="number">40</span>]).err(),
-<a href=#448 id=448 data-nosnippet>448</a>            <span class="prelude-val">Some</span>(BlockError::Truncated)
-<a href=#449 id=449 data-nosnippet>449</a>        );
-<a href=#450 id=450 data-nosnippet>450</a>        <span class="macro">assert_eq!</span>(
-<a href=#451 id=451 data-nosnippet>451</a>            EventBlock::parse(<span class="string">b"nope, not a block at all, really......"</span>).err(),
-<a href=#452 id=452 data-nosnippet>452</a>            <span class="prelude-val">Some</span>(BlockError::Magic)
-<a href=#453 id=453 data-nosnippet>453</a>        );
-<a href=#454 id=454 data-nosnippet>454</a>    }
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a>    <span class="attr">#[test]
-<a href=#457 id=457 data-nosnippet>457</a>    </span><span class="kw">fn </span>rows_spanning_too_much_are_refused() {
-<a href=#458 id=458 data-nosnippet>458</a>        <span class="kw">let </span><span class="kw-2">mut </span>far = row(<span class="number">2</span>);
-<a href=#459 id=459 data-nosnippet>459</a>        far.time_ms += u64::from(u32::MAX) + <span class="number">1</span>;
-<a href=#460 id=460 data-nosnippet>460</a>        <span class="macro">assert_eq!</span>(
-<a href=#461 id=461 data-nosnippet>461</a>            encode_events(<span class="kw-2">&amp;</span>[row(<span class="number">1</span>), far], <span class="kw-2">&amp;mut </span>Vec::new()),
-<a href=#462 id=462 data-nosnippet>462</a>            <span class="prelude-val">Err</span>(BlockError::Span)
-<a href=#463 id=463 data-nosnippet>463</a>        );
-<a href=#464 id=464 data-nosnippet>464</a>    }
-<a href=#465 id=465 data-nosnippet>465</a>}
+<a href=#382 id=382 data-nosnippet>382</a>
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="doccomment">/// The executables' string ids, without decoding the rest: for filtering and counting in place.
+<a href=#384 id=384 data-nosnippet>384</a>    </span><span class="kw">pub fn </span>exe_ids(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = u32&gt; + <span class="lifetime">'_ </span>{
+<a href=#385 id=385 data-nosnippet>385</a>        <span class="self">self</span>.exe.iter().map(|v| v.get())
+<a href=#386 id=386 data-nosnippet>386</a>    }
+<a href=#387 id=387 data-nosnippet>387</a>}
+<a href=#388 id=388 data-nosnippet>388</a>
+<a href=#389 id=389 data-nosnippet>389</a><span class="attr">#[cfg(test)]
+<a href=#390 id=390 data-nosnippet>390</a></span><span class="kw">mod </span>tests {
+<a href=#391 id=391 data-nosnippet>391</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#392 id=392 data-nosnippet>392</a>
+<a href=#393 id=393 data-nosnippet>393</a>    <span class="kw">fn </span>row(seq: i64) -&gt; EventRow {
+<a href=#394 id=394 data-nosnippet>394</a>        EventRow {
+<a href=#395 id=395 data-nosnippet>395</a>            seq,
+<a href=#396 id=396 data-nosnippet>396</a>            time_ms: <span class="number">1_763_200_000_000 </span>+ u64::try_from(seq).unwrap() * <span class="number">7</span>,
+<a href=#397 id=397 data-nosnippet>397</a>            exe: <span class="number">3</span>,
+<a href=#398 id=398 data-nosnippet>398</a>            host: u32::try_from(seq % <span class="number">2</span>).unwrap(),
+<a href=#399 id=399 data-nosnippet>399</a>            uid: <span class="number">1000</span>,
+<a href=#400 id=400 data-nosnippet>400</a>            pid: <span class="number">4242</span>,
+<a href=#401 id=401 data-nosnippet>401</a>            address: [<span class="number">0x20</span>, <span class="number">0x01</span>, <span class="number">0x0d</span>, <span class="number">0xb8</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>, <span class="number">1</span>],
+<a href=#402 id=402 data-nosnippet>402</a>            port: <span class="number">443</span>,
+<a href=#403 id=403 data-nosnippet>403</a>            protocol: <span class="number">6</span>,
+<a href=#404 id=404 data-nosnippet>404</a>            context: <span class="number">1</span>,
+<a href=#405 id=405 data-nosnippet>405</a>            action: <span class="number">1</span>,
+<a href=#406 id=406 data-nosnippet>406</a>            source: <span class="number">1</span>,
+<a href=#407 id=407 data-nosnippet>407</a>            rule: <span class="number">18</span>,
+<a href=#408 id=408 data-nosnippet>408</a>            bytes_out: <span class="number">517</span>,
+<a href=#409 id=409 data-nosnippet>409</a>            bytes_in: u64::MAX,
+<a href=#410 id=410 data-nosnippet>410</a>        }
+<a href=#411 id=411 data-nosnippet>411</a>    }
+<a href=#412 id=412 data-nosnippet>412</a>
+<a href=#413 id=413 data-nosnippet>413</a>    <span class="attr">#[test]
+<a href=#414 id=414 data-nosnippet>414</a>    </span><span class="kw">fn </span>round_trips() {
+<a href=#415 id=415 data-nosnippet>415</a>        <span class="kw">let </span>rows: Vec&lt;EventRow&gt; = (<span class="number">100</span>..<span class="number">164</span>).map(row).collect();
+<a href=#416 id=416 data-nosnippet>416</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
+<a href=#417 id=417 data-nosnippet>417</a>        encode_events(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;mut </span>block).unwrap();
+<a href=#418 id=418 data-nosnippet>418</a>        <span class="kw">let </span>parsed = EventBlock::parse(<span class="kw-2">&amp;</span>block).unwrap();
+<a href=#419 id=419 data-nosnippet>419</a>        <span class="macro">assert_eq!</span>(parsed.len(), rows.len());
+<a href=#420 id=420 data-nosnippet>420</a>        <span class="macro">assert_eq!</span>(parsed.rows().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;(), rows);
+<a href=#421 id=421 data-nosnippet>421</a>        <span class="macro">assert!</span>(parsed.exe_ids().all(|id| id == <span class="number">3</span>));
+<a href=#422 id=422 data-nosnippet>422</a>        <span class="macro">assert_eq!</span>(parsed.row(<span class="number">64</span>), <span class="prelude-val">None</span>);
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="comment">// 70 bytes a row (six u32, the address, a u16, four u8, three u64), and the header and directory.
+<a href=#424 id=424 data-nosnippet>424</a>        </span><span class="macro">assert_eq!</span>(block.len(), HEADER + <span class="number">15 </span>* DIRECTORY_ENTRY + <span class="number">64 </span>* <span class="number">70</span>);
+<a href=#425 id=425 data-nosnippet>425</a>    }
+<a href=#426 id=426 data-nosnippet>426</a>
+<a href=#427 id=427 data-nosnippet>427</a>    <span class="attr">#[test]
+<a href=#428 id=428 data-nosnippet>428</a>    </span><span class="kw">fn </span>empty_blocks_are_fine() {
+<a href=#429 id=429 data-nosnippet>429</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
+<a href=#430 id=430 data-nosnippet>430</a>        encode_events(<span class="kw-2">&amp;</span>[], <span class="kw-2">&amp;mut </span>block).unwrap();
+<a href=#431 id=431 data-nosnippet>431</a>        <span class="macro">assert!</span>(EventBlock::parse(<span class="kw-2">&amp;</span>block).unwrap().is_empty());
+<a href=#432 id=432 data-nosnippet>432</a>    }
+<a href=#433 id=433 data-nosnippet>433</a>
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="attr">#[test]
+<a href=#435 id=435 data-nosnippet>435</a>    </span><span class="kw">fn </span>unknown_columns_are_skipped_and_wrong_widths_refused() {
+<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
+<a href=#437 id=437 data-nosnippet>437</a>        encode_events(<span class="kw-2">&amp;</span>[row(<span class="number">1</span>)], <span class="kw-2">&amp;mut </span>block).unwrap();
+<a href=#438 id=438 data-nosnippet>438</a>        <span class="comment">// Rename the first column (seq) to an unknown id: it is then missing.
+<a href=#439 id=439 data-nosnippet>439</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>unknown = block.clone();
+<a href=#440 id=440 data-nosnippet>440</a>        unknown[HEADER..HEADER + <span class="number">2</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">99_u16</span>.to_le_bytes());
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="macro">assert_eq!</span>(
+<a href=#442 id=442 data-nosnippet>442</a>            EventBlock::parse(<span class="kw-2">&amp;</span>unknown).err(),
+<a href=#443 id=443 data-nosnippet>443</a>            <span class="prelude-val">Some</span>(BlockError::Missing(<span class="number">1</span>))
+<a href=#444 id=444 data-nosnippet>444</a>        );
+<a href=#445 id=445 data-nosnippet>445</a>        <span class="kw">let </span><span class="kw-2">mut </span>wide = block.clone();
+<a href=#446 id=446 data-nosnippet>446</a>        wide[HEADER + <span class="number">2</span>..HEADER + <span class="number">4</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="number">8_u16</span>.to_le_bytes());
+<a href=#447 id=447 data-nosnippet>447</a>        <span class="macro">assert_eq!</span>(
+<a href=#448 id=448 data-nosnippet>448</a>            EventBlock::parse(<span class="kw-2">&amp;</span>wide).err(),
+<a href=#449 id=449 data-nosnippet>449</a>            <span class="prelude-val">Some</span>(BlockError::Width(<span class="number">1</span>, <span class="number">8</span>, <span class="number">4</span>))
+<a href=#450 id=450 data-nosnippet>450</a>        );
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="macro">assert_eq!</span>(
+<a href=#452 id=452 data-nosnippet>452</a>            EventBlock::parse(<span class="kw-2">&amp;</span>block[..<span class="number">40</span>]).err(),
+<a href=#453 id=453 data-nosnippet>453</a>            <span class="prelude-val">Some</span>(BlockError::Truncated)
+<a href=#454 id=454 data-nosnippet>454</a>        );
+<a href=#455 id=455 data-nosnippet>455</a>        <span class="macro">assert_eq!</span>(
+<a href=#456 id=456 data-nosnippet>456</a>            EventBlock::parse(<span class="string">b"nope, not a block at all, really......"</span>).err(),
+<a href=#457 id=457 data-nosnippet>457</a>            <span class="prelude-val">Some</span>(BlockError::Magic)
+<a href=#458 id=458 data-nosnippet>458</a>        );
+<a href=#459 id=459 data-nosnippet>459</a>    }
+<a href=#460 id=460 data-nosnippet>460</a>
+<a href=#461 id=461 data-nosnippet>461</a>    <span class="attr">#[test]
+<a href=#462 id=462 data-nosnippet>462</a>    </span><span class="kw">fn </span>a_clock_stepped_back_still_encodes() {
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="kw">let </span><span class="kw-2">mut </span>earlier = row(<span class="number">2</span>);
+<a href=#464 id=464 data-nosnippet>464</a>        earlier.time_ms = row(<span class="number">1</span>).time_ms - <span class="number">5_000</span>;
+<a href=#465 id=465 data-nosnippet>465</a>        <span class="kw">let </span><span class="kw-2">mut </span>block = Vec::new();
+<a href=#466 id=466 data-nosnippet>466</a>        encode_events(<span class="kw-2">&amp;</span>[row(<span class="number">1</span>), earlier], <span class="kw-2">&amp;mut </span>block).unwrap();
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="kw">let </span>rows: Vec&lt;EventRow&gt; = EventBlock::parse(<span class="kw-2">&amp;</span>block).unwrap().rows().collect();
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="macro">assert_eq!</span>(rows, <span class="macro">vec!</span>[row(<span class="number">1</span>), earlier]);
+<a href=#469 id=469 data-nosnippet>469</a>    }
+<a href=#470 id=470 data-nosnippet>470</a>
+<a href=#471 id=471 data-nosnippet>471</a>    <span class="attr">#[test]
+<a href=#472 id=472 data-nosnippet>472</a>    </span><span class="kw">fn </span>rows_spanning_too_much_are_refused() {
+<a href=#473 id=473 data-nosnippet>473</a>        <span class="kw">let </span><span class="kw-2">mut </span>far = row(<span class="number">2</span>);
+<a href=#474 id=474 data-nosnippet>474</a>        far.time_ms += u64::from(u32::MAX) + <span class="number">1</span>;
+<a href=#475 id=475 data-nosnippet>475</a>        <span class="macro">assert_eq!</span>(
+<a href=#476 id=476 data-nosnippet>476</a>            encode_events(<span class="kw-2">&amp;</span>[row(<span class="number">1</span>), far], <span class="kw-2">&amp;mut </span>Vec::new()),
+<a href=#477 id=477 data-nosnippet>477</a>            <span class="prelude-val">Err</span>(BlockError::Span)
+<a href=#478 id=478 data-nosnippet>478</a>        );
+<a href=#479 id=479 data-nosnippet>479</a>    }
+<a href=#480 id=480 data-nosnippet>480</a>}
 </code></pre></div></section></main></body></html>

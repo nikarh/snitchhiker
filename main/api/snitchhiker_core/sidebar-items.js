@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["destination","engine","generalize","lint","opensnitch","pattern","query","rule","spec","suggest","system"]};
+window.SIDEBAR_ITEMS = {"mod":["destination","engine","generalize","lint","opensnitch","pattern","proposal","query","rule","spec","suggest","system"]};
