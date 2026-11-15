@@ -2015,20 +2015,23 @@ the security model, and the GUI framework are proven before the bulk of feature 
         For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
         executable isn't checked, since only root runs as uid 0 and root is out of scope.
   - [x] Trusted-client registry and the `trust-client` command.
-  - [ ] Session lifecycle bound to the pidfd and logind session. The pidfd part is done (a connection ends with
-        its client's process); the logind session comes with presence in prompt routing.
+  - [x] Session lifecycle bound to the pidfd and logind session. A connection ends with its client's process; the
+        logind session, used for presence, moves to M5 with prompt routing.
 - [ ] **Step-up**
   - [x] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions. Today's
         only dangerous action through the protocol is an allow-everything rule; others join as they are added.
 - [ ] **Prompt broker**
   - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
   - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
-        every admin client can answer regardless of notification.
+        every admin client can answer regardless of notification. Moved to M5: it routes between devices, which
+        pairing brings; today every listening client is asked, and any can answer.
   - [x] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement.
   - [x] The CLI `prompts --watch` for testing before any GUI exists.
 - [ ] **`client` crate**
-  - [ ] Unix socket transport, reconnect, resubscribe from watermarks, typed API.
-  - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)): per-node store, coverage sets for
+  - [ ] Unix socket transport, reconnect, resubscribe from watermarks, typed API. Transport, typed calls and
+        resuming from a seq are done; reconnecting moves to M3, with its first user.
+  - [ ] (Moved to M3, which needs it and brings the query language.) Cache and replication
+        ([§11.6](#116-client-cache-and-replication)): per-node store, coverage sets for
         rollups and event ranges, the in-memory query evaluator with the SQL equivalence property test, epochs,
         eviction budgets.
 - [ ] **Escape suite, control plane** ([§12.5](#125-escape-and-tamper-suite))
@@ -2050,6 +2053,10 @@ the security model, and the GUI framework are proven before the bulk of feature 
 
 ### M3. Desktop app
 
+- [ ] **`client` crate (from M2)**
+  - [ ] Reconnect with backoff, resubscribing from the last seq seen.
+  - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)) and the query language with its two
+        executors.
 - [ ] **App shell**
   - [ ] Framework from M0, theme (light and dark), sidebar with nodes, navigation, settings storage (cosmetic only).
   - [ ] Environment scrubbing at start, the X11 banner, the compositor peer check.
@@ -2108,6 +2115,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M5. Remote: iroh, pairing, relay, multi-node
 
+- [ ] **Prompt routing (from M2)**
+  - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence of local clients'
+        sessions, per-device mute; every admin client can answer regardless of notification.
 - [ ] **Daemon remote endpoint**
   - [ ] iroh endpoint with the node key (systemd-creds TPM sealing supported), ALPN, the paired-devices table, roles,
         revocation.
