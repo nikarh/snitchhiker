@@ -75,7 +75,11 @@ impl App {
         let prompts = cx.new(|cx| Prompts::new(model.clone(), requests.clone(), cx));
         let events = cx.new(|cx| {
             TableState::new(
-                EventsTable::new(model.clone(), requests.clone()),
+                EventsTable::new(
+                    model.clone(),
+                    requests.clone(),
+                    &crate::prefs::Prefs::load().events_hidden,
+                ),
                 window,
                 cx,
             )
@@ -196,7 +200,10 @@ impl App {
                                 let _ = requests.send(Request::Connections);
                             }
                         }
-                        Changed::Connections => app.connections.update(cx, TableState::refresh),
+                        Changed::Connections => app.connections.update(cx, |table, cx| {
+                            table.delegate_mut().recompute(cx);
+                            table.refresh(cx);
+                        }),
                         Changed::Rules => app.rules.update(cx, |table, cx| {
                             table.delegate_mut().recompute(cx);
                             table.refresh(cx);

@@ -12,8 +12,8 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
-use gpui_component::table::{Column, DataTable, TableDelegate, TableEvent, TableState};
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex};
 use snitchhiker_core::query::{self, RuleFilter, RuleView};
@@ -116,6 +116,8 @@ pub struct RulesTable {
     /// Indices into the model's rules of those shown, in order.
     visible: Vec<usize>,
     pub selection: Selection,
+    /// The column sorted by, and whether descending.
+    sort: Option<(usize, bool)>,
 }
 
 impl RulesTable {
@@ -128,6 +130,7 @@ impl RulesTable {
             folder: None,
             visible: Vec::new(),
             selection: Selection::default(),
+            sort: None,
         }
     }
 
@@ -152,6 +155,23 @@ impl RulesTable {
             })
             .map(|(index, _)| index)
             .collect();
+        if let Some((column, descending)) = self.sort {
+            let key = |i: &usize| {
+                let rule = list.rules.get(*i);
+                match column {
+                    1 => rule.map_or(String::new(), |r| u8::from(r.enabled).to_string()),
+                    2 => rule.map_or(String::new(), |r| r.action.to_string()),
+                    3 => rule.map_or(String::new(), |r| {
+                        format!("{}{}", folder_path(list, r.folder), r.name).to_lowercase()
+                    }),
+                    _ => rule.map_or(String::new(), |r| conditions(r.conditions.as_ref())),
+                }
+            };
+            self.visible.sort_by_cached_key(key);
+            if descending {
+                self.visible.reverse();
+            }
+        }
         let ids: BTreeSet<u64> = list.rules.iter().map(|r| r.id).collect();
         self.selection.retain(|id| ids.contains(&id));
     }
@@ -297,7 +317,75 @@ impl TableDelegate for RulesTable {
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
-        Column::new(key, name).width(width)
+        let column = Column::new(key, name).width(width);
+        if (1..=4).contains(&col_ix) {
+            column.sortable()
+        } else {
+            column
+        }
+    }
+
+    fn perform_sort(
+        &mut self,
+        col_ix: usize,
+        sort: ColumnSort,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        self.sort = match sort {
+            ColumnSort::Default => None,
+            ColumnSort::Ascending => Some((col_ix, false)),
+            ColumnSort::Descending => Some((col_ix, true)),
+        };
+        self.recompute(cx);
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let list = self.model.read(cx).rules.clone();
+        let Some(rule) = self
+            .visible
+            .get(row_ix)
+            .and_then(|i| list.rules.get(*i))
+            .cloned()
+        else {
+            return menu;
+        };
+        if rule.locked {
+            return menu
+                .item(PopupMenuItem::new("Locked: a default or managed rule").disabled(true));
+        }
+        let (model, requests) = (self.model.clone(), self.requests.clone());
+        let (toggle, delete) = (self.requests.clone(), self.requests.clone());
+        let (id, enabled) = (rule.id, rule.enabled);
+        menu.item(PopupMenuItem::new("Edit").on_click(move |_, window, cx| {
+            crate::views::editor::open(
+                model.clone(),
+                requests.clone(),
+                Some(rule.clone()),
+                window,
+                cx,
+            );
+        }))
+        .item(
+            PopupMenuItem::new(if enabled { "Disable" } else { "Enable" }).on_click(
+                move |_, _, _| {
+                    let _ = toggle.send(Request::SetRuleEnabled {
+                        id,
+                        enabled: !enabled,
+                    });
+                },
+            ),
+        )
+        .separator()
+        .item(PopupMenuItem::new("Delete").on_click(move |_, _, _| {
+            let _ = delete.send(Request::DeleteRule { id });
+        }))
     }
 
     fn render_td(

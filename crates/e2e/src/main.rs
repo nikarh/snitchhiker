@@ -263,7 +263,8 @@ fn main() -> ExitCode {
         args.get(2).and_then(|x| x.parse().ok()),
         args.get(3).and_then(|y| y.parse().ok()),
     ) {
-        return match pointer::click(x, y) {
+        let right = args.get(4).is_some_and(|b| b == "right");
+        return match pointer::click(x, y, right) {
             Ok(()) => std::process::ExitCode::SUCCESS,
             Err(error) => {
                 let _ = writeln!(io::stderr(), "click: {error}");

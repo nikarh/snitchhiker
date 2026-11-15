@@ -74,8 +74,12 @@ fn millis() -> u32 {
     })
 }
 
-/// Moves the pointer to (`x`, `y`) of the output and clicks the left button there.
-pub fn click(x: u32, y: u32) -> Result<(), String> {
+/// The right button (`linux/input-event-codes.h`).
+const BTN_RIGHT: u32 = 0x111;
+
+/// Moves the pointer to (`x`, `y`) of the output and clicks the left button there (the right one with `right`).
+pub fn click(x: u32, y: u32, right: bool) -> Result<(), String> {
+    let button = if right { BTN_RIGHT } else { BTN_LEFT };
     let connection =
         Connection::connect_to_env().map_err(|e| format!("the Wayland session: {e}"))?;
     let (globals, mut queue) =
@@ -93,10 +97,10 @@ pub fn click(x: u32, y: u32) -> Result<(), String> {
     pointer.frame();
     queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
     std::thread::sleep(std::time::Duration::from_millis(100));
-    pointer.button(millis(), BTN_LEFT, ButtonState::Pressed);
+    pointer.button(millis(), button, ButtonState::Pressed);
     pointer.frame();
     queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
-    pointer.button(millis(), BTN_LEFT, ButtonState::Released);
+    pointer.button(millis(), button, ButtonState::Released);
     pointer.frame();
     queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
     pointer.destroy();

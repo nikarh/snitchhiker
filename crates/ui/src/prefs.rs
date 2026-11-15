@@ -22,6 +22,9 @@ pub enum Appearance {
 #[serde(default)]
 pub struct Prefs {
     pub appearance: Appearance,
+    /// The Events table's columns hidden, by key.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub events_hidden: Vec<String>,
 }
 
 impl Global for Prefs {}
@@ -99,7 +102,8 @@ mod tests {
         );
         assert_eq!(
             toml::to_string(&Prefs {
-                appearance: Appearance::Light
+                appearance: Appearance::Light,
+                ..Prefs::default()
             })
             .unwrap(),
             "appearance = \"light\"\n"

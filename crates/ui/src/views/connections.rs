@@ -7,7 +7,7 @@ use gpui::{
     App, Context, Entity, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
-use gpui_component::table::{Column, TableDelegate, TableState};
+use gpui_component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex};
 use snitchhiker_proto::{convert, v1};
 
@@ -28,12 +28,47 @@ const COLUMNS: [(&str, &str, f32); 7] = [
 pub struct ConnectionsTable {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
+    /// Indices into the model's connections, in the order shown.
+    order: Vec<usize>,
+    /// The column sorted by, and whether descending.
+    sort: Option<(usize, bool)>,
 }
 
 impl ConnectionsTable {
     #[must_use]
     pub fn new(model: Entity<Model>, requests: mpsc::Sender<Request>) -> Self {
-        Self { model, requests }
+        Self {
+            model,
+            requests,
+            order: Vec::new(),
+            sort: None,
+        }
+    }
+
+    /// Orders the connections as listed, then by the column chosen.
+    pub fn recompute(&mut self, cx: &App) {
+        let connections = &self.model.read(cx).connections;
+        self.order = (0..connections.len()).collect();
+        if let Some((column, descending)) = self.sort {
+            self.order.sort_by(|a, b| {
+                let (Some(a), Some(b)) = (connections.get(*a), connections.get(*b)) else {
+                    return std::cmp::Ordering::Equal;
+                };
+                let order = match column {
+                    0 => (a.protocol, &a.state).cmp(&(b.protocol, &b.state)),
+                    1 => a.exe.cmp(&b.exe),
+                    2 => (&a.host, &a.remote, a.remote_port).cmp(&(
+                        &b.host,
+                        &b.remote,
+                        b.remote_port,
+                    )),
+                    3 => a.uid.cmp(&b.uid),
+                    4 => a.bytes_out.cmp(&b.bytes_out),
+                    _ => a.bytes_in.cmp(&b.bytes_in),
+                };
+                if descending { order.reverse() } else { order }
+            });
+        }
     }
 }
 
@@ -73,13 +108,33 @@ impl TableDelegate for ConnectionsTable {
         COLUMNS.len()
     }
 
-    fn rows_count(&self, cx: &App) -> usize {
-        self.model.read(cx).connections.len()
+    fn rows_count(&self, _: &App) -> usize {
+        self.order.len()
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
-        Column::new(key, name).width(width)
+        let column = Column::new(key, name).width(width);
+        if col_ix < 6 {
+            column.sortable()
+        } else {
+            column
+        }
+    }
+
+    fn perform_sort(
+        &mut self,
+        col_ix: usize,
+        sort: ColumnSort,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        self.sort = match sort {
+            ColumnSort::Default => None,
+            ColumnSort::Ascending => Some((col_ix, false)),
+            ColumnSort::Descending => Some((col_ix, true)),
+        };
+        self.recompute(cx);
     }
 
     fn render_td(
@@ -89,7 +144,12 @@ impl TableDelegate for ConnectionsTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let Some(c) = self.model.read(cx).connections.get(row_ix).cloned() else {
+        let Some(c) = self
+            .order
+            .get(row_ix)
+            .and_then(|i| self.model.read(cx).connections.get(*i))
+            .cloned()
+        else {
             return div().into_any_element();
         };
         let text = |text: String| {

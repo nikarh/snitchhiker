@@ -10,6 +10,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::table::DataTable;
 use gpui_component::table::{Column, TableDelegate, TableState};
 use gpui_component::tag::Tag;
@@ -38,12 +39,40 @@ const COLUMNS: [(&str, &str, f32); 9] = [
 pub struct EventsTable {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
+    /// The columns shown, as indices into `COLUMNS`.
+    shown: Vec<usize>,
 }
+
+/// Columns that can be hidden: (key, label).
+pub const OPTIONAL: [(&str, &str); 5] = [
+    ("destination", "Destination"),
+    ("port", "Port"),
+    ("user", "User"),
+    ("out", "Sent"),
+    ("in", "Received"),
+];
 
 impl EventsTable {
     #[must_use]
-    pub fn new(model: Entity<Model>, requests: mpsc::Sender<Request>) -> Self {
-        Self { model, requests }
+    pub fn new(model: Entity<Model>, requests: mpsc::Sender<Request>, hidden: &[String]) -> Self {
+        let mut table = Self {
+            model,
+            requests,
+            shown: Vec::new(),
+        };
+        table.hide(hidden);
+        table
+    }
+
+    /// Shows every column but those with these keys.
+    pub fn hide(&mut self, hidden: &[String]) {
+        self.shown = (0..COLUMNS.len())
+            .filter(|i| {
+                COLUMNS
+                    .get(*i)
+                    .is_none_or(|(key, _, _)| !hidden.iter().any(|h| h == key))
+            })
+            .collect();
     }
 }
 
@@ -137,6 +166,46 @@ impl EventsPage {
     }
 }
 
+impl EventsPage {
+    /// The column chooser: optional columns on and off, kept in the preferences.
+    fn columns_menu(&self) -> impl IntoElement {
+        let table = self.table.clone();
+        Button::new("events-columns")
+            .small()
+            .label("Columns")
+            .dropdown_menu(move |mut menu, _, cx| {
+                let hidden = cx
+                    .try_global::<crate::prefs::Prefs>()
+                    .map_or_else(Vec::new, |p| p.events_hidden.clone());
+                for (key, label) in OPTIONAL {
+                    let shown = !hidden.iter().any(|h| h == key);
+                    let table = table.clone();
+                    menu = menu.item(PopupMenuItem::new(label).checked(shown).on_click(
+                        move |_, _, cx| {
+                            let mut prefs = cx
+                                .try_global::<crate::prefs::Prefs>()
+                                .cloned()
+                                .unwrap_or_default();
+                            if shown {
+                                prefs.events_hidden.push(key.to_owned());
+                            } else {
+                                prefs.events_hidden.retain(|h| h != key);
+                            }
+                            prefs.save();
+                            let hidden = prefs.events_hidden.clone();
+                            cx.set_global(prefs);
+                            table.update(cx, |table, cx| {
+                                table.delegate_mut().hide(&hidden);
+                                table.refresh(cx);
+                            });
+                        },
+                    ));
+                }
+                menu
+            })
+    }
+}
+
 /// The events loaded, as CSV.
 fn events_csv(model: &Model) -> String {
     let rows = (0..model.events.len())
@@ -188,6 +257,7 @@ impl Render for EventsPage {
                                     .flex_1()
                                     .child(Input::new(&self.input).cleanable(true)),
                             )
+                            .child(self.columns_menu())
                             .child({
                                 let model = self.model.clone();
                                 Button::new("events-csv")
@@ -268,12 +338,11 @@ pub fn action_tag(action: u8) -> Tag {
 fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
     match column {
         0 => time(row.time_ms).into(),
-        2 => model
-            .events
-            .string(row.exe)
-            .unwrap_or("?")
-            .to_owned()
-            .into(),
+        2 => match model.events.string(row.exe) {
+            // A socket older than the daemon, or a process gone before it was seen.
+            Some("") | None => "(unknown program)".into(),
+            Some(exe) => exe.to_owned().into(),
+        },
         3 => match model.events.string(row.host) {
             Some(host) if row.host != 0 => host.to_owned().into(),
             _ => address(row).to_string().into(),
@@ -288,7 +357,7 @@ fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
 
 impl TableDelegate for EventsTable {
     fn columns_count(&self, _: &App) -> usize {
-        COLUMNS.len()
+        self.shown.len()
     }
 
     fn rows_count(&self, cx: &App) -> usize {
@@ -296,6 +365,7 @@ impl TableDelegate for EventsTable {
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
+        let col_ix = self.shown.get(col_ix).copied().unwrap_or(usize::MAX);
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
         let column = Column::new(key, name).width(width);
         if col_ix >= 7 {
@@ -312,6 +382,7 @@ impl TableDelegate for EventsTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let col_ix = self.shown.get(col_ix).copied().unwrap_or(usize::MAX);
         let model = self.model.read(cx);
         let Some(row) = model.events.get(row_ix) else {
             return div().into_any_element();
@@ -355,6 +426,37 @@ impl TableDelegate for EventsTable {
             .justify_center()
             .text_color(cx.theme().muted_foreground)
             .child("No connections recorded yet")
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let model = self.model.read(cx);
+        let Some(row) = model.events.get(row_ix).copied() else {
+            return menu;
+        };
+        let line = crate::csv::table(
+            &["time", "program", "destination", "port"],
+            [vec![
+                time(row.time_ms),
+                model.events.string(row.exe).unwrap_or("").to_owned(),
+                cell(&row, 3, model).to_string(),
+                cell(&row, 4, model).to_string(),
+            ]],
+        );
+        let (explaining, requests) = (self.model.clone(), self.requests.clone());
+        menu.item(
+            PopupMenuItem::new("Why was it decided so?").on_click(move |_, window, cx| {
+                explain::open(explaining.clone(), requests.clone(), row.seq, window, cx);
+            }),
+        )
+        .item(PopupMenuItem::new("Copy as CSV").on_click(move |_, _, cx| {
+            cx.write_to_clipboard(gpui::ClipboardItem::new_string(line.clone()));
+        }))
     }
 
     fn has_more(&self, cx: &App) -> bool {
