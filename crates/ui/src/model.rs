@@ -168,6 +168,60 @@ impl Events {
     }
 }
 
+/// The newest connections, and how many were allowed and blocked each second of the last minutes.
+#[derive(Debug, Default)]
+pub struct Live {
+    /// Newest first.
+    pub recent: VecDeque<EventRow>,
+    /// (second, allowed, blocked), oldest first.
+    pub seconds: VecDeque<(u64, u32, u32)>,
+}
+
+impl Live {
+    /// Connections kept.
+    pub const RECENT: usize = 300;
+    /// Seconds counted.
+    pub const SECONDS: u64 = 120;
+
+    pub fn add(&mut self, rows: &[EventRow]) {
+        for row in rows {
+            self.recent.push_front(*row);
+            let second = row.time_ms / 1000;
+            let allowed = u8::try_from(i32::from(v1::Action::Allow)).unwrap_or(1) == row.action;
+            if let Some((_, a, b)) = self.seconds.iter_mut().rev().find(|(s, _, _)| *s == second) {
+                if allowed {
+                    *a += 1;
+                } else {
+                    *b += 1;
+                }
+            } else {
+                let at = self.seconds.partition_point(|(s, _, _)| *s < second);
+                self.seconds
+                    .insert(at, (second, u32::from(allowed), u32::from(!allowed)));
+            }
+        }
+        self.recent.truncate(Self::RECENT);
+        if let Some(&(newest, _, _)) = self.seconds.back() {
+            while self
+                .seconds
+                .front()
+                .is_some_and(|(s, _, _)| *s + Self::SECONDS <= newest)
+            {
+                self.seconds.pop_front();
+            }
+        }
+    }
+
+    /// Allowed and blocked in the `seconds` up to `now` (a second).
+    #[must_use]
+    pub fn totals(&self, now: u64, seconds: u64) -> (u32, u32) {
+        self.seconds
+            .iter()
+            .filter(|(s, _, _)| *s + seconds > now && *s <= now)
+            .fold((0, 0), |(a, b), (_, x, y)| (a + x, b + y))
+    }
+}
+
 /// A row's destination address, as people read it.
 #[must_use]
 pub fn address(row: &EventRow) -> IpAddr {
@@ -177,6 +231,8 @@ pub fn address(row: &EventRow) -> IpAddr {
 
 #[derive(Debug, Default)]
 pub struct Model {
+    /// The newest connections as they come, whatever the Events page's query.
+    pub live: Live,
     /// The node, once connected: its name and version.
     pub node: Option<v1::Welcome>,
     /// Why the node isn't connected, when it isn't.
@@ -308,6 +364,7 @@ impl Model {
                 ..
             } => {
                 self.events.add_live(&rows, strings);
+                self.live.add(&rows);
                 Changed::Events
             }
             Update::Events {
@@ -439,6 +496,26 @@ mod tests {
         assert_eq!(seqs(&events), vec![7, 5]);
         assert!(events.add_page(&[], Vec::new(), 0, "port:443"));
         assert_eq!(events.next_page(), None, "nothing older");
+    }
+
+    #[test]
+    fn live_counts_each_second_and_forgets_old_ones() {
+        let mut live = Live::default();
+        let at = |seq, second: u64, action: v1::Action| EventRow {
+            time_ms: second * 1000 + 5,
+            action: u8::try_from(i32::from(action)).unwrap(),
+            ..row(seq)
+        };
+        live.add(&[
+            at(1, 100, v1::Action::Allow),
+            at(2, 100, v1::Action::Deny),
+            at(3, 101, v1::Action::Allow),
+        ]);
+        assert_eq!(live.seconds, VecDeque::from([(100, 1, 1), (101, 1, 0)]));
+        assert_eq!(live.totals(101, 60), (2, 1));
+        assert_eq!(live.recent.front().map(|r| r.seq), Some(3));
+        live.add(&[at(4, 100 + Live::SECONDS, v1::Action::Allow)]);
+        assert_eq!(live.seconds.front().map(|s| s.0), Some(101));
     }
 
     #[test]

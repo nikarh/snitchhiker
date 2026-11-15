@@ -9,6 +9,7 @@ pub mod explorer;
 pub mod history;
 pub mod import;
 pub mod lint;
+pub mod live;
 pub mod prompts;
 pub mod rules;
 pub mod settings;

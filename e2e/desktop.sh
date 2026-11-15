@@ -20,7 +20,8 @@ fail() { echo "FAIL  desktop/$1: $2"; echo "$3" | sed 's/^/      /'; failed=1; }
 # 1. A prompt answered in the app: Allow on its card leaves a rule in the program's folder.
 scripts/ui-vm.sh "${shots}/prompt" '
 pkill -x curl || true
-snitchhiker rules >/dev/null
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
 runuser -u mallory -- curl -s -m 20 http://198.51.100.7:443 >/dev/null 2>&1 &
 sleep 2
 shot asked
@@ -39,7 +40,7 @@ scripts/ui-vm.sh "${shots}/edit" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
-click 66 319
+click 66 355
 click 1165 121
 click 545 192
 click 955 665
@@ -122,7 +123,7 @@ for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitc
 mkdir -p /etc/opensnitchd/rules && rm -f /etc/opensnitchd/rules/*.json
 printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"allow\", \"duration\": \"always\", \"operator\": {\"type\": \"simple\", \"operand\": \"process.path\", \"data\": \"/usr/bin/curl\"}}" > /etc/opensnitchd/rules/000-allow-curl.json
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
-click 66 319
+click 66 355
 sleep 1
 click 941 48
 sleep 2

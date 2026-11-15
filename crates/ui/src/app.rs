@@ -31,6 +31,7 @@ use crate::views::system::SystemPage;
 pub enum Page {
     Prompts,
     Alerts,
+    Live,
     Events,
     Explorer,
     Connections,
@@ -57,6 +58,7 @@ pub struct App {
     warnings: Vec<crate::session::Warning>,
     settings: Entity<Settings>,
     alerts: Entity<Alerts>,
+    live: Entity<crate::views::live::Live>,
     system: Entity<SystemPage>,
     requests: mpsc::Sender<Request>,
 }
@@ -84,6 +86,7 @@ impl App {
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let settings = cx.new(|cx| Settings::new(model.clone(), requests.clone(), cx));
         let alerts = cx.new(|cx| Alerts::new(model.clone(), requests.clone(), cx));
+        let live = cx.new(|cx| crate::views::live::Live::new(model.clone(), cx));
         let system = cx.new(|cx| SystemPage::new(model.clone(), requests.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
@@ -140,6 +143,7 @@ impl App {
             settings,
             warnings: crate::session::check(),
             alerts,
+            live,
             system,
             requests: own_requests,
         }
@@ -321,6 +325,7 @@ impl App {
             Page::Status => self.status.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
             Page::Alerts => self.alerts.clone().into_any_element(),
+            Page::Live => self.live.clone().into_any_element(),
             Page::Firewall => self.system.clone().into_any_element(),
         }
     }
@@ -356,6 +361,12 @@ impl Render for App {
                             Page::Alerts,
                             alerts_label,
                             gpui_kit_assets::IconName::TriangleAlert,
+                            cx,
+                        ))
+                        .child(self.item(
+                            Page::Live,
+                            "Live".into(),
+                            gpui_kit_assets::IconName::Activity,
                             cx,
                         ))
                         .child(self.item(
