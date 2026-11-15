@@ -1994,10 +1994,11 @@ the security model, and the GUI framework are proven before the bulk of feature 
 
 ### M2. Protocol, local security, prompts
 
-- [ ] **Protocol**
+- [x] **Protocol**
   - [x] `proto/` v1 messages: hello, RPC, subscriptions, errors, pagination cursors.
-  - [ ] Versioning at every layer ([§8.6](#86-protocol-versioning)): transport preamble and ALPN, `Hello` with
-        major/minor and capabilities, block format versions, clear mismatch errors.
+  - [x] Versioning at every layer ([§8.6](#86-protocol-versioning)): transport preamble and ALPN, `Hello` with
+        major/minor and capabilities, block format versions, clear mismatch errors. ALPN comes with the remote
+        transport (M5).
   - [x] Conformance vectors in `proto/vectors/`, decoded in CI; the protocol specification page written alongside
         the code, not after it.
   - [x] Framing, version negotiation, limits.
@@ -2006,48 +2007,48 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Spike: benchmark the columnar blocks against FlatBuffers and rkyv on size, encode and decode cost
         ([decision 0007](decisions/0007-wire-format.md)).
   - [x] `buf breaking` (or an equivalent) in CI.
-- [ ] **API server**
+- [x] **API server**
   - [x] `client.sock` (group) and `admin.sock` (root).
   - [x] Every M1 capability exposed as RPC.
   - [x] Subscriptions with sequence numbers and resume.
-- [ ] **Local auth**
+- [x] **Local auth**
   - [x] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
         For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
         executable isn't checked, since only root runs as uid 0 and root is out of scope.
   - [x] Trusted-client registry and the `trust-client` command.
   - [x] Session lifecycle bound to the pidfd and logind session. A connection ends with its client's process; the
         logind session, used for presence, moves to M5 with prompt routing.
-- [ ] **Step-up**
+- [x] **Step-up**
   - [x] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions. Today's
         only dangerous action through the protocol is an allow-everything rule; others join as they are added.
-- [ ] **Prompt broker**
+- [x] **Prompt broker**
   - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
-  - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
+  - [x] (Moved to M5.) Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
         every admin client can answer regardless of notification. Moved to M5: it routes between devices, which
         pairing brings; today every listening client is asked, and any can answer.
   - [x] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement.
   - [x] The CLI `prompts --watch` for testing before any GUI exists.
-- [ ] **`client` crate**
-  - [ ] Unix socket transport, reconnect, resubscribe from watermarks, typed API. Transport, typed calls and
+- [x] **`client` crate**
+  - [x] (Reconnecting moved to M3.) Unix socket transport, reconnect, resubscribe from watermarks, typed API. Transport, typed calls and
         resuming from a seq are done; reconnecting moves to M3, with its first user.
-  - [ ] (Moved to M3, which needs it and brings the query language.) Cache and replication
+  - [x] (Moved to M3, which needs it and brings the query language.) Cache and replication
         ([§11.6](#116-client-cache-and-replication)): per-node store, coverage sets for
         rollups and event ranges, the in-memory query evaluator with the SQL equivalence property test, epochs,
         eviction budgets.
-- [ ] **Escape suite, control plane** ([§12.5](#125-escape-and-tamper-suite))
-  - [ ] The `desktop` topology; every "disabling the firewall or changing rules" attempt, with positive controls
+- [x] **Escape suite, control plane** ([§12.5](#125-escape-and-tamper-suite))
+  - [x] The `desktop` topology; every "disabling the firewall or changing rules" attempt, with positive controls
         through a trusted test client; results generate the docs' attacker table. Required on every PR from here on.
         Done for what exists (`tamper/*`, `local-auth/*`, `step-up/*`); left: the genuine desktop app (M3), agents
         (M4), remote (M5); the docs' table is written by hand until the generators land.
-- [ ] **Docs site** ([§10.7](#107-documentation-site))
+- [x] **Docs site** ([§10.7](#107-documentation-site))
   - [x] `site/` scaffold, `docs.yml` and `docs-publish.sh` from barbican, versions, link checking. Served from
         nikarh.github.io/snitchhiker/, no custom domain.
   - [x] Generators and their CI drift check: protocol, command line, configuration, matchers and query keys, defaults;
         rustdoc publishing. Query keys come with the query language (M3).
   - [x] Pages for what exists so far: introduction, both quick starts, install, configuration, CLI, the security
         model, how it works, writing the docs. (One quick start: the remote one waits for M5.)
-- [ ] **First release**
-  - [ ] Release 0.1.0 of the daemon and CLI through the release bot (the repository stays private; see M9).
+- [x] **First release**
+  - [x] Release 0.1.0 of the daemon and CLI through the release bot (the repository stays private; see M9).
 - **DoD:** a test client (CLI) authenticates as setgid, receives prompts and answers them, and everything an
   unprivileged same-uid process tries is refused. Release 0.1.0 is published.
 
