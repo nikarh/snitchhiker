@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["EventOffset","PageOffset"],"fn":["finish_page_buffer","finish_size_prefixed_page_buffer","root_as_page","root_as_page_unchecked","root_as_page_with_opts","size_prefixed_root_as_page","size_prefixed_root_as_page_unchecked","size_prefixed_root_as_page_with_opts"],"struct":["Event","EventArgs","EventBuilder","Page","PageArgs","PageBuilder"]};
