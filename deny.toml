@@ -11,7 +11,17 @@ version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
-ignore = []
+# Unmaintained crates in the desktop app's toolkit (gpui-pre, gpui-component), none in the daemon. No known
+# vulnerability; they go when the toolkit drops them.
+ignore = [
+  { id = "RUSTSEC-2024-0384", reason = "instant: through gpui-component" },
+  { id = "RUSTSEC-2024-0436", reason = "paste: through gpui-pre" },
+  { id = "RUSTSEC-2026-0206", reason = "rustybuzz: gpui-pre's text shaping" },
+  { id = "RUSTSEC-2026-0192", reason = "ttf-parser: gpui-pre's fonts" },
+  { id = "RUSTSEC-2026-0370", reason = "zvariant 5: gpui-pre's zbus 5 (the daemon is on zbus 6)" },
+  { id = "RUSTSEC-2026-0371", reason = "zbus_names 4: gpui-pre's zbus 5" },
+  { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5: gpui-pre's zbus 5" },
+]
 
 [licenses]
 version = 2
@@ -21,10 +31,22 @@ confidence-threshold = 0.93
 # Zlib: foldhash, through hashbrown (aya).
 # Permissive licenses only. BSD-2-Clause and BSD-3-Clause: zstd (the library and its bindings), for compressing bulk
 # data on remote connections.
-allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause"]
+# 0BSD, ISC, CC0-1.0: crates of the desktop app's toolkit (enum-iterator, inotify, libloading, tiny-keccak).
+allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "ISC", "CC0-1.0"]
+# One crate, not the license: option-ext (through dirs, in the desktop app's toolkit) is MPL-2.0, file-level copyleft;
+# it is used unmodified, as MPL-2.0 allows in a larger work under other licenses.
+exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
 
 [bans]
 multiple-versions = "deny"
+# The desktop app's toolkit (gpui-pre, gpui-component) brings many crates in two versions; the daemon's tree stays
+# held to one version of each.
+skip-tree = [
+  { crate = "gpui-component", reason = "the desktop app's toolkit" },
+  { crate = "gpui-pre", reason = "the desktop app's toolkit" },
+  { crate = "gpui-pre-platform", reason = "the desktop app's toolkit" },
+  { crate = "gpui-pre-linux", reason = "the desktop app's toolkit" },
+]
 skip = [
   { crate = "syn@2.0.119", reason = "tracing-attributes and thiserror-impl still use syn 2" },
   { crate = "hashbrown@0.15.5", reason = "petgraph (prost-build, build time only) is on hashbrown 0.15" },
