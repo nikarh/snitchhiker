@@ -50,8 +50,42 @@ pub fn add_rule(socket: &str, kind: &str) -> std::process::ExitCode {
     }
 }
 
+/// The client side (`snitchhiker-e2e --approve <socket> <id>`): approves a proposal for the agent's session; prints
+/// `approved` or the error.
+pub fn approve(socket: &str, id: &str) -> std::process::ExitCode {
+    use std::io::Write as _;
+    let id: u64 = id.parse().unwrap_or(0);
+    let result = Client::connect(Path::new(socket), "e2e", "0").and_then(|mut client| {
+        client.call(v1::request::Method::DecideProposal(v1::DecideProposal {
+            id,
+            approve: true,
+            ..v1::DecideProposal::default()
+        }))
+    });
+    let mut out = std::io::stdout().lock();
+    match result {
+        Ok(_) => {
+            let _ = writeln!(out, "approved");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _ = writeln!(out, "error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+/// Approves proposal `id` as a trusted client of mallory's.
+pub fn approve_as_client(id: u64) -> Result<String, String> {
+    let (_, text) = as_mallory(
+        CLIENT,
+        &["--approve", "/run/snitchhiker/client.sock", &id.to_string()],
+    )?;
+    Ok(text)
+}
+
 /// Makes polkit answer `result` (`YES`, `NO`) for mallory and the Snitchhiker action, or removes the rule.
-fn polkit_answers(result: Option<&str>) -> Result<(), String> {
+pub fn polkit_answers(result: Option<&str>) -> Result<(), String> {
     match result {
         Some(result) => std::fs::write(
             RULES,

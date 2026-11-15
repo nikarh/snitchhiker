@@ -30,6 +30,7 @@ use crate::views::system::SystemPage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Prompts,
+    Proposals,
     Alerts,
     Live,
     Events,
@@ -46,6 +47,7 @@ pub struct App {
     model: Entity<Model>,
     page: Page,
     prompts: Entity<Prompts>,
+    proposals: Entity<crate::views::proposals::Proposals>,
     events: Entity<TableState<EventsTable>>,
     events_page: Entity<EventsPage>,
     rules: Entity<TableState<RulesTable>>,
@@ -73,6 +75,8 @@ impl App {
     ) -> Self {
         let model = cx.new(|_| Model::default());
         let prompts = cx.new(|cx| Prompts::new(model.clone(), requests.clone(), cx));
+        let proposals = cx
+            .new(|cx| crate::views::proposals::Proposals::new(model.clone(), requests.clone(), cx));
         let events = cx.new(|cx| {
             TableState::new(
                 EventsTable::new(
@@ -123,6 +127,7 @@ impl App {
             Request::Rules,
             Request::Changes,
             Request::Alerts,
+            Request::Proposals,
         ] {
             let _ = requests.send(request);
         }
@@ -136,6 +141,7 @@ impl App {
             model,
             page: Page::Events,
             prompts,
+            proposals,
             events,
             events_page,
             rules,
@@ -228,6 +234,17 @@ impl App {
                         Changed::AlertsOnNode => {
                             let _ = requests.send(Request::Alerts);
                         }
+                        Changed::Proposal(id) => {
+                            if let Some(proposal) = app.model.read(cx).proposals.get(&id) {
+                                let _ =
+                                    notices.try_send(Notice::Proposal(Box::new(proposal.clone())));
+                            }
+                        }
+                        Changed::ShowProposals => {
+                            app.page = Page::Proposals;
+                            app.proposals.read(cx).refresh();
+                            cx.activate(true);
+                        }
                         Changed::Prompts | Changed::Status | Changed::Nothing => {}
                     }
                     cx.notify();
@@ -283,6 +300,9 @@ impl App {
                 if page == Page::Alerts {
                     app.alerts.read(cx).refresh();
                 }
+                if page == Page::Proposals {
+                    app.proposals.read(cx).refresh();
+                }
                 cx.notify();
             }))
     }
@@ -293,6 +313,7 @@ impl App {
     fn page(&self) -> AnyElement {
         match self.page {
             Page::Prompts => self.prompts.clone().into_any_element(),
+            Page::Proposals => self.proposals.clone().into_any_element(),
             Page::Events => self.events_page.clone().into_any_element(),
             Page::Rules => self.rules_page.clone().into_any_element(),
             Page::History => self.history.clone().into_any_element(),
@@ -347,6 +368,12 @@ impl Render for App {
         } else {
             format!("Alerts ({open_alerts})").into()
         };
+        let proposing = self.model.read(cx).pending_proposals();
+        let proposals_label: SharedString = if proposing == 0 {
+            "Proposals".into()
+        } else {
+            format!("Proposals ({proposing})").into()
+        };
         let prompts_label: SharedString = if waiting == 0 {
             "Prompts".into()
         } else {
@@ -364,6 +391,12 @@ impl Render for App {
                 SidebarGroup::new("Node").child(
                     SidebarMenu::new()
                         .child(self.item(Page::Prompts, prompts_label, IconName::Bell, cx))
+                        .child(self.item(
+                            Page::Proposals,
+                            proposals_label,
+                            gpui_kit_assets::IconName::Bot,
+                            cx,
+                        ))
                         .child(self.item(
                             Page::Alerts,
                             alerts_label,

@@ -11,6 +11,7 @@ pub mod import;
 pub mod lint;
 pub mod live;
 pub mod prompts;
+pub mod proposals;
 pub mod query;
 pub mod rules;
 pub mod settings;

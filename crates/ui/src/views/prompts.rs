@@ -95,15 +95,6 @@ impl Prompts {
             // Draw again once the buttons arm.
             window.request_animation_frame();
         }
-        let destination = prompt.hosts.first().cloned().unwrap_or_else(|| {
-            snitchhiker_proto::convert::address_from(&prompt.address)
-                .map_or_else(String::new, |a| a.to_string())
-        });
-        let user = if prompt.user.is_empty() {
-            prompt.uid.to_string()
-        } else {
-            prompt.user.clone()
-        };
         let theme = cx.theme().clone();
         let suggestions = prompt
             .suggestions
@@ -161,23 +152,14 @@ impl Prompts {
             .border_color(theme.border)
             .rounded_md()
             .bg(theme.background)
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(div().text_lg().child(program_name(prompt)))
-                    .child(div().text_color(theme.muted_foreground).child(format!(
-                        "{user} → {destination}:{} ({}), {} waiting",
-                        prompt.port,
-                        protocol(u8::try_from(prompt.protocol).unwrap_or(0)),
-                        prompt.waiting
-                    )))
-                    .when(prompt.exe_writable, |info| {
-                        info.child(
-                            Tag::warning()
-                                .child("Its executable is writable by a user other than root"),
-                        )
-                    }),
-            )
+            .child(header(prompt, &theme))
+            .when(!prompt.agent_note.is_empty(), |card| {
+                card.child(crate::views::proposals::agents_words(
+                    "The agent that started it says (not verified):",
+                    &prompt.agent_note,
+                    &theme,
+                ))
+            })
             .child(v_flex().gap_1().children(suggestions))
             .child(h_flex().gap_1().children(durations))
             .child(
@@ -209,6 +191,32 @@ impl Render for Prompts {
             })
             .children(cards)
     }
+}
+
+/// Who connects where.
+fn header(prompt: &v1::Prompt, theme: &gpui_component::theme::Theme) -> AnyElement {
+    let destination = prompt.hosts.first().cloned().unwrap_or_else(|| {
+        snitchhiker_proto::convert::address_from(&prompt.address)
+            .map_or_else(String::new, |a| a.to_string())
+    });
+    let user = if prompt.user.is_empty() {
+        prompt.uid.to_string()
+    } else {
+        prompt.user.clone()
+    };
+    v_flex()
+        .gap_1()
+        .child(div().text_lg().child(program_name(prompt)))
+        .child(div().text_color(theme.muted_foreground).child(format!(
+            "{user} → {destination}:{} ({}), {} waiting",
+            prompt.port,
+            protocol(u8::try_from(prompt.protocol).unwrap_or(0)),
+            prompt.waiting
+        )))
+        .when(prompt.exe_writable, |info| {
+            info.child(Tag::warning().child("Its executable is writable by a user other than root"))
+        })
+        .into_any_element()
 }
 
 /// The prompt's program, or what to say when it isn't known: a socket older than the daemon, or a process gone

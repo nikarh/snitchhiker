@@ -137,6 +137,10 @@ const SCENARIOS: &[Scenario] = &[
         "agents/a-proposal-is-approved-for-the-session",
         agents::a_proposal_is_approved_for_the_session,
     ),
+    (
+        "agents/a-broad-proposal-needs-step-up",
+        agents::a_broad_proposal_needs_step_up,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",
@@ -258,7 +262,7 @@ fn exit(name: &str, outcome: Result<(), String>) -> ExitCode {
     }
 }
 
-/// The helpers the desktop scripts use in a session (`--seed`, `--drag`, `--tray`, `--click`).
+/// The helpers the desktop scripts use in a session (`--seed`, `--drag`, `--tray`, `--click`, `--agent`).
 fn helper(args: &[String]) -> Option<ExitCode> {
     let flag = args.get(1).map(String::as_str)?;
     let number = |i: usize| args.get(i).and_then(|a| a.parse::<u32>().ok());
@@ -276,6 +280,7 @@ fn helper(args: &[String]) -> Option<ExitCode> {
             Some(exit("drag", pointer::drag(x1, y1, x2, y2)))
         }
         "--tray" => Some(exit("tray", tray::serve(args.get(2)?))),
+        "--agent" => Some(exit("agent", agents::agent(args.get(2)?, args.get(3)?))),
         "--click" => {
             let right = args.get(4).is_some_and(|b| b == "right");
             Some(exit("click", pointer::click(number(2)?, number(3)?, right)))
@@ -295,6 +300,11 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--approve"), Some(socket), Some(id)) =
+        (args.get(1).map(String::as_str), args.get(2), args.get(3))
+    {
+        return stepup::approve(socket, id);
     }
     if let Some(code) = helper(&args) {
         return code;

@@ -22,6 +22,7 @@ gpui-component = "0.9.1"
 gpui-kit-assets = "0.9.1"
 gpui-pre-linux = { version = "=0.3.12", default-features = false, features = ["wayland", "x11"] }
 gpui-pre-platform = "=0.3.12"
+ipnet = "2.12.2"
 nix = { version = "0.32.0", default-features = false, features = ["fs", "socket", "user"] }
 serde = { version = "1.0.229", features = ["derive"] }
 snitchhiker-client = { version = "0.1.0", path = "../client", features = ["cache"] }

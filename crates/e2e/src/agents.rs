@@ -52,6 +52,20 @@ fn at<'a>(value: &'a serde_json::Value, pointer: &str) -> &'a serde_json::Value 
     value.pointer(pointer).unwrap_or(&serde_json::Value::Null)
 }
 
+/// `--agent <host> <port>`: the agent of the scenario, for the desktop scripts (a person answers in the app). Its
+/// two reports go to stdout.
+pub fn agent(host: &str, port: &str) -> Result<(), String> {
+    let status = Command::new("python3")
+        .args(["-c", AGENT, host, port])
+        .status()
+        .map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("the agent ended with {status}"))
+    }
+}
+
 pub fn a_proposal_is_approved_for_the_session() -> Result<(), String> {
     let _ = run(
         "ip",
@@ -232,5 +246,90 @@ fn verify(
         !after.contains("session") && all.contains(&format!("proposal {id}: approved")),
         "the session's rule stayed after the agent ended",
         found,
+    )
+}
+
+/// A proposal marked broad (any destination) is approved by a client only with polkit's authorization; an unmarked
+/// one needs none.
+pub fn a_broad_proposal_needs_step_up() -> Result<(), String> {
+    let _ = run(
+        "ip",
+        &["addr", "add", &format!("{ADDRESS}/32"), "dev", "lo"],
+    );
+    let result = broad_scenario();
+    let _ = crate::stepup::polkit_answers(None);
+    let _ = run(
+        "ip",
+        &["addr", "del", &format!("{ADDRESS}/32"), "dev", "lo"],
+    );
+    result
+}
+
+fn broad_scenario() -> Result<(), String> {
+    crate::local_auth::install_clients()?;
+    let daemon = Running::start(
+        "agents-step-up",
+        &format!(
+            "mode = \"enforce\"\nno_match = \"deny\"\ntrusted_clients = [\"{}\"]\n",
+            crate::local_auth::CLIENT
+        ),
+    )?;
+    let listener = TcpListener::bind(format!("{ADDRESS}:0")).map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let mut agent = Command::new("runuser")
+        .args([
+            "-u",
+            "mallory",
+            "--",
+            "python3",
+            "-c",
+            AGENT,
+            ADDRESS,
+            &port.to_string(),
+        ])
+        .current_dir("/tmp")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut lines = BufReader::new(agent.stdout.take().ok_or("no stdout")?).lines();
+    let line = lines
+        .next()
+        .ok_or("the agent ended early")?
+        .map_err(|e| e.to_string())?;
+    let proposed: serde_json::Value =
+        serde_json::from_str(&line).map_err(|e| format!("{e}: {line}"))?;
+    let broad = at(&proposed, "/everything/id").as_u64().unwrap_or(0);
+    let narrow = at(&proposed, "/proposal/id").as_u64().unwrap_or(0);
+    crate::stepup::polkit_answers(None)?;
+    let unauthorized = crate::stepup::approve_as_client(broad)?;
+    let narrow_approved = crate::stepup::approve_as_client(narrow)?;
+    crate::stepup::polkit_answers(Some("YES"))?;
+    let authorized = crate::stepup::approve_as_client(broad)?;
+    crate::stepup::polkit_answers(None)?;
+    let audit = daemon.cli(&["audit"])?;
+    if let Some(stdin) = agent.stdin.as_mut() {
+        let _ = stdin.write_all(b"\n");
+    }
+    let _ = agent.wait();
+    drop(listener);
+    let found = format!(
+        "{proposed:#}\nunauthorized: {unauthorized}narrow: {narrow_approved}authorized: {authorized}{audit}"
+    );
+    check(
+        unauthorized.contains("not authorized"),
+        "a broad proposal was approved without step-up",
+        &found,
+    )?;
+    check(
+        narrow_approved.trim() == "approved",
+        "an unmarked proposal needed step-up",
+        &found,
+    )?;
+    check(
+        authorized.trim() == "approved" && audit.contains("approve agent proposal"),
+        "an authorized broad proposal wasn't approved, or wasn't audited",
+        &found,
     )
 }

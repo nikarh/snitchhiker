@@ -42,30 +42,30 @@ J
 
 # In the session, the app up: the pages, one shot each.
 pages='
-click 66 247
+click 66 283
 sleep 2
 shot events
 click 518 121
 sleep 2
 shot explain
 key Escape
-click 66 283
+click 66 319
 sleep 2
 shot explorer
-click 66 355
+click 66 391
 sleep 2
 shot rules
 click 1165 121
 sleep 2
 shot rule-editor
 key Escape
-click 66 175
+click 66 211
 sleep 2
 shot alerts
-click 66 463
+click 66 499
 sleep 2
 shot firewall
-click 66 499
+click 66 535
 sleep 2
 shot settings
 for i in $(seq 1 12); do
@@ -73,12 +73,20 @@ for i in $(seq 1 12); do
   sleep 1
 done &
 traffic=$!
-click 66 211
+click 66 247
 sleep 10
 shot live
 kill $traffic 2>/dev/null || true
 pkill -x curl || true
 sleep 1
+ip addr add 192.0.2.77/32 dev lo 2>/dev/null || true
+install -d -o mallory /home/mallory/src/webshop
+(cd /home/mallory/src/webshop && runuser -u mallory -- /tmp/snitchhiker-e2e-ui --agent 192.0.2.77 8077 >/dev/null 2>&1 &)
+sleep 6
+runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$(cat /run/user/$uid/bus-address) makoctl dismiss -a || true
+click 66 175
+sleep 2
+shot proposals
 for id in $(snitchhiker prompts | awk "/^prompt [0-9]+:/ {sub(\":\", \"\", \$2); print \$2}"); do
   snitchhiker prompts answer "$id" deny --duration once >/dev/null 2>&1 || true
 done

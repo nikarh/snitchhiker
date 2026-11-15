@@ -262,6 +262,8 @@ pub struct Model {
     pub cache_size: Option<u64>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
+    /// Agents' proposals: those waiting, and the newest answered.
+    pub proposals: BTreeMap<u64, v1::Proposal>,
 }
 
 /// What an update changed, so only those views refresh.
@@ -283,6 +285,10 @@ pub enum Changed {
     Alert,
     /// Alerts were acknowledged somewhere: list them again.
     AlertsOnNode,
+    /// An agent made a proposal: to notify.
+    Proposal(u64),
+    /// The proposals are to be shown.
+    ShowProposals,
 }
 
 impl Model {
@@ -307,6 +313,39 @@ impl Model {
             }
             _ => Changed::Nothing,
         }
+    }
+
+    fn apply_proposal(&mut self, update: Update) -> Changed {
+        match update {
+            Update::Proposals(list) => {
+                // Those waiting come from the subscription too: the newest of either is kept.
+                for proposal in list {
+                    self.proposals.insert(proposal.id, proposal);
+                }
+                Changed::Status
+            }
+            Update::Proposal(proposal) => {
+                let id = proposal.id;
+                let new = proposal.state() == v1::ProposalState::Pending
+                    && !self.proposals.contains_key(&id);
+                self.proposals.insert(id, *proposal);
+                if new {
+                    Changed::Proposal(id)
+                } else {
+                    Changed::Status
+                }
+            }
+            _ => Changed::Nothing,
+        }
+    }
+
+    /// How many proposals wait for an answer.
+    #[must_use]
+    pub fn pending_proposals(&self) -> usize {
+        self.proposals
+            .values()
+            .filter(|p| p.state() == v1::ProposalState::Pending)
+            .count()
     }
 
     fn apply_alert(&mut self, update: Update) -> Changed {
@@ -423,8 +462,10 @@ impl Model {
                 self.explanation = Some(*explanation);
                 Changed::Status
             }
+            update @ (Update::Proposals(_) | Update::Proposal(_)) => self.apply_proposal(update),
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::ShowAlerts => Changed::ShowAlerts,
+            Update::ShowProposals => Changed::ShowProposals,
             Update::Failed(error) => {
                 self.error = Some(error);
                 Changed::Status

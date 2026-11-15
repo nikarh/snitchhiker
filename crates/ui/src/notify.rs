@@ -49,6 +49,8 @@ pub enum Notice {
     Close(u64),
     /// An alert was raised.
     Alert(v1::Alert),
+    /// An agent proposed rules: only shown, approved in the window alone.
+    Proposal(Box<v1::Proposal>),
 }
 
 const ALLOW: &str = "allow-once";
@@ -93,6 +95,51 @@ pub fn text(prompt: &v1::Prompt) -> (String, String) {
     )
 }
 
+/// The text of a proposal's notification: (summary, body).
+#[must_use]
+pub fn proposal_text(proposal: &v1::Proposal) -> (String, String) {
+    let provenance = proposal.provenance.clone().unwrap_or_default();
+    let agent = provenance
+        .agent_exe
+        .rsplit('/')
+        .next()
+        .unwrap_or("An agent")
+        .to_owned();
+    let project = provenance
+        .cwd
+        .rsplit('/')
+        .find(|p| !p.is_empty())
+        .unwrap_or("/");
+    let count = proposal.rules.len();
+    (
+        format!(
+            "{agent} proposes {count} rule{}",
+            if count == 1 { "" } else { "s" }
+        ),
+        format!("for {project}: review it in Snitchhiker"),
+    )
+}
+
+async fn show_proposal(
+    server: &NotificationsProxy<'_>,
+    proposal: &v1::Proposal,
+) -> zbus::Result<u32> {
+    let (summary, body) = proposal_text(proposal);
+    let hints = HashMap::from([("urgency", Value::U8(1))]);
+    server
+        .notify(
+            "Snitchhiker",
+            0,
+            "snitchhiker",
+            &summary,
+            &body,
+            &[OPEN, "Review"],
+            hints,
+            -1,
+        )
+        .await
+}
+
 async fn show_prompt(server: &NotificationsProxy<'_>, prompt: &v1::Prompt) -> zbus::Result<u32> {
     let (summary, body) = text(prompt);
     let hints = HashMap::from([("urgency", Value::U8(2)), ("resident", Value::Bool(true))]);
@@ -122,6 +169,8 @@ async fn run(
     let mut shown: HashMap<u32, u64> = HashMap::new();
     // notifications of alerts
     let mut alerts: std::collections::HashSet<u32> = std::collections::HashSet::new();
+    // notifications of proposals
+    let mut proposals: std::collections::HashSet<u32> = std::collections::HashSet::new();
     loop {
         enum Next {
             Notice(Notice),
@@ -177,6 +226,12 @@ async fn run(
             }
             Next::Action(id, _) if alerts.remove(&id) => {
                 let _ = updates.send(Update::ShowAlerts).await;
+            }
+            Next::Action(id, _) if proposals.remove(&id) => {
+                let _ = updates.send(Update::ShowProposals).await;
+            }
+            Next::Notice(Notice::Proposal(proposal)) => {
+                proposals.insert(show_proposal(&server, &proposal).await?);
             }
             Next::Action(id, action) => {
                 let Some(&prompt) = shown.get(&id) else {

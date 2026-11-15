@@ -40,7 +40,7 @@ scripts/ui-vm.sh "${shots}/edit" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
-click 66 355
+click 66 391
 click 1165 121
 click 545 192
 click 955 665
@@ -136,7 +136,7 @@ printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"all
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
 # A system firewall too, which converts in part (the layout of the dialog depends on it).
 printf "%s" "{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"nat_output\", \"Family\": \"inet\", \"Type\": \"natdest\", \"Hook\": \"output\", \"Policy\": \"accept\", \"Rules\": [{\"Enabled\": true, \"Description\": \"redirect\", \"Target\": \"redirect\"}]}]}]}" > /etc/opensnitchd/system-fw.json
-click 66 355
+click 66 391
 sleep 1
 click 941 48
 sleep 2
@@ -159,7 +159,7 @@ snitchhiker folders add Bin >/dev/null
 snitchhiker rules add allow --exe /usr/bin/curl --name "curl" >/dev/null
 snitchhiker rules add allow --exe /usr/bin/wget --name "wget" >/dev/null
 sleep 1
-click 66 355
+click 66 391
 drag 760 121 300 113
 sleep 1
 snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
@@ -186,6 +186,33 @@ if grep -Eq "kept [1-9][0-9]* covered [1-9]" <<<"${out}" && grep -q "modes 770 r
   pass history-is-kept-privately
 else
   fail history-is-kept-privately "the cache didn't keep history, or the user's other processes can reach it" "${out}"
+fi
+
+# 9. An agent's proposal approved in the app: the agent is told, and its connection then goes through.
+scripts/ui-vm.sh "${shots}/proposal" '
+ip addr add 192.0.2.77/32 dev lo 2>/dev/null || true
+kill "$(cat /tmp/server.pid 2>/dev/null)" 2>/dev/null || true
+# A bare listener (http.server would look its own address up in DNS, which the policy refuses).
+python3 -c "import socket; s = socket.create_server((\"192.0.2.77\", 8077)); [s.accept() for _ in iter(int, 1)]" >/dev/null 2>&1 < /dev/null &
+echo $! > /tmp/server.pid
+sleep 1
+rm -f /tmp/agent.out && install -m 666 /dev/null /tmp/agent.out
+(cd /tmp && runuser -u mallory -- /tmp/snitchhiker-e2e-ui --agent 192.0.2.77 8077 > /tmp/agent.out 2>&1 &)
+sleep 6
+click 66 175
+sleep 2
+shot proposals
+click 329 487
+sleep 4
+shot approved
+{ cat /tmp/agent.out; snitchhiker rules; } > /tmp/desktop-result.txt
+kill "$(cat /tmp/server.pid)" || true' 'mode = "enforce"
+no_match = "deny"' >/dev/null 2>&1
+out=$(result)
+if grep -q '"state": "approved"' <<<"${out}" && grep -q '"second": "connected"' <<<"${out}"; then
+  pass proposal-approved-in-the-app
+else
+  fail proposal-approved-in-the-app "the proposal wasn't approved in the app, or its connection didn't go through" "${out}"
 fi
 
 echo "screenshots in ${shots}"

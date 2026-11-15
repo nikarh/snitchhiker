@@ -83,6 +83,9 @@ pub enum Request {
     Lint {
         days: u32,
     },
+    /// Agents' newest proposals.
+    Proposals,
+    Decide(v1::DecideProposal),
 }
 
 /// What the node tells the app.
@@ -133,6 +136,12 @@ pub enum Update {
     ShowPrompts,
     /// An alert's notification was clicked: show the alerts.
     ShowAlerts,
+    /// A proposal's notification was clicked: show the proposals.
+    ShowProposals,
+    /// Agents' newest proposals.
+    Proposals(Vec<v1::Proposal>),
+    /// A proposal made or changed.
+    Proposal(Box<v1::Proposal>),
 }
 
 /// Events in one page of history.
@@ -345,6 +354,11 @@ fn method(request: &Request) -> v1::request::Method {
         Request::SetPolicy(set) => Method::SetPolicy(set.clone()),
         Request::TrustedClients => Method::ListTrustedClients(v1::ListTrustedClients {}),
         Request::Lint { days } => Method::LintRules(v1::LintRules { unused_days: *days }),
+        Request::Proposals => Method::ListProposals(v1::ListProposals {
+            pending_only: false,
+            limit: 100,
+        }),
+        Request::Decide(decide) => Method::DecideProposal(decide.clone()),
     }
 }
 
@@ -364,6 +378,8 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Alerts(page) => Some(Update::Alerts(page.alerts, page.open)),
         R::AlertRules(list) => Some(Update::AlertRules(list.rules)),
         R::TrustedClients(list) => Some(Update::TrustedClients(list.clients)),
+        R::Proposals(list) => Some(Update::Proposals(list.proposals)),
+        R::Proposal(proposal) => Some(Update::Proposal(proposal)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,
@@ -435,6 +451,7 @@ fn subscribe(
         .subscribe(v1::Topic::Prompts)
         .and_then(|_| client.subscribe(v1::Topic::Rules))
         .and_then(|_| client.subscribe(v1::Topic::Alerts))
+        .and_then(|_| client.subscribe(v1::Topic::Proposals))
         .and_then(|_| client.subscribe_with(v1::Topic::Events, *last_seq, true))
         .map_err(|e| e.to_string())?;
     loop {
@@ -445,6 +462,7 @@ fn subscribe(
             Some(v1::notice::Body::RulesChanged(_)) => Update::RulesChanged,
             Some(v1::notice::Body::Alert(alert)) => Update::Alert(alert),
             Some(v1::notice::Body::AlertsChanged(changed)) => Update::AlertsChanged(changed.open),
+            Some(v1::notice::Body::Proposal(proposal)) => Update::Proposal(proposal),
             Some(v1::notice::Body::EventBlock(event_block)) => {
                 let (rows, strings) = block(&event_block)?;
                 // Every event after the last one seen comes, in order: the cache holds that range whole.
