@@ -2066,6 +2066,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] Native, the OpenSnitch rules + `system-fw.json` importer (with a preview), CSV export.
 - [ ] **Packaging**
   - [ ] `.desktop` file, icons, the setgid install, a systemd user unit for autostart, the `snitchhiker-ui` package.
+  - [ ] Package hooks: `snitchhikerd trust-client /usr/bin/snitchhiker-ui` after install and upgrade, `untrust-client`
+        on removal ([decision 0006](decisions/0006-client-trust.md)); the app shows the daemon's refusal reason.
 - [ ] **Docs**
   - [ ] Screenshot pipeline for the desktop app (synthetic history, VM, headless compositor, text check).
   - [ ] Guides: answering prompts, rules and folders, the query language, the Explorer, importing from OpenSnitch.
