@@ -9,6 +9,7 @@
 # (the virtual keyboard: `key Return`), and `shot <name>` (a screenshot, <name>.png in the output dir); a screenshot
 # `final.png` is taken after it.
 # daemon.toml: settings for the daemon meanwhile; the packaged file is put back afterwards.
+# SNITCHHIKER_UI_PREFS: the app's ui.toml (`appearance = "dark"`), written before it starts.
 #
 # Nothing of this runs on the host but the build and the copies.
 set -euo pipefail
@@ -38,6 +39,13 @@ cp /etc/snitchhiker/daemon.toml /tmp/daemon.toml.packaged
 if [ -n '${config}' ]; then printf '%s\n' '${config}' > /etc/snitchhiker/daemon.toml; fi
 systemctl restart snitchhikerd
 uid=\$(id -u mallory)
+# The app's own preferences (SNITCHHIKER_UI_PREFS, ui.toml's text): dark or light screenshots.
+install -d -o mallory /home/mallory/.config/snitchhiker
+if [ -n '${SNITCHHIKER_UI_PREFS:-}' ]; then
+  printf '%s\n' '${SNITCHHIKER_UI_PREFS:-}' > /home/mallory/.config/snitchhiker/ui.toml
+else
+  rm -f /home/mallory/.config/snitchhiker/ui.toml
+fi
 install -d -o mallory -m 700 /run/user/\$uid
 pkill -u mallory -x sway || true
 pkill -u mallory -f snitchhiker-ui || true

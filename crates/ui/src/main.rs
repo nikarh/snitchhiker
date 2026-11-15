@@ -7,6 +7,7 @@ mod csv;
 mod env;
 mod model;
 mod notify;
+mod prefs;
 mod session;
 mod tray;
 mod views;

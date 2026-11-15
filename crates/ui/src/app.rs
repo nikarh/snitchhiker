@@ -95,6 +95,19 @@ impl App {
             )
         });
         Self::explain_on_double_click(&events, window, cx);
+        // The appearance chosen, or the desktop's (followed as it changes).
+        let prefs = crate::prefs::Prefs::load();
+        crate::prefs::apply(prefs.appearance, window, cx);
+        cx.set_global(prefs);
+        cx.observe_window_appearance(window, |_, window, cx| {
+            if cx
+                .try_global::<crate::prefs::Prefs>()
+                .is_none_or(|p| p.appearance == crate::prefs::Appearance::System)
+            {
+                crate::prefs::apply(crate::prefs::Appearance::System, window, cx);
+            }
+        })
+        .detach();
         let tray = crate::tray::start(updates_sender.clone());
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();

@@ -286,6 +286,34 @@ impl Settings {
     }
 }
 
+impl Settings {
+    fn appearance(cx: &Context<Self>) -> AnyElement {
+        use crate::prefs::Appearance;
+        let current = cx
+            .try_global::<crate::prefs::Prefs>()
+            .map_or(Appearance::System, |p| p.appearance);
+        let mut row = h_flex().gap_1();
+        for (label, appearance) in [
+            ("As the desktop", Appearance::System),
+            ("Light", Appearance::Light),
+            ("Dark", Appearance::Dark),
+        ] {
+            let button = Button::new(SharedString::from(format!("appearance-{label}")))
+                .small()
+                .label(label)
+                .on_click(move |_, window, cx| {
+                    crate::prefs::set_appearance(appearance, window, cx);
+                });
+            row = row.child(if current == appearance {
+                button.primary()
+            } else {
+                button.ghost()
+            });
+        }
+        row.into_any_element()
+    }
+}
+
 fn heading(text: &'static str) -> impl IntoElement {
     div().pt_4().pb_1().text_lg().child(text)
 }
@@ -308,6 +336,8 @@ impl Render for Settings {
                     .child("The client apps the node lets connect. Their packages register them; root changes this."),
             )
             .child(Self::trusted(&model.trusted.clone(), cx))
+            .child(heading("Appearance"))
+            .child(Self::appearance(cx))
             .child(heading("About"))
             .child(format!("Snitchhiker desktop {}", env!("CARGO_PKG_VERSION")))
             .children(model.node.as_ref().map(|node| {
