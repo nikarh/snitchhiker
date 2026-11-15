@@ -216,6 +216,13 @@ impl VerdictWriter {
     }
 }
 
+impl std::os::fd::AsFd for Queue {
+    /// The socket, to wait for packets alongside other things (`poll`).
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.socket.as_fd()
+    }
+}
+
 /// The packets in a received buffer.
 pub fn parse(buffer: &[u8]) -> impl Iterator<Item = Packet<'_>> {
     messages(buffer)

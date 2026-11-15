@@ -81,6 +81,8 @@ A rule without a `context` condition applies to processes on the host only. Allo
 
 A container's connections are decided like a host program's, with its program as the container sees it (`exe` is the path inside the container), and with the container's identity: which runtime runs it, its name, the image it was created from, its labels, and its Compose project and service. Containers on bridge networks (Docker's default, Podman's) are covered as well as those sharing the host's network: their traffic is forwarded from the bridge, and Snitchhiker finds the process in the container that opened each connection ([`forward_from`](/reference/configuration/#forward_from)).
 
+Rootless containers (Podman as a user, with pasta or slirp4netns) reach the network through a helper that makes their connections on the host. Snitchhiker ties the helper's connections to its container, and from the container's first connection on it decides inside the container's own network namespace, where the program is known: rules on a program hold there as in any other container. The first connection is decided as the container's alone, so only rules on the container (not on a program) apply to it. Should something in the container with `CAP_NET_ADMIN` delete Snitchhiker's table in its namespace, it is put back at once and an alert says so.
+
 Rules name containers by `container.name`, `container.image`, `container.compose` and `container.label`; any of them limits the rule to containers. The Compose service and the image are the stable choices: a container's name can change when it's recreated, and its id always does (`container.id` exists for one-offs). On the command line:
 
 ```bash

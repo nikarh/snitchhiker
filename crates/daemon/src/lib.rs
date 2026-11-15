@@ -17,6 +17,7 @@ pub mod locked;
 pub mod logind;
 pub mod managed;
 pub mod mcp;
+pub mod namespaces;
 pub mod notify;
 pub mod peer;
 pub mod placement;

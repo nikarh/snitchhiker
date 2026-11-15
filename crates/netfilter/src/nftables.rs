@@ -827,3 +827,52 @@ mod tests {
         assert_eq!((batch.first, batch.last), (6, 7));
     }
 }
+
+/// The nftables changes of the namespace it was opened in, as the kernel announces them (the `NFNLGRP_NFTABLES`
+/// multicast group): for noticing at once that a table was deleted, without asking again and again.
+#[derive(Debug)]
+pub struct Monitor {
+    socket: netlink_sys::Socket,
+    receive: Vec<u8>,
+}
+
+const NFNLGRP_NFTABLES: u32 = 7;
+
+impl Monitor {
+    pub fn open() -> std::io::Result<Self> {
+        let mut socket = netlink_sys::Socket::new(netlink_sys::protocols::NETLINK_NETFILTER)?;
+        socket.bind_auto()?;
+        socket.add_membership(NFNLGRP_NFTABLES)?;
+        Ok(Self {
+            socket,
+            receive: Vec::with_capacity(1 << 16),
+        })
+    }
+
+    /// Reads what the kernel announced; whether the table `name` was deleted.
+    pub fn deleted(&mut self, name: &str) -> std::io::Result<bool> {
+        self.receive.clear();
+        self.socket.recv(&mut self.receive, 0)?;
+        let mut deleted = false;
+        for message in crate::netlink::messages(&self.receive) {
+            if message.kind != (NFNL_SUBSYS_NFTABLES << 8) | NFT_MSG_DELTABLE {
+                continue;
+            }
+            let body = message
+                .body
+                .get(crate::netlink::NFGENMSG_LEN..)
+                .unwrap_or_default();
+            deleted |= crate::netlink::attributes(body).any(|(kind, value)| {
+                kind == NFTA_TABLE_NAME
+                    && value.strip_suffix(&[0]).unwrap_or(value) == name.as_bytes()
+            });
+        }
+        Ok(deleted)
+    }
+}
+
+impl std::os::fd::AsFd for Monitor {
+    fn as_fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        self.socket.as_fd()
+    }
+}

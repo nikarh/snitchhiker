@@ -104,6 +104,8 @@ pub fn named(path: &str) -> Option<Named> {
 pub struct Identified {
     pub container: Container,
     pub key: Arc<str>,
+    /// Found through a network helper: a process of the container, and its network namespace.
+    pub served: Option<(u32, u64)>,
 }
 
 /// What was found for a key: a container, or that there is none.
@@ -140,6 +142,7 @@ impl Contexts {
                 Arc::new(Identified {
                     key: Arc::from(container.key()),
                     container,
+                    served: None,
                 })
             });
         let mut containers = self
@@ -167,16 +170,16 @@ impl Contexts {
         if let Some(known) = helpers.get(&(helper, start)) {
             return known.clone();
         }
-        let found = served_namespace(helper)
-            .and_then(container_in_namespace)
-            .map(|(pid, named)| {
-                let container = describe(named);
-                debug!(helper, pid, name = %container.name, "a network helper's container");
-                Arc::new(Identified {
-                    key: Arc::from(container.key()),
-                    container,
-                })
-            });
+        let found = served_namespace(helper).and_then(|inode| {
+            let (pid, named) = container_in_namespace(inode)?;
+            let container = describe(named);
+            debug!(helper, pid, name = %container.name, "a network helper's container");
+            Some(Arc::new(Identified {
+                key: Arc::from(container.key()),
+                container,
+                served: Some((pid, inode)),
+            }))
+        });
         if helpers.len() >= CAPACITY {
             helpers.clear();
         }

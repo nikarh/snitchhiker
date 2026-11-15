@@ -91,8 +91,8 @@ pub struct Shared {
     pub rules: ArcSwap<RuleSet>,
     attribution: Attribution,
     names: RwLock<Names>,
-    netns: u32,
-    host: HostNamespaces,
+    pub(crate) netns: u32,
+    pub(crate) host: HostNamespaces,
     events: SyncSender<Event>,
     pub dropped_events: AtomicU64,
     /// The executable recorded for connections whose process isn't known.
@@ -110,6 +110,8 @@ pub struct Shared {
     pub router: crate::router::Router,
     /// The containers connections come from.
     pub contexts: crate::contexts::Contexts,
+    /// The namespaces decided inside (rootless containers').
+    pub namespaces: crate::namespaces::Namespaces,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -189,6 +191,7 @@ impl Daemon {
                 Duration::from_secs(config.escalate_after_secs),
             ),
             contexts: crate::contexts::Contexts::default(),
+            namespaces: crate::namespaces::Namespaces::default(),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -245,6 +248,7 @@ impl Daemon {
         self.spawn_agent_watch()?;
         self.watch_agents(agents);
         crate::router::Router::spawn(&self.shared)?;
+        crate::namespaces::Namespaces::spawn(self)?;
         self.devices_changed();
         Ok(())
     }
@@ -1038,7 +1042,13 @@ fn decide_loop(shared: &Shared, mut queue: Queue, offset: usize) -> Result<(), E
         verdicts.clear();
         rejected.clear();
         for packet in queue.receive()? {
-            let (verdict, reject) = decide(shared, &mut processes, &mut senders, &packet, offset);
+            let (verdict, reject) = decide(
+                shared,
+                &mut processes,
+                &mut senders,
+                &packet,
+                (offset, shared.netns),
+            );
             // No verdict: the packet waits for a prompt's answer.
             if let Some(verdict) = verdict {
                 verdicts.push((packet.id, verdict));
@@ -1198,12 +1208,12 @@ fn owner_of(
     }
 }
 
-fn decide(
+pub(crate) fn decide(
     shared: &Shared,
     processes: &mut ProcessCache,
     senders: &mut crate::forward::Senders,
     queued: &Packet<'_>,
-    queue: usize,
+    (queue, netns): (usize, u32),
 ) -> (Option<Verdict>, Option<SocketId>) {
     shared.decided.fetch_add(1, Ordering::Relaxed);
     let Some(headers) = packet::parse(queued.payload) else {
@@ -1211,7 +1221,7 @@ fn decide(
         return (Some(Verdict::Accept), None);
     };
     let key = FlowKey {
-        netns: shared.netns,
+        netns,
         protocol: headers.protocol,
         source_port: headers.source_port,
         destination: headers.destination,
@@ -1237,6 +1247,14 @@ fn decide(
         .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
     let (context, container, helper) = context_of(shared, owner, process.as_deref());
+    // A helper's connection for a namespace decided inside was decided there already, with its program: deciding it
+    // again here, knowing less, could only contradict that. Until then, the daemon starts deciding inside.
+    if helper && let Some((pid, inode)) = container.as_ref().and_then(|c| c.served) {
+        if shared.namespaces.is_managed(inode) {
+            return (Some(Verdict::Accept), None);
+        }
+        shared.namespaces.request(pid, inode);
+    }
     // A network helper isn't the program: the one in the container is, unknown from out here.
     let process = if helper { None } else { process };
     let facts = Facts {

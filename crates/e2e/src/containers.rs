@@ -308,29 +308,20 @@ fn rootless(args: &[&str]) -> Result<String, String> {
     )
 }
 
-/// Podman's containers: a rootful one on its bridge is decided by its program, as Docker's; a rootless one's
-/// connections are made by its network helper (pasta) on the host, and are decided as the container's, with the
-/// program inside unknown: rules on the container hold, rules on a program don't.
-pub fn podman_containers_are_named_rootful_and_rootless() -> Result<(), String> {
-    podman()?;
-    let daemon = Running::start(
-        "containers-podman",
-        "mode = \"enforce\"\nno_match = \"deny\"\n",
-    )?;
-    for (args, name) in [
-        (
-            ["--container", "e2e-rootful", "--port", "8091"],
-            "rootful by name",
-        ),
-        (
-            ["--container", "e2e-rootless", "--port", "8092"],
-            "rootless by name",
-        ),
-    ] {
-        let mut all = vec!["rules", "add", "allow"];
-        all.extend(args);
-        all.extend(["--name", name]);
-        daemon.cli(&all)?;
+/// Rules on a container and on a program: `--container <name> --port <port>` and the program by any context.
+fn podman_rules(daemon: &Running) -> Result<(), String> {
+    for (container, port) in [("e2e-rootful", "8091"), ("e2e-rootless", "8092")] {
+        daemon.cli(&[
+            "rules",
+            "add",
+            "allow",
+            "--container",
+            container,
+            "--port",
+            port,
+            "--name",
+            container,
+        ])?;
     }
     daemon.cli(&[
         "rules",
@@ -344,7 +335,19 @@ pub fn podman_containers_are_named_rootful_and_rootless() -> Result<(), String> 
         "--name",
         "the program",
     ])?;
-    let wget = "wget -T 2 -q -O /dev/null";
+    Ok(())
+}
+
+const WGET: &str = "wget -T 2 -q -O /dev/null";
+
+/// A rootful Podman container on its bridge is decided by its program and name, as Docker's.
+pub fn a_rootful_podman_container_is_decided_by_its_program() -> Result<(), String> {
+    podman()?;
+    let daemon = Running::start(
+        "containers-podman",
+        "mode = \"enforce\"\nno_match = \"deny\"\n",
+    )?;
+    podman_rules(&daemon)?;
     let _ = run(
         "podman",
         &[
@@ -355,51 +358,84 @@ pub fn podman_containers_are_named_rootful_and_rootless() -> Result<(), String> 
             IMAGE,
             "sh",
             "-c",
-            &format!("{wget} http://203.0.113.90:8091/"),
+            &format!("{WGET} http://203.0.113.90:8091/"),
         ],
     );
-    for (port, address) in [(8092, "203.0.113.91"), (8093, "203.0.113.92")] {
-        let _ = rootless(&[
-            "run",
-            "--rm",
-            "--name",
-            "e2e-rootless",
-            IMAGE,
-            "sh",
-            "-c",
-            &format!("'{wget} http://{address}:{port}/'"),
-        ]);
-    }
     thread::sleep(Duration::from_millis(500));
     let rootful = decisions(&daemon, "203.0.113.90:8091")?;
-    let rootless_named = decisions(&daemon, "203.0.113.91:8092")?;
-    let rootless_program = decisions(&daemon, "203.0.113.92:8093")?;
-    let found = format!(
-        "rootful:\n{}\nrootless, a rule on its name:\n{}\nrootless, a rule on the program:\n{}",
-        rootful.join("\n"),
-        rootless_named.join("\n"),
-        rootless_program.join("\n")
-    );
     check(
         rootful
             .iter()
             .any(|l| l.contains(" allow ") && l.contains("[podman e2e-rootful] /bin/busybox")),
         "the rootful container wasn't decided by its name and program",
-        &found,
+        &rootful.join("\n"),
+    )
+}
+
+/// A rootless Podman container's connections are made by its network helper (pasta) on the host. The first is
+/// decided as the container's, the program inside unknown (a rule on the container holds); from then on the daemon
+/// decides inside the container's namespace, where the program is known (a rule on it holds). Something in there
+/// deleting the daemon's table gets it put back, and an alert.
+pub fn a_rootless_podman_container_is_decided_inside_its_namespace() -> Result<(), String> {
+    podman()?;
+    let daemon = Running::start(
+        "containers-rootless",
+        "mode = \"enforce\"\nno_match = \"deny\"\n",
     )?;
+    podman_rules(&daemon)?;
+    let _ = rootless(&["rm", "-f", "e2e-rootless"]);
+    rootless(&["run", "-d", "--name", "e2e-rootless", IMAGE, "sleep", "120"])?;
+    let exec = |address: &str, port: u16| {
+        let _ = rootless(&[
+            "exec",
+            "e2e-rootless",
+            "sh",
+            "-c",
+            &format!("'{WGET} http://{address}:{port}/'"),
+        ]);
+    };
+    exec("203.0.113.91", 8092);
+    thread::sleep(Duration::from_secs(1));
+    exec("203.0.113.92", 8093);
+    let pid = rootless(&["inspect", "-f", "'{{.State.Pid}}'", "e2e-rootless"])?;
+    let nft = |args: &[&str]| {
+        let mut all = vec!["-t", pid.trim(), "-n", "nft"];
+        all.extend(args);
+        run("nsenter", &all)
+    };
+    let deleted = nft(&["delete", "table", "inet", "snitchhiker"]);
+    thread::sleep(Duration::from_millis(500));
+    let restored = nft(&["list", "table", "inet", "snitchhiker"]);
+    let alerts = daemon.cli(&["alerts"])?;
+    let _ = rootless(&["rm", "-f", "e2e-rootless"]);
+    thread::sleep(Duration::from_millis(500));
+    let named = decisions(&daemon, "203.0.113.91:8092")?;
+    let program = decisions(&daemon, "203.0.113.92:8093")?;
+    let found = format!(
+        "a rule on its name:\n{}\na rule on the program:\n{}",
+        named.join("\n"),
+        program.join("\n")
+    );
     check(
-        rootless_named
+        named
             .iter()
             .any(|l| l.contains(" allow ") && l.contains("[podman e2e-rootless]")),
         "the rootless container's connection (made by pasta) wasn't decided as the container's",
         &found,
     )?;
     check(
-        !rootless_program.is_empty()
-            && rootless_program
-                .iter()
-                .all(|l| l.contains(" deny ") && l.contains("[podman e2e-rootless]")),
-        "a rule on the program held through pasta, where the program can't be known",
+        program
+            .iter()
+            .any(|l| l.contains(" allow ") && l.contains("[podman e2e-rootless] /bin/busybox")),
+        "inside a rootless container's namespace, a rule on the program didn't hold",
         &found,
+    )?;
+    check(
+        deleted.is_ok()
+            && restored.is_ok()
+            && alerts
+                .contains("Something in a container removed the daemon's nftables table there"),
+        "the table deleted inside the container's namespace wasn't put back, or nobody was told",
+        &format!("deleted: {deleted:?}\nrestored: {restored:?}\n{alerts}"),
     )
 }

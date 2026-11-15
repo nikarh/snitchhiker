@@ -19,7 +19,8 @@ use crate::store::Event;
 /// A packet waiting for a prompt's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Held {
-    /// Which of the daemon's queues (0 for the first) it waits in.
+    /// Which of the broker's writers answers it: the daemon's queues first (0 for the first), then those of the
+    /// namespaces it manages.
     pub queue: usize,
     pub id: u32,
 }
@@ -65,7 +66,7 @@ struct State {
 pub struct Broker {
     state: Mutex<State>,
     wake: Condvar,
-    writers: Vec<Mutex<VerdictWriter>>,
+    writers: std::sync::RwLock<Vec<Option<Arc<Mutex<VerdictWriter>>>>>,
     /// How long a prompt waits, in ms (the policy changes it while the daemon runs).
     timeout_ms: AtomicU64,
     next: AtomicU64,
@@ -91,9 +92,41 @@ impl Broker {
         Self {
             state: Mutex::new(State::default()),
             wake: Condvar::new(),
-            writers: writers.into_iter().map(Mutex::new).collect(),
+            writers: std::sync::RwLock::new(
+                writers
+                    .into_iter()
+                    .map(|w| Some(Arc::new(Mutex::new(w))))
+                    .collect(),
+            ),
             timeout_ms: AtomicU64::new(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
             next: AtomicU64::new(0),
+        }
+    }
+
+    /// Adds the writer of another queue (a managed namespace's); the index its packets are held under.
+    pub fn add_writer(&self, writer: VerdictWriter) -> usize {
+        let mut writers = self.writers.write().unwrap_or_else(PoisonError::into_inner);
+        let writer = Some(Arc::new(Mutex::new(writer)));
+        if let Some(free) = writers.iter().position(Option::is_none) {
+            if let Some(slot) = writers.get_mut(free) {
+                *slot = writer;
+            }
+            free
+        } else {
+            writers.push(writer);
+            writers.len() - 1
+        }
+    }
+
+    /// Removes a writer [`Broker::add_writer`] added (its queue is gone: its packets with it).
+    pub fn remove_writer(&self, index: usize) {
+        if let Some(slot) = self
+            .writers
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(index)
+        {
+            *slot = None;
         }
     }
 
@@ -223,7 +256,14 @@ impl Broker {
     /// Gives every packet of a prompt its verdict.
     pub fn release(&self, pending: &Pending, verdict: Verdict) {
         for held in &pending.packets {
-            let Some(writer) = self.writers.get(held.queue) else {
+            let Some(writer) = self
+                .writers
+                .read()
+                .unwrap_or_else(PoisonError::into_inner)
+                .get(held.queue)
+                .cloned()
+                .flatten()
+            else {
                 continue;
             };
             let mut writer = writer.lock().unwrap_or_else(PoisonError::into_inner);
