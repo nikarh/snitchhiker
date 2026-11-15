@@ -29,6 +29,17 @@ pub struct Headers {
     pub destination_port: u16,
     /// TCP flags, 0 for other protocols.
     pub tcp_flags: u8,
+    /// Where the transport header starts in the packet (0 when it isn't there).
+    pub transport_offset: usize,
+}
+
+/// The UDP payload of a packet whose headers are `headers`, if it is UDP and has one.
+#[must_use]
+pub fn udp_payload<'a>(packet: &'a [u8], headers: &Headers) -> Option<&'a [u8]> {
+    if headers.protocol != IPPROTO_UDP || headers.transport_offset == 0 {
+        return None;
+    }
+    packet.get(headers.transport_offset + 8..)
 }
 
 /// Reads the headers of a packet starting at its IP header. `None` when it isn't IPv4 or IPv6, or is truncated before
@@ -59,6 +70,11 @@ fn parse_v4(packet: &[u8]) -> Option<Headers> {
         IpAddr::V4(destination),
         protocol,
         transport,
+        if transport.is_empty() {
+            0
+        } else {
+            header_length
+        },
     ))
 }
 
@@ -95,10 +111,17 @@ fn parse_v6(packet: &[u8]) -> Option<Headers> {
         IpAddr::V6(destination),
         next,
         transport,
+        if transport.is_empty() { 0 } else { offset },
     ))
 }
 
-fn with_transport(source: IpAddr, destination: IpAddr, protocol: u8, transport: &[u8]) -> Headers {
+fn with_transport(
+    source: IpAddr,
+    destination: IpAddr,
+    protocol: u8,
+    transport: &[u8],
+    transport_offset: usize,
+) -> Headers {
     let port = |at: usize| {
         transport
             .get(at..at + 2)
@@ -120,6 +143,7 @@ fn with_transport(source: IpAddr, destination: IpAddr, protocol: u8, transport: 
         } else {
             0
         },
+        transport_offset,
     }
 }
 

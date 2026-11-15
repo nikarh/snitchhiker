@@ -38,12 +38,12 @@ const NF_DROP: u32 = 0;
 const NF_ACCEPT: u32 = 1;
 
 /// Enough of a packet for its IP and transport headers (and IPv6 extension headers in front of them).
-const COPY_RANGE: u32 = 256;
+pub const HEADERS: u32 = 256;
 /// Packets the kernel holds for a queue before it drops new ones (never letting them through: see [`Queue::bind`]).
 const MAX_LENGTH: u32 = 4096;
 /// The socket's receive buffer. `SO_RCVBUF` is capped at `net.core.rmem_max`, so `SO_RCVBUFFORCE` is tried first.
 const RECEIVE_BUFFER: usize = 8 << 20;
-/// A datagram from the kernel is at most a page or so here: headers, small attributes, `COPY_RANGE` of payload.
+/// A datagram from the kernel: headers, small attributes, the copied part of the packet.
 const RECEIVE_CAPACITY: usize = 1 << 16;
 
 /// What happens to a held packet.
@@ -65,7 +65,7 @@ pub struct Packet<'a> {
     /// The owner of the sending socket, when the kernel knows it (`NFQA_CFG_F_UID_GID`).
     pub uid: Option<u32>,
     pub gid: Option<u32>,
-    /// The packet from its IP header on, at most `COPY_RANGE` bytes of it.
+    /// The packet from its IP header on, as much of it as the queue copies.
     pub payload: &'a [u8],
 }
 
@@ -83,6 +83,11 @@ impl Queue {
     /// Binds queue `number`. When the queue is full the kernel drops new packets: overflow never lets traffic
     /// through (`NFQA_CFG_F_FAIL_OPEN` is explicitly cleared), so flooding the queue cannot open the firewall.
     pub fn bind(number: u16) -> io::Result<Self> {
+        Self::bind_copying(number, HEADERS)
+    }
+
+    /// Like [`Queue::bind`], copying up to `copy_range` bytes of each packet (for queues that read payloads).
+    pub fn bind_copying(number: u16, copy_range: u32) -> io::Result<Self> {
         let mut socket = RawSocket::new(NETLINK_NETFILTER)?;
         socket.bind_auto()?;
         socket.connect(&SocketAddr::new(0, 0))?;
@@ -103,7 +108,7 @@ impl Queue {
         })?;
         queue.configure(|w| {
             // `struct nfqnl_msg_config_params`: copy range, copy mode.
-            let [a, b, c, d] = COPY_RANGE.to_be_bytes();
+            let [a, b, c, d] = copy_range.to_be_bytes();
             w.attribute(NFQA_CFG_PARAMS, &[a, b, c, d, NFQNL_COPY_PACKET]);
             w.u32_be(NFQA_CFG_QUEUE_MAXLEN, MAX_LENGTH);
         })?;

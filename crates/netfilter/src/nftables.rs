@@ -76,10 +76,13 @@ const NFT_REG_VERDICT: u32 = 0;
 const NFT_REG_1: u32 = 1;
 
 const NF_ACCEPT: u32 = 1;
+const NF_INET_LOCAL_IN: u32 = 1;
 const NF_INET_LOCAL_OUT: u32 = 3;
 const NF_IP_PRI_MANGLE: i32 = -150;
 
 const IPPROTO_TCP: u8 = 6;
+const IPPROTO_UDP: u8 = 17;
+const DNS_PORT: u16 = 53;
 /// The TCP flags byte of the header, and the flags `nft`'s `tcp flags & (fin|syn|rst|ack) == syn` looks at.
 const TCP_FLAGS_OFFSET: u32 = 13;
 const TCP_FIN_SYN_RST_ACK: u8 = 0x01 | 0x02 | 0x04 | 0x10;
@@ -98,6 +101,9 @@ pub struct Table {
     pub bypass: bool,
     /// Packets whose mark has these bits set are the daemon's own and are not queued.
     pub own_mark: u32,
+    /// A queue that DNS answers (UDP from port 53) are copied to, to learn the names of addresses; `None` for none.
+    /// It only observes: it always passes packets while nobody is bound to it.
+    pub dns_queue: Option<u16>,
 }
 
 impl Default for Table {
@@ -108,6 +114,7 @@ impl Default for Table {
             queues: 4,
             bypass: false,
             own_mark: 0x5_17c_000,
+            dns_queue: None,
         }
     }
 }
@@ -164,6 +171,22 @@ pub fn encode_install(writer: &mut Writer, table: &Table, sequence: u32) -> Batc
         rule.cmp(NFT_CMP_NEQ, &0_u32.to_ne_bytes());
         rule.queue(table);
     });
+    if let Some(dns_queue) = table.dns_queue {
+        batch.base_chain(
+            &table.name,
+            "input",
+            "filter",
+            NF_INET_LOCAL_IN,
+            NF_IP_PRI_MANGLE,
+        );
+        batch.rule(&table.name, "input", |rule| {
+            rule.meta(NFT_META_L4PROTO);
+            rule.cmp(NFT_CMP_EQ, &[IPPROTO_UDP]);
+            rule.payload(NFT_PAYLOAD_TRANSPORT_HEADER, 0, 2);
+            rule.cmp(NFT_CMP_EQ, &DNS_PORT.to_be_bytes());
+            rule.queue_to(dns_queue, 1, true);
+        });
+    }
     batch.end()
 }
 
@@ -339,16 +362,16 @@ impl Expressions<'_> {
     }
 
     fn queue(&mut self, table: &Table) {
+        self.queue_to(table.queue, table.queues, table.bypass);
+    }
+
+    fn queue_to(&mut self, number: u16, total: u16, bypass: bool) {
         self.expression("queue", |w| {
-            w.u16_be(NFTA_QUEUE_NUM, table.queue);
-            w.u16_be(NFTA_QUEUE_TOTAL, table.queues.max(1));
+            w.u16_be(NFTA_QUEUE_NUM, number);
+            w.u16_be(NFTA_QUEUE_TOTAL, total.max(1));
             w.u16_be(
                 NFTA_QUEUE_FLAGS,
-                if table.bypass {
-                    NFT_QUEUE_FLAG_BYPASS
-                } else {
-                    0
-                },
+                if bypass { NFT_QUEUE_FLAG_BYPASS } else { 0 },
             );
         });
     }
