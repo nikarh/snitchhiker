@@ -70,6 +70,12 @@ Prompt buttons arm only after a moment and only in the focused window, so a clic
 
 The desktop app keeps the history it was sent, so nothing is fetched twice and a query over what it holds runs without the node. Connection history is sensitive, so the cache is kept where only the app can reach it: `/var/cache/snitchhiker-ui` belongs to root and the app's group (`0770`), and holds a directory per user (`0700`). The app enters it through its group; the user's other programs can't, though the files inside are the user's. The cache is of one node's database: when the node's is recreated, the app starts a new one. Events the node no longer keeps are dropped from it too, and it holds two million connections at most. Removing the app's package removes the caches.
 
+## Devices over the network
+
+A remote device is its key (Ed25519). The node serves a connection only if the key that TLS proved is one it paired, and refuses everything else before a single request is read. Pairing takes a one-time secret from the node (128 random bits, single use, 10 minutes, compared in constant time); a wrong or used one raises an alert. Unpairing a device closes its connections at once. Starting a pairing is a dangerous action.
+
+The relay, your own, sees which keys connect and how much they send; what they send is encrypted between node and device. The desktop app keeps its key where only the app can read it (`/var/lib/snitchhiker-ui`, as its history cache), so another program of the user's can't use it to reach the user's nodes. A remote device has no local process for polkit to check: dangerous actions need [step-up](#dangerous-actions-need-more-than-a-session) and are refused to it.
+
 ## Facts a process can't fake
 
 A rule matches on what the kernel says about a connection, not on what the process says about itself:
