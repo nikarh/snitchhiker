@@ -1,0 +1,432 @@
+// Snitchhiker's client protocol, version 1: what the desktop app, the command line, the MCP server and (over iroh)
+// the Android app speak to a node.
+//
+// Framing: every frame is a little-endian uint32 length, then that many bytes of a ClientFrame (client to node) or a
+// ServerFrame (node to client). A frame is at most 16 MiB.
+//
+// A local connection (the unix sockets in /run/snitchhiker) starts with a 6-byte preamble from the client: "SNHK"
+// and the major version as a little-endian uint16 (1). A node that doesn't speak that major answers with a Refusal
+// and closes. Then the client sends Hello, and the node answers Welcome (or Refusal).
+//
+// Within major version 1 changes are additive only: fields and messages are added, never renumbered, renamed or
+// removed (removed fields become reserved). Unknown fields are ignored; every enum's 0 is UNSPECIFIED.
+
+syntax = "proto3";
+
+package snitchhiker.v1;
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Frames
+
+message ClientFrame {
+  oneof body {
+    Hello hello = 1;
+    Request request = 2;
+  }
+}
+
+message ServerFrame {
+  oneof body {
+    Welcome welcome = 1;
+    Response response = 2;
+    Notice notice = 3;
+    // The connection is refused (version, authentication); the node closes it after this frame.
+    Refusal refusal = 4;
+  }
+}
+
+message Hello {
+  // The client's minor version of the major the preamble named.
+  uint32 minor = 1;
+  // What the client is ("desktop", "cli", "mcp", "android") and its version, for logs and the device list.
+  string app = 2;
+  string app_version = 3;
+  repeated string capabilities = 4;
+}
+
+message Welcome {
+  uint32 minor = 1;
+  string daemon_version = 2;
+  string node_name = 3;
+  // Changes when the node's database is recreated: clients drop what they cached of it.
+  uint64 node_epoch = 4;
+  repeated string capabilities = 5;
+  // What this connection may do.
+  Role role = 6;
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  // Read only.
+  ROLE_VIEWER = 1;
+  // Read, answer prompts, change rules.
+  ROLE_ADMIN = 2;
+  // The admin socket (root): everything.
+  ROLE_ROOT = 3;
+  // An agent (MCP): propose only.
+  ROLE_AGENT = 4;
+}
+
+message Refusal {
+  string reason = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Requests and responses: a client may have many requests in flight; each response carries its request's id.
+
+message Request {
+  uint64 id = 1;
+  oneof method {
+    GetStatus get_status = 10;
+    ListRules list_rules = 11;
+    AddRule add_rule = 12;
+    DeleteRule delete_rule = 13;
+    SetRuleEnabled set_rule_enabled = 14;
+    ListEvents list_events = 15;
+    Subscribe subscribe = 16;
+    Unsubscribe unsubscribe = 17;
+    ListPrompts list_prompts = 18;
+    AnswerPrompt answer_prompt = 19;
+    Learn learn = 20;
+    ImportRules import_rules = 21;
+    ExportRules export_rules = 22;
+  }
+}
+
+message Response {
+  uint64 id = 1;
+  oneof result {
+    Error error = 2;
+    Done done = 3;
+    Status status = 10;
+    RuleList rules = 11;
+    RuleAdded rule_added = 12;
+    EventPage events = 15;
+    Subscribed subscribed = 16;
+    PromptList prompts = 18;
+    RuleFile rule_file = 20;
+  }
+}
+
+message Error {
+  ErrorCode code = 1;
+  string message = 2;
+}
+
+enum ErrorCode {
+  ERROR_UNSPECIFIED = 0;
+  // The request is malformed or its values are invalid.
+  ERROR_INVALID = 1;
+  ERROR_NOT_FOUND = 2;
+  // The connection's role doesn't allow it.
+  ERROR_FORBIDDEN = 3;
+  // A default or managed rule: changed in its file, not here.
+  ERROR_LOCKED = 4;
+  ERROR_INTERNAL = 5;
+  // The node doesn't know the method (an older node).
+  ERROR_UNSUPPORTED = 6;
+}
+
+// Success without a result.
+message Done {}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Status
+
+message GetStatus {}
+
+message Status {
+  string daemon_version = 1;
+  Mode mode = 2;
+  // What happens to a connection no rule decides.
+  Policy no_match = 3;
+  bool fail_open = 4;
+  // Connections decided since the daemon started.
+  uint64 decided = 5;
+  // Events the history couldn't keep up with.
+  uint64 dropped_events = 6;
+  uint32 rules = 7;
+  uint32 pending_prompts = 8;
+  uint32 clients = 9;
+}
+
+enum Mode {
+  MODE_UNSPECIFIED = 0;
+  MODE_ENFORCE = 1;
+  MODE_MONITOR = 2;
+}
+
+enum Policy {
+  POLICY_UNSPECIFIED = 0;
+  POLICY_ALLOW = 1;
+  POLICY_DENY = 2;
+  POLICY_REJECT = 3;
+  // Ask a connected client; the prompt's timeout decides when nobody answers.
+  POLICY_ASK = 4;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Rules, in the shape of rule files (see the `spec` module of snitchhiker-core).
+
+enum Action {
+  ACTION_UNSPECIFIED = 0;
+  ACTION_ALLOW = 1;
+  ACTION_DENY = 2;
+  ACTION_REJECT = 3;
+}
+
+enum Tier {
+  TIER_UNSPECIFIED = 0;
+  TIER_FALLBACK = 1;
+  TIER_NORMAL = 2;
+  TIER_OVERRIDE = 3;
+}
+
+enum Context {
+  CONTEXT_UNSPECIFIED = 0;
+  CONTEXT_HOST = 1;
+  CONTEXT_CONTAINER = 2;
+  CONTEXT_VM = 3;
+  CONTEXT_NETNS = 4;
+  CONTEXT_ANY = 5;
+}
+
+// All present conditions must hold; a list means any of its items. Patterns are exact unless prefixed with glob: or
+// re:. Ports are numbers or low-high ranges; protocols tcp, udp, icmp, icmpv6 or numbers.
+message Conditions {
+  repeated string exe = 1;
+  repeated string app = 2;
+  repeated string cmdline = 3;
+  repeated string parent = 4;
+  repeated uint32 uid = 5;
+  repeated string host = 6;
+  repeated string net = 7;
+  repeated string port = 8;
+  repeated string protocol = 9;
+  // Unspecified: the host only.
+  Context context = 10;
+}
+
+message Rule {
+  uint64 id = 1;
+  optional uint64 folder = 2;
+  string name = 3;
+  bool enabled = 4;
+  Action action = 5;
+  Tier tier = 6;
+  string notes = 7;
+  Conditions conditions = 8;
+  // A default or managed rule: shown, not changeable.
+  bool locked = 9;
+  // When it stops applying (Unix milliseconds); none: never.
+  optional uint64 expires_ms = 10;
+  // It applies until the daemon restarts.
+  bool until_restart = 11;
+}
+
+message Folder {
+  uint64 id = 1;
+  optional uint64 parent = 2;
+  string name = 3;
+  bool enabled = 4;
+  Conditions scope = 5;
+  bool locked = 6;
+}
+
+message ListRules {}
+
+message RuleList {
+  repeated Folder folders = 1;
+  repeated Rule rules = 2;
+}
+
+message AddRule {
+  // Its id and locked are ignored.
+  Rule rule = 1;
+}
+
+message RuleAdded {
+  uint64 id = 1;
+}
+
+message DeleteRule {
+  uint64 id = 1;
+}
+
+message SetRuleEnabled {
+  uint64 id = 1;
+  bool enabled = 2;
+}
+
+// A rule file (TOML), for learn, import and export.
+message RuleFile {
+  string toml = 1;
+}
+
+message Learn {
+  // Connections no rule decided in the last this many hours.
+  uint32 hours = 1;
+  string folder = 2;
+}
+
+message ImportRules {
+  string toml = 1;
+  // The folder's name when the file has none.
+  string folder = 2;
+}
+
+message ExportRules {}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The connection history
+
+enum Source {
+  SOURCE_UNSPECIFIED = 0;
+  // A rule decided.
+  SOURCE_RULE = 1;
+  // No rule matched; the policy decided.
+  SOURCE_POLICY = 2;
+  // Monitor mode: it passed, whatever was decided.
+  SOURCE_MONITOR = 3;
+  // A client answered a prompt.
+  SOURCE_PROMPT = 4;
+  // Nobody answered a prompt in time.
+  SOURCE_TIMEOUT = 5;
+}
+
+message ConnectionEvent {
+  int64 seq = 1;
+  uint64 time_ms = 2;
+  string exe = 3;
+  // The destination's name, when known.
+  string host = 4;
+  uint32 uid = 5;
+  uint32 pid = 6;
+  uint32 protocol = 7;
+  // 4 bytes (IPv4) or 16 (IPv6).
+  bytes address = 8;
+  uint32 port = 9;
+  Context context = 10;
+  Action action = 11;
+  Source source = 12;
+  optional uint64 rule = 13;
+  uint64 bytes_out = 14;
+  uint64 bytes_in = 15;
+}
+
+message ListEvents {
+  // Events older than this sequence number; 0 for the newest.
+  int64 before = 1;
+  uint32 limit = 2;
+}
+
+message EventPage {
+  repeated ConnectionEvent events = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Subscriptions: the node pushes a Notice for each thing that happens, until Unsubscribe or the connection closes.
+
+enum Topic {
+  TOPIC_UNSPECIFIED = 0;
+  // Prompts as they open and as they are resolved (by anyone, or by timing out).
+  TOPIC_PROMPTS = 1;
+  // Every connection as it is decided.
+  TOPIC_EVENTS = 2;
+  // A rule or folder changed: list them again.
+  TOPIC_RULES = 3;
+}
+
+message Subscribe {
+  Topic topic = 1;
+}
+
+message Subscribed {
+  uint64 subscription = 1;
+}
+
+message Unsubscribe {
+  uint64 subscription = 1;
+}
+
+message Notice {
+  uint64 subscription = 1;
+  oneof body {
+    Prompt prompt = 2;
+    PromptResolved prompt_resolved = 3;
+    ConnectionEvent event = 4;
+    RulesChanged rules_changed = 5;
+  }
+}
+
+message RulesChanged {}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Prompts
+
+// A connection waiting for a decision. Connections of the same program to the same destination join one prompt.
+message Prompt {
+  uint64 id = 1;
+  uint64 created_ms = 2;
+  // When it times out, and the policy decides.
+  uint64 expires_ms = 3;
+  string exe = 4;
+  string cmdline = 5;
+  uint32 uid = 6;
+  string user = 7;
+  uint32 pid = 8;
+  repeated string hosts = 9;
+  bytes address = 10;
+  uint32 port = 11;
+  uint32 protocol = 12;
+  Context context = 13;
+  // How many connections wait on it.
+  uint32 waiting = 14;
+  // Rules that would decide it, narrowest first: the first is the default answer.
+  repeated Suggestion suggestions = 15;
+  // The executable is writable by a user other than root: any process of that user could replace it.
+  bool exe_writable = 16;
+}
+
+message Suggestion {
+  string label = 1;
+  Conditions conditions = 2;
+  // It allows more than this destination (a whole domain, any port, anywhere).
+  bool broad = 3;
+}
+
+message PromptResolved {
+  uint64 id = 1;
+  Action action = 2;
+  // Who answered ("desktop", a device's name), or empty when it timed out.
+  string by = 3;
+  // The rule the answer created, if any.
+  optional uint64 rule = 4;
+  bool timed_out = 5;
+}
+
+message ListPrompts {}
+
+message PromptList {
+  repeated Prompt prompts = 1;
+}
+
+enum Duration {
+  DURATION_UNSPECIFIED = 0;
+  // Only the waiting connections; no rule.
+  DURATION_ONCE = 1;
+  DURATION_UNTIL_RESTART = 2;
+  DURATION_HOUR = 3;
+  DURATION_HALF_DAY = 4;
+  DURATION_FOREVER = 5;
+}
+
+message AnswerPrompt {
+  uint64 id = 1;
+  Action action = 2;
+  Duration duration = 3;
+  // Which suggestion the rule is made from.
+  uint32 suggestion = 4;
+  // Or conditions of the client's own (instead of a suggestion).
+  optional Conditions conditions = 5;
+}

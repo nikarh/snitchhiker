@@ -1,0 +1,26 @@
+[package]
+name = "snitchhiker-proto"
+description = "Snitchhiker's client protocol: protobuf messages, framing and version negotiation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+prost = "0.14.6"
+snitchhiker-core = { version = "0.1.0", path = "../core" }
+thiserror = "2.0.21"
+
+[build-dependencies]
+prost-build = "0.14.6"
+protox = "0.10.0"
+
+[dev-dependencies]
+toml = "1.2.1"
