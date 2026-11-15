@@ -11,6 +11,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import dev.nikarh.snitchhiker.app.ui.LockedScreen
 import dev.nikarh.snitchhiker.app.ui.NodeScreen
 import dev.nikarh.snitchhiker.app.ui.NodesScreen
 import dev.nikarh.snitchhiker.app.ui.PairScreen
@@ -32,6 +33,12 @@ sealed interface Screen {
 class MainActivity : ComponentActivity() {
     private var screen by mutableStateOf<Screen>(Screen.Nodes)
 
+    /** Whether the content shows (the app lock is off, or it was unlocked). */
+    private var open by mutableStateOf(true)
+
+    /** The unlock prompt is showing: resuming from it doesn't ask again. */
+    private var prompting = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -41,8 +48,14 @@ class MainActivity : ComponentActivity() {
         val app = application as SnitchhikerApp
         handle(intent, app)
         app.updateLive()
+        if (!PushProvider.FCM) UnifiedPushes.useDefault(this)
+        open = app.open
         setContent {
             SnitchhikerTheme {
+                if (!open) {
+                    LockedScreen(unlock = ::unlock)
+                    return@SnitchhikerTheme
+                }
                 when (val current = screen) {
                     Screen.Nodes -> {
                         NodesScreen(
@@ -70,6 +83,29 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        open = (application as SnitchhikerApp).open
+        if (!open) unlock()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Locked again once out of sight, but not by turning the screen.
+        if (!isChangingConfigurations) (application as SnitchhikerApp).unlocked = false
+    }
+
+    private fun unlock() {
+        if (prompting) return
+        prompting = true
+        AppLock.unlock(this) { unlocked ->
+            prompting = false
+            val app = application as SnitchhikerApp
+            if (unlocked) app.unlocked = true
+            open = app.open
         }
     }
 

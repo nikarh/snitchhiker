@@ -6,13 +6,14 @@ import dev.nikarh.snitchhiker.core.NodeState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import snitchhiker.v1.GetStatus
 import snitchhiker.v1.Request
 import snitchhiker.v1.Response
@@ -54,6 +55,8 @@ class NodeSession(
                         told = false
                         backoff = BACKOFF_MIN_MS
                         refreshStatus()
+                        // Where this phone is woken, for when it isn't connected.
+                        runCatching { Push.tell(this@NodeSession, Push.target(context)) }
                         connected.notices(TOPICS).collect { notice ->
                             val before = mutableState.value
                             val after = before.apply(notice)
@@ -72,10 +75,18 @@ class NodeSession(
                         Notifications.offline(context, info, mutableState.value.stopping)
                         told = true
                     }
-                    delay(backoff)
+                    // Until the next attempt, or a push saying something waits.
+                    withTimeoutOrNull(backoff) { wakeups.receive() }
                     backoff = (backoff * 2).coerceAtMost(BACKOFF_MAX_MS)
                 }
             }
+    }
+
+    private val wakeups = Channel<Unit>(Channel.CONFLATED)
+
+    /** A push said something waits: connect now, if not connected. */
+    fun wake() {
+        wakeups.trySend(Unit)
     }
 
     fun stop() {

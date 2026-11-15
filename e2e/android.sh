@@ -2,8 +2,9 @@
 # The Android app end to end: the app in an emulator (scripts/android-emulator.sh), the node in the e2e VM
 # (e2e/vm.sh), and a relay between them on this machine's loopback (unprivileged; both reach it at 10.0.2.2 through
 # their user-mode networks). The app pairs by a link, a connection no rule decides on the node prompts the phone in
-# the background, and Allow on the notification makes the suggested rule. The node stopped, the phone says it is
-# offline, with the node's reason; started, that it is back.
+# the background, and Allow on the notification makes the suggested rule. With the app lock on, a prompt's notification
+# only opens the app, which asks to unlock. The node stopped, the phone says it is offline, with the node's reason;
+# started, that it is back.
 #
 #   e2e/android.sh
 #
@@ -21,7 +22,7 @@ fail() {
 # Builds: the node's package, the relay, the app with its core.
 cargo build -q --locked -p snitchhiker-daemon -p snitchhiker-relay
 mise run android:core > /dev/null
-(cd android && ./gradlew -q :app:assembleDebug > /dev/null)
+(cd android && ./gradlew -q :app:assembleFossDebug > /dev/null)
 e2e/vm.sh node up > /dev/null
 mise x nfpm -- scripts/package.sh x86_64 target/debug/snitchhikerd target/e2e-packages > /dev/null
 e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
@@ -50,8 +51,10 @@ link=$(e2e/vm.sh node ssh 'sudo snitchhiker pair --name phone | grep "^snitchhik
 # The phone: a fresh app, paired by opening the link.
 serial=$(scripts/android-emulator.sh)
 adb() { command adb -s "${serial}" "$@"; }
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk > /dev/null
+adb install -r android/app/build/outputs/apk/foss/debug/app-foss-debug.apk > /dev/null
 adb shell pm clear dev.nikarh.snitchhiker > /dev/null
+# No screen lock left over from an earlier run (the app lock scenario sets one).
+adb shell locksettings clear --old 1234 > /dev/null 2>&1 || true
 adb shell pm grant dev.nikarh.snitchhiker android.permission.POST_NOTIFICATIONS
 # Taps the centre of the first element whose text is $1 (after one whose text is $2, if given).
 tap() {
@@ -101,6 +104,38 @@ if tap ALLOW "curl wants to connect"; then
 else
   fail allowed-from-the-notification "no notification for the prompt" "$(adb shell dumpsys notification --noredact | grep -E 'android.title' | head)"
 fi
+adb shell cmd statusbar collapse
+
+# The app lock (it needs a screen lock on the phone): a prompt's notification has no Allow or Deny, and opens the app
+# locked.
+adb shell locksettings set-pin 1234 > /dev/null
+adb shell am start -n dev.nikarh.snitchhiker/.app.MainActivity > /dev/null
+sleep 3
+# From the node's screen (pairing opened it) back to the list of nodes.
+tap "Lock the app" || { adb shell input keyevent KEYCODE_BACK && sleep 2 && tap "Lock the app"; } ||
+  fail notification-only-opens-a-locked-app "no app lock switch" "$(adb shell uiautomator dump /dev/tty)"
+adb shell input keyevent KEYCODE_HOME
+e2e/vm.sh node ssh 'sudo runuser -u mallory -- curl -s -m 55 http://203.0.113.50:8444 >/dev/null 2>&1 &' > /dev/null
+sleep 5
+adb shell cmd statusbar expand-notifications
+sleep 2
+if tap ALLOW "curl wants to connect"; then
+  fail notification-only-opens-a-locked-app "the notification could still answer" ""
+elif ! tap "curl wants to connect"; then
+  fail notification-only-opens-a-locked-app "no notification for the prompt" "$(adb shell dumpsys notification --noredact | grep -E 'android.title' | head)"
+else
+  sleep 3
+  adb shell uiautomator dump /sdcard/ui.xml > /dev/null
+  out=$(adb shell cat /sdcard/ui.xml | grep -o 'text="[^"]\+"' || true)
+  if grep -q "Unlock to see and answer" <<< "${out}" && ! grep -q "Prompts" <<< "${out}"; then
+    pass notification-only-opens-a-locked-app
+  else
+    fail notification-only-opens-a-locked-app "the app opened without asking to unlock" "${out}"
+  fi
+fi
+adb shell input keyevent KEYCODE_BACK
+adb shell input keyevent KEYCODE_HOME
+adb shell locksettings clear --old 1234 > /dev/null
 adb shell cmd statusbar collapse
 
 # The node stopped: within the offline threshold (two minutes) the phone says so, with the node's own reason; started

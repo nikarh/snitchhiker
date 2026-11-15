@@ -1,5 +1,6 @@
 package dev.nikarh.snitchhiker.app.ui
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material3.Card
@@ -16,6 +18,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -28,9 +31,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
+import dev.nikarh.snitchhiker.app.AppLock
 import dev.nikarh.snitchhiker.app.NodeSession
+import dev.nikarh.snitchhiker.app.PushProvider
 import dev.nikarh.snitchhiker.app.SnitchhikerApp
+import dev.nikarh.snitchhiker.app.UnifiedPushes
 
 /** The nodes paired: each with whether it is reachable and what waits on it. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -66,6 +73,8 @@ fun NodesScreen(
             ) {
                 items(sessions, key = { it.info.id }) { session -> NodeCard(session) { open(session.info.id) } }
                 item { LiveSwitch(app) }
+                item { PushCard(app) }
+                item { LockSwitch(app) }
             }
         }
     }
@@ -77,16 +86,90 @@ private fun LiveSwitch(app: SnitchhikerApp) {
     var live by remember { mutableStateOf(app.live) }
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Stay connected in the background", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Switch(checked = live, onCheckedChange = {
+            Row(
+                Modifier.fillMaxWidth().toggleable(value = live, role = Role.Switch, onValueChange = {
                     live = it
                     app.live = it
-                })
+                }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Stay connected in the background", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Switch(checked = live, onCheckedChange = null)
             }
             Text(
                 "Prompts arrive at once, with an ongoing notification while the app is in the background. Off, they arrive " +
                     "when you open the app.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** How the phone is woken while the app is closed (push), and choosing the UnifiedPush distributor. */
+@Composable
+private fun PushCard(app: SnitchhikerApp) {
+    var tick by remember { mutableStateOf(0) }
+    val distributor = remember(tick) { UnifiedPushes.distributor(app) }
+    val available = remember(tick) { UnifiedPushes.available(app) }
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Wake-ups", style = MaterialTheme.typography.titleMedium)
+            Text(
+                when {
+                    PushProvider.FCM -> {
+                        "Through Firebase Cloud Messaging."
+                    }
+
+                    distributor != null -> {
+                        "Through $distributor (UnifiedPush)."
+                    }
+
+                    available -> {
+                        "Choose the UnifiedPush app that wakes Snitchhiker."
+                    }
+
+                    else -> {
+                        "No UnifiedPush app on this phone: install one (ntfy, for example) to be told of prompts while " +
+                            "Snitchhiker is closed, or stay connected in the background."
+                    }
+                },
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (!PushProvider.FCM && available) {
+                val activity = LocalActivity.current
+                OutlinedButton(onClick = { activity?.let { UnifiedPushes.pick(it) { tick++ } } }) {
+                    Text(if (distributor == null) "Choose" else "Change")
+                }
+            }
+        }
+    }
+}
+
+/** The app lock on or off; it needs the device to have a screen lock. */
+@Composable
+private fun LockSwitch(app: SnitchhikerApp) {
+    var lock by remember { mutableStateOf(app.lock) }
+    val available = AppLock.available(app)
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp)) {
+            Row(
+                Modifier.fillMaxWidth().toggleable(value = lock, enabled = available || lock, role = Role.Switch, onValueChange = {
+                    lock = it
+                    app.unlocked = true
+                    app.lock = it
+                }),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Lock the app", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                Switch(checked = lock, enabled = available || lock, onCheckedChange = null)
+            }
+            Text(
+                if (available) {
+                    "The app opens with your fingerprint or screen lock, and notifications only open it: allowing or " +
+                        "denying from a notification needs the app unlocked."
+                } else {
+                    "Needs a screen lock on this phone."
+                },
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

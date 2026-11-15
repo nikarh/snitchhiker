@@ -123,7 +123,15 @@ object Notifications {
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         val suggestion = prompt.suggestions.firstOrNull()?.label ?: "this connection"
-        val notification =
+        val locked = (context.applicationContext as SnitchhikerApp).lock
+        // On the lock screen: only that something waits.
+        val public =
+            NotificationCompat
+                .Builder(context, PROMPTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("A connection waits on ${node.name}")
+                .build()
+        val builder =
             NotificationCompat
                 .Builder(context, PROMPTS)
                 .setSmallIcon(R.drawable.ic_notification)
@@ -137,9 +145,14 @@ object Notifications {
                 .setCategory(NotificationCompat.CATEGORY_MESSAGE)
                 .setContentIntent(open)
                 .setAutoCancel(true)
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(public)
+        // With the app lock on, the notification only opens the app.
+        if (!locked) {
+            builder
                 .addAction(0, "Allow", PromptActions.intent(context, node, prompt.id, PromptActions.ALLOW))
                 .addAction(0, "Deny", PromptActions.intent(context, node, prompt.id, PromptActions.DENY))
-                .build()
-        post(context, tag(node), prompt.id.toInt(), notification)
+        }
+        post(context, tag(node), prompt.id.toInt(), builder.build())
     }
 }

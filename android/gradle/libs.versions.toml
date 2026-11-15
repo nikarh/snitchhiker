@@ -4,6 +4,7 @@ agp                  = "9.5.0"
 camerax              = "1.6.2"
 compose-bom          = "2026.09.00"
 core-ktx             = "1.19.1"
+firebase-messaging   = "26.0.2"
 coroutines           = "1.11.0"
 icons                = "1.7.8"
 junit                = "4.13.2"
@@ -11,6 +12,7 @@ kotlin               = "2.4.21"
 ktlint               = "1.8.0"
 lifecycle            = "2.11.0"
 spotless             = "8.10.4"
+unifiedpush          = "3.3.5"
 wire                 = "7.1.2"
 zxing                = "3.5.4"
 
@@ -29,9 +31,11 @@ core-ktx                    = { module = "androidx.core:core-ktx", version.ref =
 coroutines-android          = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
 coroutines-core             = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
 coroutines-test             = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+firebase-messaging          = { module = "com.google.firebase:firebase-messaging", version.ref = "firebase-messaging" }
 junit                       = { module = "junit:junit", version.ref = "junit" }
 lifecycle-runtime-compose   = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
 lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+unifiedpush-connector       = { module = "org.unifiedpush.android:connector", version.ref = "unifiedpush" }
 wire-runtime                = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
 zxing-core                  = { module = "com.google.zxing:core", version.ref = "zxing" }
 

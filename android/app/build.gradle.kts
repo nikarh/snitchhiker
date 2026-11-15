@@ -31,6 +31,21 @@ android {
         versionName = appVersion + System.getenv("SNITCHHIKER_VERSION_SUFFIX").orEmpty()
     }
 
+    // Push (plan §8.5): `foss` wakes through UnifiedPush only (F-Droid); `play` through FCM, with the Firebase project
+    // given at build time (FCM_PROJECT_ID, FCM_APP_ID, FCM_API_KEY, FCM_SENDER_ID), or UnifiedPush without one.
+    flavorDimensions += "push"
+    productFlavors {
+        create("foss") {
+            dimension = "push"
+        }
+        create("play") {
+            dimension = "push"
+            for (name in listOf("FCM_PROJECT_ID", "FCM_APP_ID", "FCM_API_KEY", "FCM_SENDER_ID")) {
+                buildConfigField("String", name, "\"${System.getenv(name).orEmpty()}\"")
+            }
+        }
+    }
+
     signingConfigs {
         if (releaseKeystore != null) {
             create("release") {
@@ -63,6 +78,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     lint {
@@ -95,6 +111,8 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.unifiedpush.connector)
     implementation(libs.zxing.core)
+    "playImplementation"(libs.firebase.messaging)
     debugImplementation(libs.compose.ui.tooling)
 }

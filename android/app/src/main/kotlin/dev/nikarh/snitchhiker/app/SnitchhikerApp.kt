@@ -13,6 +13,7 @@ class SnitchhikerApp : Application() {
     private companion object {
         const val PREFERENCES = "settings"
         const val LIVE = "live"
+        const val LOCK = "lock"
     }
 
     private val scope = CoroutineScope(SupervisorJob())
@@ -24,7 +25,22 @@ class SnitchhikerApp : Application() {
         Notifications.createChannels(this)
         mutableSessions.value = NodeStore.load(this).map { NodeSession(this, it, scope).also(NodeSession::start) }
         live = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getBoolean(LIVE, true)
+        lock = getSharedPreferences(PREFERENCES, MODE_PRIVATE).getBoolean(LOCK, false)
+        PushProvider.start(this)
     }
+
+    /** The app lock ([AppLock]) on or off. */
+    var lock: Boolean = false
+        set(value) {
+            field = value
+            getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit { putBoolean(LOCK, value) }
+        }
+
+    /** Whether the app was unlocked since it last went to the background (meaningless with the lock off). */
+    var unlocked: Boolean = false
+
+    /** Whether the app's content may show now. */
+    val open: Boolean get() = !lock || unlocked
 
     /** Live mode: the connections kept in the background by a foreground service (with nodes to keep). */
     var live: Boolean = true

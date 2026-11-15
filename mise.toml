@@ -44,13 +44,13 @@ find android/app/src/main/jniLibs -name 'lib*.so' ! -name libsnitchhiker_mobile.
 description = "The Android app's checks: ktlint (spotless), Android Lint, the JVM tests, and a debug build"
 depends = ["android:core"]
 dir = "android"
-run = "./gradlew spotlessCheck :core:test :app:lintDebug :app:assembleDebug"
+run = "./gradlew spotlessCheck :core:test :app:lintFossDebug :app:lintPlayDebug :app:assembleFossDebug :app:assemblePlayDebug"
 
 [tasks."android:build"]
 description = "The Android app's release APK (signed with ANDROID_KEYSTORE when set, the debug key otherwise)"
 depends = ["android:core"]
 dir = "android"
-run = "./gradlew :app:assembleRelease"
+run = "./gradlew :app:assembleFossRelease :app:assemblePlayRelease"
 
 [tasks."e2e:android"]
 description = "The Android app end to end: an emulator, the node VM and a relay between them (e2e/android.sh)"

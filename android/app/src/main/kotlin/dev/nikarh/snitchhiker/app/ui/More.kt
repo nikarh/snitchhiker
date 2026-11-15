@@ -412,7 +412,10 @@ private fun DevicesPage(
         items(list.value?.devices.orEmpty(), key = { it.id }) { device ->
             Item {
                 Text(device.name, style = MaterialTheme.typography.titleMedium)
-                Muted("${device.fingerprint} · ${if (device.connected) "connected" else "last seen ${time(device.last_seen_ms)}"}")
+                Muted(
+                    "${device.fingerprint} · ${if (device.connected) "connected" else "last seen ${time(device.last_seen_ms)}"}" +
+                        if (device.push) " · woken by push" else "",
+                )
                 TextButton(onClick = {
                     scope.launch {
                         run(session, Request(remove_device = RemoveDevice(id = device.id)))

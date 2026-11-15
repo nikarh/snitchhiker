@@ -22,6 +22,8 @@ class PromptActions : BroadcastReceiver() {
         intent: Intent,
     ) {
         val app = context.applicationContext as SnitchhikerApp
+        // A notification posted before the app lock was turned on: its actions no longer answer.
+        if (app.lock) return
         val session = app.session(intent.getStringExtra(EXTRA_NODE) ?: return) ?: return
         val prompt = intent.getLongExtra(EXTRA_PROMPT, 0)
         val allow = intent.action == ALLOW
