@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 mod nftables;
+mod queue;
 mod util;
 
 /// A scenario: a name and a function that fails with a message.
@@ -20,6 +21,16 @@ const SCENARIOS: &[Scenario] = &[
     (
         "nftables/other-tables-untouched",
         nftables::other_tables_untouched,
+    ),
+    ("queue/holds-until-accepted", queue::holds_until_accepted),
+    (
+        "queue/dropped-never-connects",
+        queue::dropped_never_connects,
+    ),
+    ("queue/unbound-fails-closed", queue::unbound_fails_closed),
+    (
+        "queue/unbound-with-bypass-fails-open",
+        queue::unbound_with_bypass_fails_open,
     ),
 ];
 
