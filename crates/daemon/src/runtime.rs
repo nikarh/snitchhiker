@@ -659,6 +659,19 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) {
     }
 }
 
+/// Pushes recorded events to the subscribers of the events topic, if there are any.
+fn publish_events(shared: &Shared, batch: &[Event], seqs: &[i64]) {
+    if !shared.hub.has_subscribers(v1::Topic::Events) {
+        return;
+    }
+    let bodies: Vec<v1::notice::Body> = batch
+        .iter()
+        .zip(seqs)
+        .map(|(event, seq)| v1::notice::Body::Event(crate::api::event(&event.stored(*seq))))
+        .collect();
+    shared.hub.publish_all(v1::Topic::Events, &bodies);
+}
+
 fn write_loop(
     shared: &Shared,
     store: &Mutex<Store>,
@@ -666,6 +679,7 @@ fn write_loop(
     retention: Duration,
 ) {
     let mut batch = Vec::with_capacity(BATCH);
+    let mut seqs = Vec::with_capacity(BATCH);
     let mut last_prune = Instant::now();
     let mut last_bytes = Instant::now();
     let mut counted: HashMap<u64, (u64, u64)> = HashMap::new();
@@ -686,10 +700,11 @@ fn write_loop(
             }
         }
         let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
-        if !batch.is_empty()
-            && let Err(error) = store.record(&batch)
-        {
-            error!(%error, events = batch.len(), "recording events");
+        if !batch.is_empty() {
+            match store.record(&batch, &mut seqs) {
+                Ok(()) => publish_events(shared, &batch, &seqs),
+                Err(error) => error!(%error, events = batch.len(), "recording events"),
+            }
         }
         if last_bytes.elapsed() >= BYTES_EVERY {
             last_bytes = Instant::now();

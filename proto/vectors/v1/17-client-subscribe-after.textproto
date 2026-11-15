@@ -1,0 +1,9 @@
+# message: snitchhiker.v1.ClientFrame
+# Resuming the events topic after reconnecting: the last event seen was seq 99.
+request {
+  id: 8
+  subscribe {
+    topic: TOPIC_EVENTS
+    after: 99
+  }
+}

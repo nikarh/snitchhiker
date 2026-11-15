@@ -334,17 +334,7 @@ fn handle(
         Method::DeleteRule(delete) => delete_rule(daemon, delete.id),
         Method::SetRuleEnabled(set) => set_rule_enabled(daemon, &set),
         Method::ListEvents(list) => list_events(daemon, &list),
-        Method::Subscribe(subscribe) => {
-            let topic = subscribe.topic();
-            if topic == v1::Topic::Unspecified {
-                return error(v1::ErrorCode::Invalid, "no topic");
-            }
-            let subscription = daemon
-                .shared
-                .hub
-                .subscribe(connection, topic, outbound.clone());
-            R::Subscribed(v1::Subscribed { subscription })
-        }
+        Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbound, &subscribe),
         Method::Unsubscribe(unsubscribe) => {
             if daemon
                 .shared
@@ -666,7 +656,7 @@ fn import_rules(
     }
 }
 
-fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
+pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
     v1::ConnectionEvent {
         seq: stored.seq,
         time_ms: stored.time_ms,
@@ -801,6 +791,67 @@ fn list_audit(daemon: &Daemon, list: &v1::ListAudit) -> v1::response::Result {
                 .collect(),
         }),
         Err(e) => internal(e),
+    }
+}
+
+/// The most stored events a subscription catches up with; further behind, the client pages with `ListEvents`.
+const BACKFILL: u32 = 4000;
+
+fn subscribe(
+    daemon: &Daemon,
+    connection: u64,
+    outbound: &SyncSender<v1::ServerFrame>,
+    subscribe: &v1::Subscribe,
+) -> v1::response::Result {
+    let topic = subscribe.topic();
+    let backfill = || -> Option<Vec<v1::notice::Body>> {
+        match (topic, subscribe.after) {
+            (v1::Topic::Prompts, _) => Some(
+                daemon
+                    .shared
+                    .broker
+                    .list()
+                    .into_iter()
+                    .map(v1::notice::Body::Prompt)
+                    .collect(),
+            ),
+            (v1::Topic::Events, Some(after)) => {
+                let events = match daemon.store().events_after(after, BACKFILL + 1) {
+                    Ok(events) => events,
+                    Err(error) => {
+                        warn!(%error, "reading events for a subscription");
+                        return None;
+                    }
+                };
+                (events.len() <= BACKFILL as usize).then(|| {
+                    events
+                        .iter()
+                        .map(|e| v1::notice::Body::Event(event(e)))
+                        .collect()
+                })
+            }
+            _ => Some(Vec::new()),
+        }
+    };
+    if topic == v1::Topic::Unspecified {
+        return error(v1::ErrorCode::Invalid, "no topic");
+    }
+    match daemon
+        .shared
+        .hub
+        .subscribe_with(connection, topic, outbound.clone(), backfill)
+    {
+        Ok(subscription) => v1::response::Result::Subscribed(v1::Subscribed { subscription }),
+        Err(crate::hub::BackfillError::TooMuch) => error(
+            v1::ErrorCode::Invalid,
+            format!(
+                "more than {BACKFILL} events since {}: page them with ListEvents, then subscribe from the newest",
+                subscribe.after.unwrap_or_default()
+            ),
+        ),
+        Err(crate::hub::BackfillError::Closed) => {
+            error(v1::ErrorCode::Internal, "the connection closed")
+        }
     }
 }
 

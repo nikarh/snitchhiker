@@ -330,6 +330,11 @@ message EventPage {
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Subscriptions: the node pushes a Notice for each thing that happens, until Unsubscribe or the connection closes.
+//
+// Subscribing to prompts first sends a Prompt for each one waiting. Subscribing to events with `after` first sends the
+// stored events after that sequence number, oldest first, then the live ones: a client that reconnects resumes from
+// the last event it saw and misses nothing. An event or prompt may arrive twice around that moment: clients ignore
+// events whose seq they have seen and prompts whose id they know.
 
 enum Topic {
   TOPIC_UNSPECIFIED = 0;
@@ -343,6 +348,9 @@ enum Topic {
 
 message Subscribe {
   Topic topic = 1;
+  // TOPIC_EVENTS: send the stored events with a greater seq first. At most 4000 can be sent this way; further behind,
+  // the answer is ERROR_CODE_INVALID, and the client pages with ListEvents and subscribes from the newest.
+  optional int64 after = 2;
 }
 
 message Subscribed {
@@ -361,6 +369,9 @@ message Notice {
     ConnectionEvent event = 4;
     RulesChanged rules_changed = 5;
   }
+  // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
+  // resubscribes from the last event it saw, or lists prompts or rules again.
+  bool missed = 6;
 }
 
 message RulesChanged {}

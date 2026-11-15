@@ -1,0 +1,17 @@
+# message: snitchhiker.v1.ServerFrame
+# An event notice after some were dropped: the client resumes from the last event it saw.
+notice {
+  subscription: 2
+  event {
+    seq: 140
+    time_ms: 1763200005000
+    exe: "/usr/bin/curl"
+    uid: 1000
+    protocol: 17
+    address: "\300\000\002\012"
+    port: 53
+    action: ACTION_ALLOW
+    source: SOURCE_RULE
+  }
+  missed: true
+}

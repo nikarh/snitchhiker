@@ -172,6 +172,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.seq < ?1 ORDER BY e.seq DESC LIMIT ?2",
     ),
+    // A subscriber catching up after a reconnect: the events after the last one it saw, oldest first.
+    (
+        "events.after",
+        "SELECT e.seq, e.time_ms, x.value, h.value, e.uid, e.pid, e.protocol, e.address, e.port, e.context,
+                e.action, e.source, e.rule, e.bytes_out, e.bytes_in
+         FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+         WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
+    ),
     // Connections no rule decided, since a time: what `learn` turns into rules.
     (
         "events.undecided_since",
@@ -212,6 +220,30 @@ pub enum Error {
     Corrupt { what: &'static str, error: String },
     #[error("no statement named {0}")]
     UnknownStatement(&'static str),
+}
+
+impl Event {
+    /// The event as recorded under `seq` (before any bytes are counted for it).
+    #[must_use]
+    pub fn stored(&self, seq: i64) -> StoredEvent {
+        StoredEvent {
+            seq,
+            time_ms: self.time_ms,
+            exe: self.exe.to_string(),
+            host: self.host.as_deref().map(str::to_owned),
+            uid: self.uid,
+            pid: self.pid,
+            protocol: self.protocol,
+            address: self.address,
+            port: self.port,
+            context: self.context,
+            action: self.action,
+            source: self.source as u8,
+            rule: self.rule,
+            bytes_out: 0,
+            bytes_in: 0,
+        }
+    }
 }
 
 /// A recorded connection, as read back.
@@ -430,7 +462,9 @@ impl Store {
     }
 
     /// Records events in one transaction.
-    pub fn record(&mut self, events: &[Event]) -> Result<(), Error> {
+    /// Records `events`; their sequence numbers replace what `seqs` held, in the same order.
+    pub fn record(&mut self, events: &[Event], seqs: &mut Vec<i64>) -> Result<(), Error> {
+        seqs.clear();
         let transaction = self.connection.unchecked_transaction()?;
         for event in events {
             let exe = intern(
@@ -469,6 +503,7 @@ impl Store {
                     event.rule.map(db_id),
                     event.cookie.map(db_id),
                 ])?;
+            seqs.push(self.connection.last_insert_rowid());
         }
         transaction.commit()?;
         Ok(())
@@ -477,27 +512,14 @@ impl Store {
     /// The newest events before `before` (a sequence number; `i64::MAX` for the newest), at most `limit`.
     pub fn events(&self, before: i64, limit: u32) -> Result<Vec<StoredEvent>, Error> {
         let mut statement = self.connection.prepare_cached(sql("events.page")?)?;
-        let rows = statement.query_map(params![before, limit], |row| {
-            let address: Vec<u8> = row.get(7)?;
-            let address = address_from(&address);
-            Ok(StoredEvent {
-                seq: row.get(0)?,
-                time_ms: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
-                exe: row.get(2)?,
-                host: row.get(3)?,
-                uid: row.get(4)?,
-                pid: row.get(5)?,
-                protocol: row.get(6)?,
-                address,
-                port: row.get(8)?,
-                context: row.get(9)?,
-                action: action_from(row.get(10)?),
-                source: row.get(11)?,
-                rule: row.get::<_, Option<i64>>(12)?.map(id_of),
-                bytes_out: id_of(row.get(13)?),
-                bytes_in: id_of(row.get(14)?),
-            })
-        })?;
+        let rows = statement.query_map(params![before, limit], stored_event)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The oldest events after `after` (a sequence number), at most `limit`.
+    pub fn events_after(&self, after: i64, limit: u32) -> Result<Vec<StoredEvent>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("events.after")?)?;
+        let rows = statement.query_map(params![after, limit], stored_event)?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -644,6 +666,28 @@ fn db_id(id: u64) -> i64 {
     i64::try_from(id).unwrap_or(i64::MAX)
 }
 
+/// An event as `events.page` and `events.after` select it.
+fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
+    let address: Vec<u8> = row.get(7)?;
+    Ok(StoredEvent {
+        seq: row.get(0)?,
+        time_ms: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
+        exe: row.get(2)?,
+        host: row.get(3)?,
+        uid: row.get(4)?,
+        pid: row.get(5)?,
+        protocol: row.get(6)?,
+        address: address_from(&address),
+        port: row.get(8)?,
+        context: row.get(9)?,
+        action: action_from(row.get(10)?),
+        source: row.get(11)?,
+        rule: row.get::<_, Option<i64>>(12)?.map(id_of),
+        bytes_out: id_of(row.get(13)?),
+        bytes_in: id_of(row.get(14)?),
+    })
+}
+
 fn id_of(id: i64) -> u64 {
     u64::try_from(id).unwrap_or(0)
 }
@@ -673,6 +717,29 @@ mod tests {
             rule: Some(1),
             cookie: Some(seq),
         }
+    }
+
+    #[test]
+    fn recording_gives_sequence_numbers_to_resume_from() {
+        let mut store = Store::in_memory().unwrap();
+        let mut seqs = Vec::new();
+        store
+            .record(
+                &[
+                    event(1, "/usr/bin/curl", None),
+                    event(2, "/usr/bin/curl", None),
+                    event(3, "/usr/bin/wget", None),
+                ],
+                &mut seqs,
+            )
+            .unwrap();
+        assert_eq!(seqs.len(), 3);
+        assert!(seqs.windows(2).all(|pair| pair[0] < pair[1]));
+        let after = store.events_after(seqs[0], 10).unwrap();
+        let resumed: Vec<i64> = after.iter().map(|e| e.seq).collect();
+        assert_eq!(resumed, seqs[1..]);
+        assert_eq!(after[1].exe, "/usr/bin/wget");
+        assert_eq!(store.events_after(seqs[0], 1).unwrap().len(), 1);
     }
 
     #[test]
@@ -714,11 +781,14 @@ mod tests {
     fn events_round_trip_newest_first_with_strings_shared() {
         let mut store = Store::in_memory().unwrap();
         store
-            .record(&[
-                event(1, "/usr/bin/curl", Some("example.com")),
-                event(2, "/usr/bin/curl", None),
-                event(3, "/usr/bin/wget", Some("example.com")),
-            ])
+            .record(
+                &[
+                    event(1, "/usr/bin/curl", Some("example.com")),
+                    event(2, "/usr/bin/curl", None),
+                    event(3, "/usr/bin/wget", Some("example.com")),
+                ],
+                &mut Vec::new(),
+            )
             .unwrap();
         let page = store.events(i64::MAX, 2).unwrap();
         assert_eq!(page.len(), 2);
@@ -741,7 +811,7 @@ mod tests {
         let mut second = event(2, "/usr/bin/curl", None);
         first.cookie = Some(77);
         second.cookie = Some(77);
-        store.record(&[first, second]).unwrap();
+        store.record(&[first, second], &mut Vec::new()).unwrap();
         store.record_bytes(&[(77, 1000, 5000)]).unwrap();
         let page = store.events(i64::MAX, 10).unwrap();
         assert_eq!((page[0].bytes_out, page[0].bytes_in), (1000, 5000));
@@ -752,7 +822,7 @@ mod tests {
     fn prunes_in_chunks() {
         let mut store = Store::in_memory().unwrap();
         let events: Vec<Event> = (0..10).map(|i| event(i, "/usr/bin/curl", None)).collect();
-        store.record(&events).unwrap();
+        store.record(&events, &mut Vec::new()).unwrap();
         assert_eq!(store.prune(1_005, 3).unwrap(), 3);
         assert_eq!(store.prune(1_005, 3).unwrap(), 2);
         assert_eq!(store.events(i64::MAX, 100).unwrap().len(), 5);
@@ -772,7 +842,7 @@ mod tests {
                 )
             })
             .collect();
-        store.record(&events).unwrap();
+        store.record(&events, &mut Vec::new()).unwrap();
         store.connection().execute_batch("ANALYZE").unwrap();
         for (name, sql) in STATEMENTS {
             let params = sql.matches('?').count();

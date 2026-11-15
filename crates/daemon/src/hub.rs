@@ -1,7 +1,7 @@
 //! Subscriptions: which connection wants which topic, and pushing notices to them.
 //!
 //! Every connection has an outbound queue its writer thread drains; a slow client's queue fills up and it misses
-//! notices (it is told to resubscribe) rather than slowing the node down.
+//! notices rather than slowing the node down. The next notice it gets says so (`missed`), so it can resume.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError};
@@ -17,6 +17,27 @@ struct Subscription {
     id: u64,
     topic: v1::Topic,
     outbound: SyncSender<v1::ServerFrame>,
+    /// Notices were dropped since the last one delivered.
+    missed: bool,
+}
+
+/// Why a subscription with a backfill wasn't made.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BackfillError {
+    /// The backfill is larger than allowed, or doesn't fit the connection's queue.
+    TooMuch,
+    /// The connection is gone.
+    Closed,
+}
+
+fn notice(id: u64, body: v1::notice::Body, missed: bool) -> v1::ServerFrame {
+    v1::ServerFrame {
+        body: Some(v1::server_frame::Body::Notice(v1::Notice {
+            subscription: id,
+            body: Some(body),
+            missed,
+        })),
+    }
 }
 
 #[derive(Default)]
@@ -33,17 +54,40 @@ impl Hub {
         topic: v1::Topic,
         outbound: SyncSender<v1::ServerFrame>,
     ) -> u64 {
+        self.subscribe_with(connection, topic, outbound, || Some(Vec::new()))
+            .unwrap_or_default()
+    }
+
+    /// Subscribes `connection` to `topic`, first sending what `backfill` gives (the stored events after a point, the
+    /// prompts waiting). `backfill` runs while no notice of any topic is published, so nothing published after it can
+    /// arrive before it. Returns the subscription's id.
+    pub fn subscribe_with(
+        &self,
+        connection: u64,
+        topic: v1::Topic,
+        outbound: SyncSender<v1::ServerFrame>,
+        backfill: impl FnOnce() -> Option<Vec<v1::notice::Body>>,
+    ) -> Result<u64, BackfillError> {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
-        self.subscriptions
+        let mut subscriptions = self
+            .subscriptions
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .push(Subscription {
-                connection,
-                id,
-                topic,
-                outbound,
-            });
-        id
+            .unwrap_or_else(PoisonError::into_inner);
+        for body in backfill().ok_or(BackfillError::TooMuch)? {
+            match outbound.try_send(notice(id, body, false)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => return Err(BackfillError::TooMuch),
+                Err(TrySendError::Disconnected(_)) => return Err(BackfillError::Closed),
+            }
+        }
+        subscriptions.push(Subscription {
+            connection,
+            id,
+            topic,
+            outbound,
+            missed: false,
+        });
+        Ok(id)
     }
 
     /// Ends one of `connection`'s subscriptions; whether it existed.
@@ -76,24 +120,27 @@ impl Hub {
 
     /// Pushes `body` to every subscriber of `topic`. Subscriptions whose connection is gone are dropped.
     pub fn publish(&self, topic: v1::Topic, body: &v1::notice::Body) {
+        self.publish_all(topic, std::slice::from_ref(body));
+    }
+
+    /// Pushes each of `bodies`, in order, to every subscriber of `topic`.
+    pub fn publish_all(&self, topic: v1::Topic, bodies: &[v1::notice::Body]) {
         let mut subscriptions = self
             .subscriptions
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        subscriptions.retain(|s| {
+        subscriptions.retain_mut(|s| {
             if s.topic != topic {
                 return true;
             }
-            let frame = v1::ServerFrame {
-                body: Some(v1::server_frame::Body::Notice(v1::Notice {
-                    subscription: s.id,
-                    body: Some(body.clone()),
-                })),
-            };
-            !matches!(
-                s.outbound.try_send(frame),
-                Err(TrySendError::Disconnected(_))
-            )
+            for body in bodies {
+                match s.outbound.try_send(notice(s.id, body.clone(), s.missed)) {
+                    Ok(()) => s.missed = false,
+                    Err(TrySendError::Full(_)) => s.missed = true,
+                    Err(TrySendError::Disconnected(_)) => return false,
+                }
+            }
+            true
         });
     }
 }
@@ -122,6 +169,43 @@ mod tests {
         };
         assert_eq!(notice.subscription, id);
         assert!(rules_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_full_queue_marks_the_next_notice_missed() {
+        let hub = Hub::default();
+        let (sender, receiver) = sync_channel(1);
+        hub.subscribe(1, v1::Topic::Events, sender);
+        let body = v1::notice::Body::RulesChanged(v1::RulesChanged {});
+        hub.publish_all(v1::Topic::Events, &[body.clone(), body.clone()]);
+        let missed = |frame: v1::ServerFrame| match frame.body {
+            Some(v1::server_frame::Body::Notice(notice)) => notice.missed,
+            _ => panic!("not a notice"),
+        };
+        assert!(!missed(receiver.try_recv().unwrap()));
+        assert!(receiver.try_recv().is_err());
+        hub.publish(v1::Topic::Events, &body);
+        assert!(missed(receiver.try_recv().unwrap()));
+    }
+
+    #[test]
+    fn a_backfill_comes_first_and_must_fit() {
+        let hub = Hub::default();
+        let (sender, receiver) = sync_channel(2);
+        let body = v1::notice::Body::RulesChanged(v1::RulesChanged {});
+        let three = || Some(vec![body.clone(), body.clone(), body.clone()]);
+        assert_eq!(
+            hub.subscribe_with(1, v1::Topic::Events, sender.clone(), three),
+            Err(BackfillError::TooMuch)
+        );
+        assert!(!hub.has_subscribers(v1::Topic::Events));
+        while receiver.try_recv().is_ok() {}
+        let id = hub
+            .subscribe_with(1, v1::Topic::Events, sender, || Some(vec![body.clone()]))
+            .unwrap();
+        assert!(receiver.try_recv().is_ok());
+        assert!(hub.has_subscribers(v1::Topic::Events));
+        assert!(hub.unsubscribe(1, id));
     }
 
     #[test]

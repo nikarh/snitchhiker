@@ -180,8 +180,15 @@ impl Client {
 
     /// Subscribes to a topic; returns the subscription's id.
     pub fn subscribe(&mut self, topic: v1::Topic) -> Result<u64, Error> {
+        self.subscribe_after(topic, None)
+    }
+
+    /// Subscribes to a topic, for events after the sequence number `after` first (the last event seen before a
+    /// reconnect): they are queued as notices before this returns. Returns the subscription's id.
+    pub fn subscribe_after(&mut self, topic: v1::Topic, after: Option<i64>) -> Result<u64, Error> {
         match self.call(v1::request::Method::Subscribe(v1::Subscribe {
             topic: topic.into(),
+            after,
         }))? {
             v1::response::Result::Subscribed(subscribed) => Ok(subscribed.subscription),
             _ => Err(Error::Protocol("not a subscription")),

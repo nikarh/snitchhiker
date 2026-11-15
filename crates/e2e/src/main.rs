@@ -17,6 +17,7 @@ mod perf;
 mod prompts;
 mod queue;
 mod stepup;
+mod subscriptions;
 mod util;
 
 /// A scenario: a name and a function that fails with a message.
@@ -82,6 +83,14 @@ const SCENARIOS: &[Scenario] = &[
     (
         "local-auth/client-refuses-a-fake-node",
         local_auth::client_refuses_a_fake_node,
+    ),
+    (
+        "subscriptions/events-resume-from-a-sequence-number",
+        subscriptions::events_resume_from_a_sequence_number,
+    ),
+    (
+        "subscriptions/waiting-prompts-are-sent-on-subscribing",
+        subscriptions::waiting_prompts_are_sent_on_subscribing,
     ),
     (
         "step-up/allow-everything-needs-authorization",
