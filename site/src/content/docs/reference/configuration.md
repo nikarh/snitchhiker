@@ -1,0 +1,99 @@
+---
+title: Configuration
+description: Every setting of /etc/snitchhiker/daemon.toml, with its default and what it does.
+sidebar:
+  order: 1
+---
+
+The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `snitchhikerd --config <path>`). Only root can change it: clients can see the mode and the policy, not change them. After a change, `sudo systemctl restart snitchhikerd`.
+
+Every key is optional; an empty or missing file means the defaults. Unknown keys are errors, so a typo doesn't go unnoticed. The packaged file sets `mode = "monitor"` and documents the rest.
+
+```toml title="/etc/snitchhiker/daemon.toml"
+mode = "enforce"
+no_match = "ask"
+no_client = "deny"
+prompt_timeout_secs = 30
+on_timeout = "deny"
+fail = "closed"
+```
+
+## Deciding
+
+### `mode`
+
+`"enforce"` (default) or `"monitor"`. Enforcing, rules and `no_match` decide. In monitor mode everything passes, and each connection is recorded with what would have happened, to learn what a machine does before enforcing ([Quick start](/start/quick-start/)).
+
+### `no_match`
+
+What happens to a connection no rule decides. Default `"deny"`.
+
+| Value | |
+| --- | --- |
+| `"allow"` | it passes |
+| `"deny"` | its packet is dropped; the program times out |
+| `"reject"` | its packet is dropped and its socket closed; the program fails at once |
+| `"ask"` | it is held while clients are asked ([Prompts](/guides/prompts/)) |
+
+### `no_client`
+
+With `no_match = "ask"`: what happens when no client is listening for prompts. `"allow"`, `"deny"` (default) or `"reject"`.
+
+### `prompt_timeout_secs`
+
+How long a prompt waits for an answer: 1 to 3600 seconds, default `30`.
+
+### `on_timeout`
+
+What happens to a prompt's connections when nobody answered in time. `"allow"`, `"deny"` (default) or `"reject"`.
+
+### `fail`
+
+What happens to new connections while the daemon isn't running. Default `"closed"`.
+
+| Value | |
+| --- | --- |
+| `"closed"` | Nothing new gets out. The table stays in place when the daemon stops, so its queue holds new connections until it is back. |
+| `"open"` | Everything passes. The daemon's table is removed when it stops, and if the daemon dies without removing it, the kernel lets packets past the queue nobody reads. |
+
+On a workstation `closed` is the point of a firewall. On a server you reach over the network, `open` keeps a crashed or stopped daemon from cutting you off; the unit restarts the daemon on failure either way.
+
+## Rules
+
+### `default_rules`
+
+The built-in System folder, which allows loopback in the fallback tier ([Rules](/guides/rules/#the-system-folder)). Default `true`.
+
+### `rules_dir`
+
+Rule files root keeps, read at start and on reload, shown to clients as locked ([Rules](/guides/rules/#rule-files-root-keeps)). Default `/etc/snitchhiker/rules.d`. A missing directory means none.
+
+## Names
+
+### `learn_dns`
+
+Learn the names of addresses from the DNS answers processes receive, so `host` conditions work ([How it works](/internals/how-it-works/#names)). Default `true`. Without it, rules can only name addresses and networks.
+
+## Clients
+
+### `client_group`
+
+The group the client binaries are setgid to, and that the client socket belongs to. Default `"snitchhiker-ui"`.
+
+### `trusted_clients`
+
+The client binaries allowed on the client socket, by path. Default `["/usr/bin/snitchhiker-ui"]`. Each must be owned by root, setgid to `client_group`, and in directories only root can write to; see [Security](/internals/security/#clients).
+
+## Queues and storage
+
+### `queue`, `queues`
+
+The first NFQUEUE queue number (default `0`) and how many queues there are (1 to 64, default `4`), each with its own deciding thread. The queue after the last is used for DNS answers when `learn_dns` is on. Change `queue` if another program on the machine uses queues 0 to 4.
+
+### `database`
+
+The SQLite database with the rules and the history. Default `/var/lib/snitchhiker/state.db`.
+
+### `retention_days`
+
+How long connection history is kept. Default `30`.

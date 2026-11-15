@@ -1,0 +1,7 @@
+---
+// The protocol's schema, read from proto/ at build time so the page always shows what the code is built from.
+import { Code } from '@astrojs/starlight/components';
+import schema from '../../../proto/snitchhiker/v1/client.proto?raw';
+---
+
+<Code code={schema} lang="protobuf" title="proto/snitchhiker/v1/client.proto" />

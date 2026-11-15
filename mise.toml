@@ -3,6 +3,7 @@
 # Nothing here that needs privileges runs on the machine it is started on: the daemon, BPF, nftables, packages and
 # containers are only ever run in the disposable VMs of e2e/ (see AGENTS.md).
 [tools]
+node = "26.13.1"
 git-cliff = "2.14.2"
 cargo-deny = "0.20.2"
 nfpm = "2.49.0"
@@ -44,6 +45,17 @@ run = "scripts/package.sh x86_64 target/release/snitchhikerd out"
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from the commits"
 run = "git cliff --offline -o CHANGELOG.md"
+
+[tasks.docs]
+description = "Serve the docs site locally with live reload, at http://localhost:4321"
+dir = "site"
+run = ["npm install --no-audit --no-fund", "npm run dev"]
+
+[tasks."docs:build"]
+description = "Build the docs site as CI does, into site/dist, and check its links"
+dir = "site"
+env = { DOCS_VERSION = "main" }
+run = ["npm install --no-audit --no-fund", "npm run build"]
 
 [tasks.actionlint]
 description = "Lint the GitHub workflows"

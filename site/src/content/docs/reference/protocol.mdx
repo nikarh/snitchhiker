@@ -1,0 +1,104 @@
+---
+title: Client protocol
+description: "The versioned binary protocol clients speak to a Snitchhiker node: transport, framing, the handshake, roles, requests, subscriptions, versioning rules and the full schema."
+sidebar:
+  order: 4
+---
+
+import ProtoSchema from '../../../components/ProtoSchema.astro';
+
+Every client of a node, the command line included, speaks one protocol: length-prefixed [Protocol Buffers](https://protobuf.dev) messages over a stream. This page specifies it; the [schema](#schema) at the end is the source of truth for every message and field.
+
+## Transport
+
+Local clients connect to a unix stream socket of the node:
+
+| Socket | For | Role |
+| --- | --- | --- |
+| `/run/snitchhiker/admin.sock` | processes running as root | `ROLE_ROOT` |
+| `/run/snitchhiker/client.sock` | Snitchhiker's verified client binaries ([Security](/internals/security/#clients)) | `ROLE_ADMIN` |
+
+Remote clients (the Android app, later) will reach nodes over an encrypted peer-to-peer connection that carries the same frames.
+
+## Framing
+
+```text
+preamble, once, client → node:   "SNHK"  major (uint16 LE)
+every frame after it, both ways: length (uint32 LE)  message
+```
+
+- The **preamble** opens a local connection: the four bytes `SNHK`, then the major protocol version as a little-endian 16-bit integer (`1`).
+- Every **frame** is a little-endian 32-bit length, then that many bytes of one Protocol Buffers message: a `ClientFrame` from client to node, a `ServerFrame` from node to client.
+- A frame is at most 16 MiB. A peer that receives a longer length closes the connection.
+
+## Handshake
+
+1. The client sends the preamble. A node that doesn't speak that major version answers with a `Refusal` saying which it speaks, and closes.
+2. The client sends a `ClientFrame` with `Hello`: its minor version, what it is (`cli`, `desktop`, `mcp`, `android`) and its version.
+3. The node answers `Welcome`: its minor version, its daemon version and name, its capabilities, and the **role** of this connection. A connection that isn't allowed gets a `Refusal` instead, and the node closes it.
+
+A client must not send requests before it has the `Welcome`.
+
+## Roles
+
+| Role | May |
+| --- | --- |
+| `ROLE_ROOT` | everything |
+| `ROLE_ADMIN` | everything a client app needs: read, answer prompts, change rules |
+| `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `Subscribe`, `Unsubscribe` |
+| `ROLE_AGENT` | (reserved for the MCP server) |
+
+A request the role doesn't allow gets an `ERROR_CODE_FORBIDDEN` error. Rules that can't be changed through the protocol (the System folder, root's `rules.d` files) are listed with `locked` set, and changing one gets `ERROR_CODE_LOCKED`.
+
+## Requests and responses
+
+A `Request` carries a client-chosen `id` and one method. The node answers each with a `Response` with the same `id`, holding either the method's result or an `Error` (a code and a message for people). A client may send several requests without waiting; responses carry their request's id, and notices can arrive between them.
+
+| Method | Result | |
+| --- | --- | --- |
+| `GetStatus` | `Status` | Mode, policy and counters |
+| `ListRules` | `RuleList` | Every folder and rule, locked ones included |
+| `AddRule` | `RuleAdded` | Stores a rule; returns its id |
+| `DeleteRule` | `Done` | |
+| `SetRuleEnabled` | `Done` | |
+| `ImportRules` | `Done` | A [rule file](/reference/rule-files/) as TOML, into a new folder; checked as a whole first |
+| `ExportRules` | `RuleFile` | The stored rules as a rule file |
+| `Learn` | `RuleFile` | Rules for the connections no rule decided in the last hours |
+| `ListEvents` | `EventPage` | History, newest first: `limit` entries with `seq` below `before` (0: from the newest) |
+| `ListPrompts` | `PromptList` | Prompts waiting for an answer |
+| `AnswerPrompt` | `Done` | Decides a prompt, with the rule made from a suggestion or from the client's conditions. The rule's id comes in the `PromptResolved` notice |
+| `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
+| `Unsubscribe` | `Done` | |
+
+A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`.
+
+Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
+
+## Subscriptions
+
+`Subscribe` to a topic, and the node pushes a `Notice` with the subscription's id for each thing that happens, until `Unsubscribe` or the connection closes:
+
+| Topic | Notices |
+| --- | --- |
+| `TOPIC_PROMPTS` | `Prompt` as each opens, `PromptResolved` as each is answered (by anyone) or times out |
+| `TOPIC_EVENTS` | `ConnectionEvent` for every connection as it is decided |
+| `TOPIC_RULES` | `RulesChanged`: list the rules again |
+
+A subscription to `TOPIC_PROMPTS` is also what makes a node ask: with no subscriber, `no_client` decides instead of a prompt.
+
+Each connection has a bounded queue of outgoing frames. A client that doesn't read fast enough misses notices rather than slowing the node down; it can list again (`ListPrompts`, `ListEvents`) to catch up.
+
+## Versioning
+
+The protocol has a major and a minor version.
+
+- **Within a major version, changes are additive only.** Fields, messages, enum values and methods are added; none is renumbered, renamed, retyped or removed. A removed field's number and name become `reserved`.
+- Unknown fields are ignored, and every enum's zero value is `*_UNSPECIFIED`, so an older peer reads a newer one's messages.
+- The **minor** version in `Hello` and `Welcome` says what each side knows; a client uses a newer method only when the node's minor version has it, and handles `ERROR_CODE_UNSUPPORTED` anyway.
+- Anything else is a new **major** version, under a new package (`snitchhiker.v2`), named in the preamble. A node may speak several.
+
+Version 1.0 is the current version.
+
+## Schema
+
+<ProtoSchema />

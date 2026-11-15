@@ -1,0 +1,400 @@
+---
+// The front page: what Snitchhiker does, what exists today, how the pieces fit, how to install it, what changed
+// recently, and where to read on.
+import { Code, Tabs, TabItem } from '@astrojs/starlight/components';
+import { releases } from '../changelog';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const link = (path: string) => `${base}${path}`;
+const download = 'https://github.com/nikarh/snitchhiker/releases/latest/download';
+
+// What `snitchhiker prompts watch` prints (crates/daemon/src/cli.rs), for a made-up connection.
+const prompt = `prompt 7: /usr/bin/curl (uid 1000 ada) -> api.example.com:443 proto 6, 1 waiting
+  0: curl → api.example.com:443
+  1: curl → api.example.com, any port
+  2: curl → *.example.com:443 (broad)
+  3: curl → anywhere (broad)
+  4: any program → api.example.com:443 (broad)
+prompt 7 resolved: Allow by cli`;
+
+// What Snitchhiker is made of, each with what exists today.
+const parts = [
+	[
+		'Interception',
+		'The first packet of every new outbound connection waits in NFQUEUE while it is decided. Snitchhiker manages its own nftables table over netlink and never reads or changes anyone else’s.',
+		'/internals/how-it-works/',
+	],
+	[
+		'Attribution',
+		'eBPF programs record which process opens each connection before its first packet leaves, so the program, its user and its container are known exactly. Names come from the DNS answers the process itself asked for.',
+		'/internals/how-it-works/#attribution',
+	],
+	[
+		'Rules',
+		'Folders of rules on the program (with patterns that survive updates), host names, networks, ports and context. A precedence you can predict, and the rule that decided each connection in its history.',
+		'/guides/rules/',
+	],
+	[
+		'Prompts',
+		'A connection no rule decides can wait while you are asked. The narrowest rule is the first suggestion, and one answer settles every connection waiting on the same question.',
+		'/guides/prompts/',
+	],
+	[
+		'Security',
+		'Only root and Snitchhiker’s own client binaries can control the daemon: the kernel says who connects, no secret on disk does. Other processes of your user can’t answer prompts or change rules.',
+		'/internals/security/',
+	],
+	[
+		'Packages',
+		'Debian and Arch packages with a hardened systemd unit, for x86_64 and aarch64. The desktop app, the Android app and the relay for reaching machines behind NAT are in development.',
+		'/install/linux/',
+	],
+];
+---
+
+<div class="home not-content">
+	<section class="intro">
+		<div class="lead">
+			<p class="summary">
+				Snitchhiker is an interactive application firewall for Linux. Every new connection is attributed to the program
+				that opens it and decided by your rules, or by you.
+			</p>
+			<p>
+				It is a daemon with a command line today; a desktop app and an Android app, for workstations and headless
+				servers alike, are next. It learns what a machine does in monitor mode and turns that into rules.
+			</p>
+			<div class="actions">
+				<a class="button primary" href={link('/start/quick-start/')}>Quick start</a>
+				<a class="button" href={link('/start/introduction/')}>Read the docs</a>
+				<a class="button" href="https://github.com/nikarh/snitchhiker">Source on GitHub</a>
+			</div>
+			<p class="meta">Linux 6.5 or newer with BTF. MIT or Apache-2.0 (eBPF programs GPL-2.0 or MIT). Written in Rust.</p>
+		</div>
+		<figure class="sample">
+			<Code lang="text" frame="terminal" title="sudo snitchhiker prompts watch" code={prompt} wrap />
+			<figcaption>
+				A connection no rule decides, held while you are asked. The first suggestion, the narrowest, is what a quick
+				answer makes. <a href={link('/guides/prompts/')}>Prompts</a>
+			</figcaption>
+		</figure>
+	</section>
+
+	<section class="covers">
+		<h2>What it is made of</h2>
+		<dl>
+			{
+				parts.map(([term, text, href]) => (
+					<div>
+						<dt>
+							<a href={link(href!)}>{term}</a>
+						</dt>
+						<dd>{text}</dd>
+					</div>
+				))
+			}
+		</dl>
+	</section>
+
+	<section class="flow">
+		<h2>How the pieces fit</h2>
+		<div class="flow-grid">
+			<pre
+				class="diagram"
+				role="img"
+				aria-label="A program connects; eBPF records its owner; the first packet waits in NFQUEUE; the daemon decides it by the rules or asks a client; the verdict lets it pass or drops it, and the history records it.">{` program ─connect─► kernel ─first packet─► NFQUEUE ─► snitchhikerd
+            │                                        │  owner (eBPF) + rules
+            └─ eBPF: who opened it ─────────────────►│  or a prompt to a client
+                                                     ▼
+                                     verdict ─► passes, or is dropped`}</pre>
+			<p>
+				The <strong>daemon</strong> runs as root, holds the rules and the history, and decides every new connection.
+				{' '}The <strong>command line</strong> talks to it over a socket only root can open. The desktop app, verified by
+				the kernel, uses another.
+			</p>
+			<p>
+				<a href={link('/internals/how-it-works/')}>How a connection is decided</a> ·{' '}
+				<a href={link('/internals/security/')}>Who can control the daemon</a>
+			</p>
+		</div>
+	</section>
+
+	<section class="install">
+		<h2>Install</h2>
+		<p>
+			Packages for x86_64 and aarch64 (glibc 2.35 or newer). Release files are signed. Details are in{' '}
+			<a href={link('/install/linux/')}>Install</a>.
+		</p>
+		<Tabs syncKey="distro">
+			<TabItem label="Debian / Ubuntu">
+				<Code
+					lang="bash"
+					code={`arch=$(dpkg --print-architecture)    # amd64 or arm64
+curl -fLO "${download}/snitchhiker_\${arch}.deb"
+sudo apt install "./snitchhiker_\${arch}.deb"`}
+				/>
+			</TabItem>
+			<TabItem label="Arch Linux">
+				<Code
+					lang="bash"
+					code={`curl -fLO "${download}/snitchhiker-$(uname -m).pkg.tar.zst"
+sudo pacman -U "snitchhiker-$(uname -m).pkg.tar.zst"`}
+				/>
+			</TabItem>
+		</Tabs>
+		<p class="after">
+			Then <code>sudo systemctl enable --now snitchhikerd</code>. It starts in monitor mode: everything passes and is
+			recorded, and <code>sudo snitchhiker learn</code> turns what was seen into rules to review.
+		</p>
+	</section>
+
+	{
+		releases.length > 0 && (
+			<section class="changes">
+				<div class="changes-head">
+					<h2>Recent releases</h2>
+					<a href={link('/reference/changelog/')}>All releases</a>
+				</div>
+				<ul class="release-list">
+					{releases.slice(0, 3).map((r) => (
+						<li>
+							<a href={r.url}><code>v{r.version}</code></a>
+							{r.date && <span class="release-date">{r.date}</span>}
+							<a class="release-count" href={link('/reference/changelog/')}>what changed</a>
+						</li>
+					))}
+				</ul>
+			</section>
+		)
+	}
+
+	<section class="next">
+		<h2>Reading order</h2>
+		<ol>
+			<li><a href={link('/start/introduction/')}>Introduction</a>: what Snitchhiker does, and what it doesn’t.</li>
+			<li><a href={link('/start/quick-start/')}>Quick start</a>: install, monitor, learn, enforce.</li>
+			<li><a href={link('/guides/rules/')}>Rules</a> and <a href={link('/guides/prompts/')}>prompts</a>: how connections are decided.</li>
+			<li><a href={link('/reference/configuration/')}>Configuration</a> and <a href={link('/reference/cli/')}>command line</a>: every setting and command.</li>
+			<li><a href={link('/internals/security/')}>Security</a>: who can control the daemon, and the limits.</li>
+		</ol>
+	</section>
+</div>
+
+<style>
+	.release-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		gap: 0.4rem;
+	}
+	.release-list li {
+		display: flex;
+		gap: 0.75rem;
+		align-items: baseline;
+		flex-wrap: wrap;
+	}
+	.release-date,
+	.release-count {
+		color: var(--sl-color-gray-3);
+		font-size: var(--sl-text-sm);
+	}
+	.home {
+		--gap: clamp(1.5rem, 4vw, 3rem);
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: calc(var(--gap) * 1.25);
+		margin-top: 0.5rem;
+	}
+	.home > *,
+	.intro > * {
+		min-width: 0;
+	}
+	.home h2 {
+		font-size: var(--sl-text-xl);
+		font-weight: 650;
+		letter-spacing: -0.01em;
+		color: var(--sl-color-white);
+		margin: 0 0 1rem;
+	}
+	.home a {
+		color: var(--sl-color-text-accent);
+		text-underline-offset: 0.2em;
+		text-decoration-thickness: 1px;
+	}
+
+	.intro {
+		display: grid;
+		grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+		gap: var(--gap);
+		align-items: start;
+	}
+	.lead p {
+		color: var(--sl-color-gray-2);
+		line-height: 1.65;
+		margin: 0 0 1rem;
+		max-width: 38rem;
+	}
+	.lead .summary {
+		font-size: var(--sl-text-xl);
+		line-height: 1.5;
+		color: var(--sl-color-white);
+		text-wrap: pretty;
+	}
+	.actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem;
+		margin: 1.5rem 0 1.25rem;
+	}
+	.button {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.5rem 0.95rem;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 6px;
+		font-size: var(--sl-text-sm);
+		font-weight: 600;
+		color: var(--sl-color-white) !important;
+		text-decoration: none;
+		transition: border-color 160ms cubic-bezier(0.16, 1, 0.3, 1), background-color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+	}
+	.button:hover {
+		border-color: var(--sl-color-gray-3);
+		background: var(--sl-color-gray-6);
+	}
+	.button.primary {
+		background: var(--sl-color-accent);
+		border-color: var(--sl-color-accent);
+		color: var(--sl-color-black) !important;
+	}
+	.button.primary:hover {
+		background: var(--sl-color-accent-high);
+		border-color: var(--sl-color-accent-high);
+	}
+	.lead .meta {
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+	.covers dl {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 0 1.5rem;
+		margin: 0;
+		border-top: 1px solid var(--sl-color-hairline-light);
+	}
+	.covers dl > div {
+		padding: 1rem 0 1.1rem;
+		border-bottom: 1px solid var(--sl-color-hairline);
+	}
+	.covers dt {
+		font-weight: 650;
+		margin-bottom: 0.3rem;
+	}
+	.covers dt a {
+		color: var(--sl-color-white);
+		text-decoration: none;
+	}
+	.covers dt a:hover {
+		color: var(--sl-color-text-accent);
+		text-decoration: underline;
+	}
+	.covers dd {
+		margin: 0;
+		color: var(--sl-color-gray-2);
+		font-size: var(--sl-text-sm);
+		line-height: 1.55;
+	}
+
+	.flow-grid {
+		display: grid;
+		gap: 1rem;
+	}
+	.diagram {
+		margin: 0;
+		padding: 1rem 1.25rem;
+		border: 1px solid var(--sl-color-hairline-light);
+		border-radius: 6px;
+		background: var(--sl-color-gray-6);
+		color: var(--sl-color-gray-1);
+		font-family: var(--__sl-font-mono);
+		font-size: 0.8rem;
+		line-height: 1.5;
+		overflow-x: auto;
+	}
+	.flow p,
+	.install p,
+	.next li {
+		color: var(--sl-color-gray-2);
+	}
+	.flow p {
+		margin: 0;
+		line-height: 1.65;
+		max-width: 50rem;
+	}
+
+	.sample {
+		margin: 0;
+	}
+	.sample figcaption {
+		margin-top: 0.75rem;
+		font-size: var(--sl-text-sm);
+		color: var(--sl-color-gray-3);
+	}
+
+	.install p {
+		margin: 0 0 1rem;
+	}
+	.install .after {
+		margin-top: 1rem;
+		font-size: var(--sl-text-sm);
+	}
+	.install code {
+		font-family: var(--__sl-font-mono);
+		font-size: 0.86em;
+		color: var(--bc-code-text);
+		background: var(--sl-color-bg-inline-code);
+		border: 1px solid var(--sl-color-hairline);
+		border-radius: 4px;
+		padding: 0.08em 0.32em;
+	}
+
+	.changes-head {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 1rem;
+		border-top: 1px solid var(--sl-color-hairline);
+		padding-top: 1.25rem;
+		margin-bottom: 1rem;
+	}
+	.changes-head h2 {
+		margin: 0;
+	}
+	.changes-head a {
+		font-size: var(--sl-text-sm);
+	}
+
+	.next ol {
+		margin: 0;
+		padding-left: 1.25rem;
+		display: grid;
+		gap: 0.35rem;
+	}
+
+	@media (max-width: 64rem) {
+		.intro {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.covers dl {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (max-width: 40rem) {
+		.covers dl {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.lead .summary {
+			font-size: var(--sl-text-lg);
+		}
+	}
+</style>

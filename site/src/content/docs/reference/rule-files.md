@@ -1,0 +1,65 @@
+---
+title: Rule files
+description: The TOML format of rule files, used by rules import and export, learn, and the files in rules.d.
+sidebar:
+  order: 3
+---
+
+A rule file is TOML: an optional `[folder]` and any number of `[[rule]]` tables. The same format is written by `snitchhiker rules export` and `snitchhiker learn`, read by `snitchhiker rules import`, and kept by root in `/etc/snitchhiker/rules.d/`.
+
+```toml title="claude.toml"
+[folder]
+name = "Claude Code"
+# A scope: added to every rule below.
+exe = ["glob:{home}/.local/share/claude/versions/*/claude"]
+
+[[rule]]
+name = "API"
+action = "allow"
+host = ["api.anthropic.com"]
+port = ["443"]
+
+[[rule]]
+name = "No telemetry"
+action = "reject"
+tier = "override"
+host = ["*.example.net"]
+notes = "Anything else it should not reach."
+```
+
+## `[folder]`
+
+| Key | Type | |
+| --- | --- | --- |
+| `name` | string | Required. Without a `[folder]`, imported rules go in a folder named after the file. |
+| any condition | as below | Added to every rule of the file. |
+
+## `[[rule]]`
+
+| Key | Type | Default | |
+| --- | --- | --- | --- |
+| `name` | string | required | Shown in lists and in the history |
+| `action` | `"allow"`, `"deny"`, `"reject"` | required | |
+| `tier` | `"override"`, `"normal"`, `"fallback"` | `"normal"` | See [precedence](/guides/rules/#precedence) |
+| `enabled` | bool | `true` | |
+| `notes` | string | | Free text |
+| conditions | as below | | At least one, counting the folder's scope |
+
+## Conditions
+
+Every condition is a list; it holds when any of its values does, and a rule holds when all of its conditions do. [Rules](/guides/rules/#conditions) explains each.
+
+| Key | Values |
+| --- | --- |
+| `exe` | paths or patterns: exact, `glob:…` or `re:…`, optionally starting with `{home}` |
+| `cmdline` | patterns |
+| `parent` | patterns |
+| `app` | patterns (reserved) |
+| `uid` | numbers |
+| `host` | `name` or `*.name` |
+| `net` | addresses, CIDR ranges, aliases (`loopback`, `lan`, `multicast`, `imds`, `cgnat`) |
+| `port` | `"443"` or `"8000-8999"`, as strings |
+| `protocol` | `"tcp"`, `"udp"`, `"icmp"`, `"icmpv6"` or a protocol number as a string |
+| `context` | one value, not a list: `"host"`, `"container"`, `"netns"`, `"any"`. Without it, `host` |
+
+Unknown keys are errors, so a typo doesn't silently widen a rule. An import is checked as a whole before anything is stored.
