@@ -40,6 +40,7 @@ pub enum Request {
     Undo {
         change: u64,
     },
+    Explore(v1::Explore),
 }
 
 /// What the node tells the app.
@@ -63,6 +64,8 @@ pub enum Update {
     RulesChanged,
     /// The history of rules and folders, newest first.
     Changes(Vec<v1::Change>),
+    /// The Explorer's groups.
+    Explored(Vec<v1::ExploreRow>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -199,11 +202,13 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
             limit: 500,
         }))?,
         Request::Undo { change } => client.call(Method::Undo(v1::Undo { change: *change }))?,
+        Request::Explore(explore) => client.call(Method::Explore(explore.clone()))?,
     };
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
         R::Rules(rules) => Some(Update::Rules(rules)),
         R::Changes(page) => Some(Update::Changes(page.changes)),
+        R::Explored(page) => Some(Update::Explored(page.rows)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

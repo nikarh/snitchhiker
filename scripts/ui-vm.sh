@@ -15,12 +15,15 @@ cd "$(dirname "$0")/.."
 out=${1:?usage: scripts/ui-vm.sh <output dir> [setup] [daemon.toml]}
 setup=${2:-}
 config=${3:-}
-cargo build -q --release -p snitchhiker-ui -p snitchhiker-e2e
+cargo build -q --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-e2e
 e2e/vm.sh node up >/dev/null
 e2e/vm.sh node put target/release/snitchhiker-ui /tmp/snitchhiker-ui
 e2e/vm.sh node put target/release/snitchhiker-e2e /tmp/snitchhiker-e2e-ui
+e2e/vm.sh node put target/release/snitchhikerd /tmp/snitchhikerd-ui
 e2e/vm.sh node ssh "sudo bash -s" <<SCRIPT
 set -euo pipefail
+# The daemon of this tree too, over the packaged one (the rest of the package stays).
+install -m 755 /tmp/snitchhikerd-ui /usr/bin/snitchhikerd
 install -o root -g snitchhiker-ui -m 2755 /tmp/snitchhiker-ui /usr/bin/snitchhiker-ui
 snitchhikerd trust-client /usr/bin/snitchhiker-ui >/dev/null
 cp /etc/snitchhiker/daemon.toml /tmp/daemon.toml.packaged

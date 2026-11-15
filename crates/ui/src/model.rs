@@ -95,6 +95,8 @@ pub struct Model {
     pub events: Events,
     /// The history of rules and folders, newest first.
     pub changes: Vec<v1::Change>,
+    /// The Explorer's groups, as last asked.
+    pub explored: Vec<v1::ExploreRow>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -161,6 +163,10 @@ impl Model {
             Update::RulesChanged => Changed::RulesOnNode,
             Update::Changes(changes) => {
                 self.changes = changes;
+                Changed::Status
+            }
+            Update::Explored(rows) => {
+                self.explored = rows;
                 Changed::Status
             }
             Update::ShowPrompts => Changed::ShowPrompts,

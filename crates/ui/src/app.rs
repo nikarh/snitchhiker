@@ -17,6 +17,7 @@ use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
 use crate::views::editor;
 use crate::views::events::EventsTable;
+use crate::views::explorer::Explorer;
 use crate::views::history::History;
 use crate::views::prompts::Prompts;
 use crate::views::rules::RulesTable;
@@ -26,6 +27,7 @@ use crate::views::status::Status;
 pub enum Page {
     Prompts,
     Events,
+    Explorer,
     Rules,
     History,
     Status,
@@ -38,6 +40,7 @@ pub struct App {
     events: Entity<TableState<EventsTable>>,
     rules: Entity<TableState<RulesTable>>,
     history: Entity<History>,
+    explorer: Entity<Explorer>,
     status: Entity<Status>,
     requests: mpsc::Sender<Request>,
 }
@@ -64,6 +67,7 @@ impl App {
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
+        let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
         for request in [
@@ -126,6 +130,7 @@ impl App {
             events,
             rules,
             history,
+            explorer,
             status,
             requests: own_requests,
         }
@@ -143,6 +148,9 @@ impl App {
             .active(self.page == page)
             .on_click(cx.listener(move |app, _, _, cx| {
                 app.page = page;
+                if page == Page::Explorer {
+                    app.explorer.read(cx).query();
+                }
                 cx.notify();
             }))
     }
@@ -174,6 +182,7 @@ impl Render for App {
                             IconName::LayoutDashboard,
                             cx,
                         ))
+                        .child(self.item(Page::Explorer, "Explorer".into(), IconName::ChartPie, cx))
                         .child(self.item(Page::Rules, "Rules".into(), IconName::BookOpen, cx))
                         .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
                         .child(self.item(Page::Status, "Status".into(), IconName::Info, cx)),
@@ -202,6 +211,7 @@ impl Render for App {
                     .into_any_element()
             }
             Page::History => self.history.clone().into_any_element(),
+            Page::Explorer => self.explorer.clone().into_any_element(),
             Page::Status => self.status.clone().into_any_element(),
         };
         h_flex()

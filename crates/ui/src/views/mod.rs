@@ -2,6 +2,7 @@
 
 pub mod editor;
 pub mod events;
+pub mod explorer;
 pub mod history;
 pub mod prompts;
 pub mod rules;
