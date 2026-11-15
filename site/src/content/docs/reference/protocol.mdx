@@ -97,7 +97,13 @@ The protocol has a major and a minor version.
 - The **minor** version in `Hello` and `Welcome` says what each side knows; a client uses a newer method only when the node's minor version has it, and handles `ERROR_CODE_UNSUPPORTED` anyway.
 - Anything else is a new **major** version, under a new package (`snitchhiker.v2`), named in the preamble. A node may speak several.
 
-Version 1.0 is the current version.
+Version 1.0 is the current version. CI lints the schema and checks every change against `main` with [buf](https://buf.build): renumbering, renaming, retyping or removing anything fails it.
+
+## Conformance vectors
+
+[`proto/vectors/v1/`](https://github.com/nikarh/snitchhiker/tree/main/proto/vectors) holds frames for checking an implementation of the protocol: each is a message in protobuf text format (`.textproto`, naming its type on its first line) and the frame as sent, in hex (`.hex`). An implementation must decode every frame to its message, and encode every message to exactly its frame, apart from the vectors marked `# decode-only`. Those carry what a newer peer may send, an unknown field and an unknown kind of frame, which a decoder must skip.
+
+`00-preamble.hex` is the preamble. Frames, once published, never change: a change to how an existing message encodes is a breaking change.
 
 ## Schema
 
