@@ -42,3 +42,19 @@ run = "git cliff --offline -o CHANGELOG.md"
 [tasks.actionlint]
 description = "Lint the GitHub workflows"
 run = "mise x aqua:rhysd/actionlint@latest shellcheck@latest -- actionlint"
+
+[tasks."vm:up"]
+description = "Boot the node test VM (e2e/vm.sh; SNITCHHIKER_VM_DISTRO=arch|debian)"
+run = "e2e/vm.sh node up"
+
+[tasks."vm:ssh"]
+description = "A shell (or a command) in the node test VM"
+run = "e2e/vm.sh node ssh"
+
+[tasks."vm:down"]
+description = "Stop the node test VM and throw its disk away"
+run = "e2e/vm.sh node down"
+
+[tasks.e2e]
+description = "Build, then run the end-to-end scenarios in the node test VM (e2e/run.sh [filter]; KEEP_VM=1 keeps it)"
+run = "e2e/run.sh"

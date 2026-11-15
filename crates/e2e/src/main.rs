@@ -1,0 +1,66 @@
+//! Snitchhiker's end-to-end scenarios. This program changes the firewall, loads BPF and runs the daemon: it refuses
+//! to run anywhere but in the disposable test VMs of `e2e/` (`e2e/run.sh` copies it there and runs it as root).
+//!
+//! Usage: `snitchhiker-e2e [filter]`, running every scenario whose name contains `filter`.
+
+use std::io::{self, Write as _};
+use std::process::ExitCode;
+use std::time::Instant;
+
+mod nftables;
+mod util;
+
+/// A scenario: a name and a function that fails with a message.
+type Scenario = (&'static str, fn() -> Result<(), String>);
+
+const SCENARIOS: &[Scenario] = &[
+    ("nftables/install", nftables::install),
+    ("nftables/reinstall-is-atomic", nftables::reinstall_replaces),
+    ("nftables/remove", nftables::remove),
+    (
+        "nftables/other-tables-untouched",
+        nftables::other_tables_untouched,
+    ),
+];
+
+/// The marker `e2e/vm.sh` leaves in every test VM.
+const VM_MARKER: &str = "/var/lib/snitchhiker-e2e-ready";
+
+fn main() -> ExitCode {
+    let mut out = io::stdout().lock();
+    if !std::path::Path::new(VM_MARKER).exists() {
+        let _ = writeln!(
+            out,
+            "refusing to run: this is not a test VM ({VM_MARKER} is missing)"
+        );
+        return ExitCode::FAILURE;
+    }
+    let filter = std::env::args().nth(1).unwrap_or_default();
+    let mut failed = 0_u32;
+    let mut ran = 0_u32;
+    for (name, scenario) in SCENARIOS.iter().filter(|(name, _)| name.contains(&filter)) {
+        ran += 1;
+        let start = Instant::now();
+        let result = scenario();
+        let took = start.elapsed().as_millis();
+        match result {
+            Ok(()) => {
+                let _ = writeln!(out, "ok    {name} ({took} ms)");
+            }
+            Err(message) => {
+                failed += 1;
+                let _ = writeln!(
+                    out,
+                    "FAIL  {name} ({took} ms)\n      {}",
+                    message.replace('\n', "\n      ")
+                );
+            }
+        }
+    }
+    let _ = writeln!(out, "\n{ran} scenarios, {failed} failed");
+    if failed == 0 && ran > 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}

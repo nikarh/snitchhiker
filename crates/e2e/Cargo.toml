@@ -1,0 +1,17 @@
+[package]
+name = "snitchhiker-e2e"
+description = "Snitchhiker's end-to-end and escape scenarios, run as root inside the test VMs (never on a host)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+snitchhiker-netfilter = { version = "0.1.0", path = "../netfilter" }
