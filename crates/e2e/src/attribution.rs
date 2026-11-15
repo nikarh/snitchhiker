@@ -20,8 +20,11 @@ struct Owner {
     protocol: u8,
 }
 
-/// Runs `script` with python3 as mallory, and looks up the owner of the first packet it queues (at once, without
-/// waiting), accepting everything.
+/// The port every scenario here connects to (discard): nothing else on the VM sends to it.
+const PORT: u16 = 9;
+
+/// Runs `script` with python3 as mallory, and looks up the owner of the first packet it queues to [`PORT`] (at once,
+/// without waiting), accepting everything. Other packets queued meanwhile (the VM's own NTP or DNS) are let through.
 fn first_owner(script: &str) -> Result<Owner, String> {
     let _table = Installed::new(false)?;
     let attribution = Attribution::load().map_err(|e| e.to_string())?;
@@ -48,7 +51,7 @@ fn first_owner(script: &str) -> Result<Owner, String> {
             let Some(headers) = packet::parse(queued.payload) else {
                 continue;
             };
-            if found.is_some() {
+            if found.is_some() || headers.destination_port != PORT {
                 continue;
             }
             let key = FlowKey {

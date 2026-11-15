@@ -71,8 +71,10 @@ struct Seen {
     syn_only: bool,
 }
 
-/// Binds queue 0 and gives every packet `verdict` after `hold`, reporting the first one, until `stop`.
+/// Binds queue 0 and gives every packet `verdict` after `hold`, reporting the first one to `port`, until `stop`.
+/// Packets to other ports (the VM's own NTP or DNS) get the verdict too but aren't reported.
 fn serve(
+    port: u16,
     verdict: Verdict,
     hold: Duration,
     stop: Arc<AtomicBool>,
@@ -84,15 +86,16 @@ fn serve(
         while !stop.load(Ordering::Relaxed) {
             let mut decided = Vec::new();
             for packet in queue.receive().map_err(|e| format!("receive: {e}"))? {
-                if first {
+                let tcp = packet.payload.get(20..);
+                let destination_port = tcp
+                    .and_then(|t| t.get(2..4))
+                    .and_then(|p| p.try_into().ok())
+                    .map(u16::from_be_bytes);
+                if first && destination_port == Some(port) {
                     first = false;
-                    let tcp = packet.payload.get(20..);
                     let _ = seen.send(Seen {
                         uid: packet.uid,
-                        destination_port: tcp
-                            .and_then(|t| t.get(2..4))
-                            .and_then(|p| p.try_into().ok())
-                            .map(u16::from_be_bytes),
+                        destination_port,
                         syn_only: tcp
                             .and_then(|t| t.get(13))
                             .is_some_and(|f| f & 0x17 == 0x02),
@@ -131,6 +134,7 @@ pub fn holds_until_accepted() -> Result<(), String> {
     let stop = Arc::new(AtomicBool::new(false));
     let (sender, seen) = mpsc::channel();
     let worker = serve(
+        port,
         Verdict::Accept,
         Duration::from_secs(2),
         Arc::clone(&stop),
@@ -160,7 +164,13 @@ pub fn dropped_never_connects() -> Result<(), String> {
     let (_listener, port) = listener()?;
     let stop = Arc::new(AtomicBool::new(false));
     let (sender, _seen) = mpsc::channel();
-    let worker = serve(Verdict::Drop, Duration::ZERO, Arc::clone(&stop), sender)?;
+    let worker = serve(
+        port,
+        Verdict::Drop,
+        Duration::ZERO,
+        Arc::clone(&stop),
+        sender,
+    )?;
     let (took, connected) = connect_as_mallory(port, Duration::from_secs(3))?;
     stop.store(true, Ordering::Relaxed);
     wake(port);
