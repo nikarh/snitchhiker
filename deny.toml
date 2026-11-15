@@ -32,7 +32,11 @@ confidence-threshold = 0.93
 # Permissive licenses only. BSD-2-Clause and BSD-3-Clause: zstd (the library and its bindings), for compressing bulk
 # data on remote connections.
 # 0BSD, ISC, CC0-1.0: crates of the desktop app's toolkit (enum-iterator, inotify, libloading, tiny-keccak).
-allow = ["MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "ISC", "CC0-1.0"]
+allow = [
+  "MIT", "Apache-2.0", "Unicode-3.0", "Zlib", "BSD-2-Clause", "BSD-3-Clause", "0BSD", "ISC", "CC0-1.0",
+  # The Mozilla root certificates as data (webpki-roots, for the relays' TLS): a permissive data license.
+  "CDLA-Permissive-2.0",
+]
 # One crate, not the license: option-ext (through dirs, in the desktop app's toolkit) is MPL-2.0, file-level copyleft;
 # it is used unmodified, as MPL-2.0 allows in a larger work under other licenses.
 exceptions = [{ allow = ["MPL-2.0"], crate = "option-ext" }]
@@ -48,9 +52,9 @@ skip-tree = [
   { crate = "gpui-pre-linux", reason = "the desktop app's toolkit" },
 ]
 skip = [
-  { crate = "syn@2.0.119", reason = "tracing-attributes and thiserror-impl still use syn 2" },
-  { crate = "hashbrown@0.15.5", reason = "petgraph (prost-build, build time only) is on hashbrown 0.15" },
-  { crate = "foldhash@0.1.5", reason = "hashbrown 0.15, through petgraph (prost-build, build time only)" },
+  { crate = "netlink-packet-core@0.8.2", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
+  { crate = "netlink-packet-route@0.31.0", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
+  { crate = "netlink-sys@0.8.8", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
 ]
 wildcards = "deny"
 highlight = "simplest-path"
