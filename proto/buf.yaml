@@ -1,0 +1,9 @@
+# buf (https://buf.build) checks the protocol's schema: `mise run proto:check` lints it and fails on changes that
+# break wire or source compatibility with main. Within a major version, changes are additive only.
+version: v2
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

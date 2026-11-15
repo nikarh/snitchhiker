@@ -24,6 +24,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The protocol check compares the schema with main's (pull requests) or the previous commit's (pushes).
+          fetch-depth: 0
       # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers.
       - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       # The toolchain (with clippy and rustfmt) comes from rust-toolchain.toml.
@@ -32,9 +35,11 @@ jobs:
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install: false
-      # rustfmt, clippy, the host-safe tests, and every action pinned to a commit and allowed
-      # (.github/allowed-actions.txt).
+      # rustfmt, clippy, the host-safe tests, the protocol's lint and compatibility, and every action pinned to a
+      # commit and allowed (.github/allowed-actions.txt).
       - run: mise run ci
+        env:
+          PROTO_BASE: ${{ github.event_name == 'pull_request' && 'origin/main' || 'HEAD~1' }}
 
   deny:
     name: dependency audit

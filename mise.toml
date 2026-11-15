@@ -3,6 +3,7 @@
 # Nothing here that needs privileges runs on the machine it is started on: the daemon, BPF, nftables, packages and
 # containers are only ever run in the disposable VMs of e2e/ (see AGENTS.md).
 [tools]
+"aqua:bufbuild/buf" = "1.75.0"
 node = "26.13.1"
 git-cliff = "2.14.2"
 cargo-deny = "0.20.2"
@@ -24,9 +25,14 @@ run = "cargo test --locked"
 description = "Audit dependencies: advisories, licenses, duplicates, sources"
 run = "cargo deny check"
 
+[tasks."proto:check"]
+description = "Lint the protocol schema and check it against PROTO_BASE (default origin/main) for breaking changes"
+dir = "proto"
+run = 'buf lint && buf breaking --against "../.git#ref=${PROTO_BASE:-origin/main},subdir=proto"'
+
 [tasks.ci]
-description = "What CI's check job runs: lint, tests, and that action pins are up to date"
-depends = ["lint", "test"]
+description = "What CI's check job runs: lint, tests, the protocol check, and that action pins are up to date"
+depends = ["lint", "test", "proto:check"]
 run = ["scripts/check-actions.sh"]
 
 [tasks.check]
