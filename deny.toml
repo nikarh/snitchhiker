@@ -52,6 +52,7 @@ skip-tree = [
   { crate = "gpui-pre-linux", reason = "the desktop app's toolkit" },
 ]
 skip = [
+  { crate = "pem@3.0.6", reason = "the relay's ACME client (tokio-rustls-acme) is a major behind rcgen on pem" },
   { crate = "netlink-packet-core@0.8.2", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
   { crate = "netlink-packet-route@0.31.0", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
   { crate = "netlink-sys@0.8.8", reason = "iroh's netwatch is a release behind netdev on the netlink crates" },
