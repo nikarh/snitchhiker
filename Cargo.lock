@@ -8068,10 +8068,12 @@ dependencies = [
  "gpui-pre-platform",
  "ipnet",
  "nix",
+ "qrcode",
  "serde",
  "snitchhiker-client",
  "snitchhiker-core",
  "snitchhiker-proto",
+ "snitchhiker-remote",
  "toml 1.2.1+spec-1.1.0",
  "zbus 6.3.0",
 ]

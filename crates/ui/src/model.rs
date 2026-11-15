@@ -264,6 +264,10 @@ pub struct Model {
     pub error: Option<String>,
     /// Agents' proposals: those waiting, and the newest answered.
     pub proposals: BTreeMap<u64, v1::Proposal>,
+    /// The paired devices, as last listed.
+    pub devices: Option<v1::DeviceList>,
+    /// The pairing started last, until it is dismissed.
+    pub pairing: Option<v1::Pairing>,
 }
 
 /// What an update changed, so only those views refresh.
@@ -322,6 +326,14 @@ impl Model {
                 for proposal in list {
                     self.proposals.insert(proposal.id, proposal);
                 }
+                Changed::Status
+            }
+            Update::Devices(list) => {
+                self.devices = Some(list);
+                Changed::Status
+            }
+            Update::Pairing(pairing) => {
+                self.pairing = Some(pairing);
                 Changed::Status
             }
             Update::Proposal(proposal) => {
@@ -462,7 +474,10 @@ impl Model {
                 self.explanation = Some(*explanation);
                 Changed::Status
             }
-            update @ (Update::Proposals(_) | Update::Proposal(_)) => self.apply_proposal(update),
+            update @ (Update::Proposals(_)
+            | Update::Proposal(_)
+            | Update::Devices(_)
+            | Update::Pairing(_)) => self.apply_proposal(update),
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::ShowAlerts => Changed::ShowAlerts,
             Update::ShowProposals => Changed::ShowProposals,

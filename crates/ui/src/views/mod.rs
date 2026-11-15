@@ -2,6 +2,7 @@
 
 pub mod alerts;
 pub mod connections;
+pub mod devices;
 pub mod editor;
 pub mod events;
 pub mod explain;

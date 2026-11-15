@@ -16,13 +16,34 @@ use crate::backend::Update;
 #[derive(Clone)]
 pub struct Tray {
     prompts: Arc<AtomicU32>,
+    /// The prompts waiting on each node; the icon shows their sum.
+    counts: Arc<std::sync::Mutex<std::collections::HashMap<usize, u32>>>,
+    /// Which node this handle counts for.
+    node: usize,
     changed: async_channel::Sender<()>,
 }
 
 impl Tray {
-    /// Shows `count` prompts waiting.
+    /// A handle counting the prompts of node `node`.
+    #[must_use]
+    pub fn for_node(&self, node: usize) -> Self {
+        Self {
+            node,
+            ..self.clone()
+        }
+    }
+
+    /// Shows `count` prompts waiting on this handle's node.
     pub fn set(&self, count: u32) {
-        if self.prompts.swap(count, Ordering::Relaxed) != count {
+        let total = {
+            let mut counts = self
+                .counts
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            counts.insert(self.node, count);
+            counts.values().copied().fold(0_u32, u32::saturating_add)
+        };
+        if self.prompts.swap(total, Ordering::Relaxed) != total {
             let _ = self.changed.try_send(());
         }
     }
@@ -160,11 +181,19 @@ fn title(count: u32) -> String {
     }
 }
 
+/// Starts the tray icon for every node: its clicks come out of the returned receiver.
+pub fn start_shared() -> (Tray, async_channel::Receiver<Update>) {
+    let (clicks, clicked) = async_channel::unbounded();
+    (start(clicks), clicked)
+}
+
 /// Starts the tray icon on a thread of its own; clicks become `Update::ShowPrompts`.
 pub fn start(updates: async_channel::Sender<Update>) -> Tray {
     let (changed, incoming) = async_channel::unbounded();
     let tray = Tray {
         prompts: Arc::new(AtomicU32::new(0)),
+        counts: Arc::default(),
+        node: 0,
         changed,
     };
     let prompts = Arc::clone(&tray.prompts);

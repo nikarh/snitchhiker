@@ -40,8 +40,14 @@ pub enum Page {
     History,
     Status,
     Firewall,
+    Devices,
     Settings,
 }
+
+/// Emitted when a node asks to be shown (a notification or the tray was clicked).
+pub struct Activate;
+
+impl gpui::EventEmitter<Activate> for App {}
 
 pub struct App {
     model: Entity<Model>,
@@ -62,6 +68,7 @@ pub struct App {
     alerts: Entity<Alerts>,
     live: Entity<crate::views::live::Live>,
     system: Entity<SystemPage>,
+    devices: Entity<crate::views::devices::Devices>,
     requests: mpsc::Sender<Request>,
 }
 
@@ -70,6 +77,7 @@ impl App {
         requests: mpsc::Sender<Request>,
         updates: async_channel::Receiver<Update>,
         updates_sender: async_channel::Sender<Update>,
+        tray: crate::tray::Tray,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -96,6 +104,8 @@ impl App {
         let alerts = cx.new(|cx| Alerts::new(model.clone(), requests.clone(), cx));
         let live = cx.new(|cx| crate::views::live::Live::new(model.clone(), cx));
         let system = cx.new(|cx| SystemPage::new(model.clone(), requests.clone(), cx));
+        let devices =
+            cx.new(|cx| crate::views::devices::Devices::new(model.clone(), requests.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
         let connections = cx.new(|cx| {
@@ -119,7 +129,6 @@ impl App {
             }
         })
         .detach();
-        let tray = crate::tray::start(updates_sender.clone());
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
         for request in [
@@ -155,6 +164,7 @@ impl App {
             alerts,
             live,
             system,
+            devices,
             requests: own_requests,
         }
     }
@@ -219,11 +229,13 @@ impl App {
                         }
                         Changed::ShowPrompts => {
                             app.page = Page::Prompts;
+                            cx.emit(Activate);
                             cx.activate(true);
                         }
                         Changed::ShowAlerts => {
                             app.page = Page::Alerts;
                             app.alerts.read(cx).refresh();
+                            cx.emit(Activate);
                             cx.activate(true);
                         }
                         Changed::Alert => {
@@ -243,6 +255,7 @@ impl App {
                         Changed::ShowProposals => {
                             app.page = Page::Proposals;
                             app.proposals.read(cx).refresh();
+                            cx.emit(Activate);
                             cx.activate(true);
                         }
                         Changed::Prompts | Changed::Status | Changed::Nothing => {}
@@ -255,6 +268,17 @@ impl App {
             }
         })
         .detach();
+    }
+
+    /// How many prompts wait on this node.
+    pub fn waiting(&self, cx: &gpui::App) -> usize {
+        self.model.read(cx).prompts.len()
+    }
+
+    /// Shows the prompts page.
+    pub fn show_prompts(&mut self, cx: &mut Context<Self>) {
+        self.page = Page::Prompts;
+        cx.notify();
     }
 
     /// A double-click on an event says why it was decided so, as its info button does.
@@ -302,6 +326,9 @@ impl App {
                 }
                 if page == Page::Proposals {
                     app.proposals.read(cx).refresh();
+                }
+                if page == Page::Devices {
+                    app.devices.read(cx).refresh();
                 }
                 cx.notify();
             }))
@@ -355,12 +382,14 @@ impl App {
             Page::Alerts => self.alerts.clone().into_any_element(),
             Page::Live => self.live.clone().into_any_element(),
             Page::Firewall => self.system.clone().into_any_element(),
+            Page::Devices => self.devices.clone().into_any_element(),
         }
     }
 }
 
-impl Render for App {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl App {
+    /// The pages of this node, with counts of what waits.
+    fn sidebar(&self, cx: &mut Context<Self>) -> Sidebar<SidebarGroup<SidebarMenu>> {
         let waiting = self.model.read(cx).prompts.len();
         let open_alerts = self.model.read(cx).open_alerts;
         let alerts_label: SharedString = if open_alerts == 0 {
@@ -385,7 +414,7 @@ impl Render for App {
             .node
             .as_ref()
             .map_or_else(|| "Snitchhiker".to_owned(), |n| n.node_name.clone());
-        let sidebar = Sidebar::new("pages")
+        Sidebar::new("pages")
             .header(div().p_2().text_lg().child(node))
             .child(
                 SidebarGroup::new("Node").child(
@@ -432,13 +461,25 @@ impl Render for App {
                             cx,
                         ))
                         .child(self.item(
+                            Page::Devices,
+                            "Devices".into(),
+                            gpui_kit_assets::IconName::Smartphone,
+                            cx,
+                        ))
+                        .child(self.item(
                             Page::Settings,
                             "Settings".into(),
                             IconName::Settings,
                             cx,
                         )),
                 ),
-            );
+            )
+    }
+}
+
+impl Render for App {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let sidebar = self.sidebar(cx);
         let page = self.page();
         h_flex()
             .size_full()

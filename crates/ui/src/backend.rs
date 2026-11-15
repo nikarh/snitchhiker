@@ -2,7 +2,7 @@
 //! thread of its own with the blocking client. They reconnect with backoff when the node goes away, and the
 //! subscriptions resume from the last event seen, so a restart of the daemon loses nothing.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -86,6 +86,10 @@ pub enum Request {
     /// Agents' newest proposals.
     Proposals,
     Decide(v1::DecideProposal),
+    /// The paired devices.
+    Devices,
+    StartPairing(v1::Role),
+    RemoveDevice(String),
 }
 
 /// What the node tells the app.
@@ -142,6 +146,9 @@ pub enum Update {
     Proposals(Vec<v1::Proposal>),
     /// A proposal made or changed.
     Proposal(Box<v1::Proposal>),
+    Devices(v1::DeviceList),
+    /// A pairing started: its link.
+    Pairing(v1::Pairing),
 }
 
 /// Events in one page of history.
@@ -150,10 +157,10 @@ pub const PAGE: u32 = 500;
 const APP: &str = "desktop";
 const BACKOFF: [u64; 5] = [1, 2, 5, 10, 30];
 
-/// Starts the connections to the node's socket at `socket`; requests go to the returned sender, updates come out of
-/// the returned receiver.
+/// Starts the connections to the node; requests go to the returned sender, updates come out of the returned
+/// receiver.
 pub fn start(
-    socket: PathBuf,
+    socket: Target,
 ) -> (
     mpsc::Sender<Request>,
     async_channel::Receiver<Update>,
@@ -179,8 +186,30 @@ pub fn start(
     (requests, received, updates)
 }
 
-fn connect(socket: &Path) -> Result<Client, ClientError> {
-    Client::connect(socket, APP, env!("CARGO_PKG_VERSION"))
+/// A node the app connects to.
+#[derive(Clone)]
+#[expect(clippy::large_enum_variant, reason = "made once per node")]
+pub enum Target {
+    /// This machine's, by its client socket.
+    Local(PathBuf),
+    /// Another's, over the network, as this device (its key).
+    Remote {
+        node: snitchhiker_remote::NodeAddress,
+        key: snitchhiker_remote::Key,
+    },
+}
+
+fn connect(target: &Target) -> Result<Client, ClientError> {
+    match target {
+        Target::Local(socket) => Client::connect(socket, APP, env!("CARGO_PKG_VERSION")),
+        Target::Remote { node, key } => snitchhiker_client::remote::connect(
+            key,
+            node,
+            &snitchhiker_remote::Options::default(),
+            APP,
+            env!("CARGO_PKG_VERSION"),
+        ),
+    }
 }
 
 /// A block's rows and its dictionary entries.
@@ -237,7 +266,7 @@ fn keep(history: &History, request: &Request, update: &Update) {
 }
 
 fn serve_requests(
-    socket: &Path,
+    socket: &Target,
     incoming: &mpsc::Receiver<Request>,
     updates: &async_channel::Sender<Update>,
     history: &History,
@@ -359,6 +388,12 @@ fn method(request: &Request) -> v1::request::Method {
             limit: 100,
         }),
         Request::Decide(decide) => Method::DecideProposal(decide.clone()),
+        Request::Devices => Method::ListDevices(v1::ListDevices {}),
+        Request::StartPairing(role) => Method::StartPairing(v1::StartPairing {
+            name: String::new(),
+            role: (*role).into(),
+        }),
+        Request::RemoveDevice(id) => Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }),
     }
 }
 
@@ -380,6 +415,10 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::TrustedClients(list) => Some(Update::TrustedClients(list.clients)),
         R::Proposals(list) => Some(Update::Proposals(list.proposals)),
         R::Proposal(proposal) => Some(Update::Proposal(proposal)),
+        R::Devices(list) => Some(Update::Devices(list)),
+        R::Pairing(pairing) => Some(Update::Pairing(pairing)),
+        // Done after unpairing: list them again.
+        R::Done(_) if matches!(request, Request::RemoveDevice(_)) => None,
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,
@@ -402,7 +441,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
 }
 
 /// The subscriptions: prompts, rules and live events, resumed after every reconnect.
-fn listen(socket: &Path, updates: &async_channel::Sender<Update>, history: &History) {
+fn listen(socket: &Target, updates: &async_channel::Sender<Update>, history: &History) {
     let mut last_seq: Option<i64> = None;
     let mut attempt = 0;
     loop {
@@ -434,7 +473,7 @@ fn listen(socket: &Path, updates: &async_channel::Sender<Update>, history: &Hist
 
 /// One connection's worth of subscriptions. `Ok` when the app is gone, the error when the connection is.
 fn subscribe(
-    socket: &Path,
+    socket: &Target,
     updates: &async_channel::Sender<Update>,
     history: &History,
     last_seq: &mut Option<i64>,

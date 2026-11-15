@@ -7,9 +7,11 @@ mod csv;
 mod env;
 mod history;
 mod model;
+mod nodes;
 mod notify;
 mod prefs;
 mod session;
+mod shell;
 mod tray;
 mod views;
 
@@ -41,21 +43,19 @@ fn main() -> ExitCode {
         let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
         return ExitCode::SUCCESS;
     }
-    let socket = PathBuf::from(snitchhiker_client::CLIENT_SOCKET);
+    let local = backend::Target::Local(PathBuf::from(snitchhiker_client::CLIENT_SOCKET));
     // The components' icons.
     gpui_platform::application()
         .with_assets(gpui_kit_assets::AllAssets)
         .run(move |cx| {
             gpui_component::init(cx);
-            let (requests, updates, updates_sender) = backend::start(socket);
             let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..WindowOptions::default()
             };
             let _ = cx.open_window(options, |window, cx| {
-                let view =
-                    cx.new(|cx| app::App::new(requests, updates, updates_sender, window, cx));
+                let view = cx.new(|cx| shell::Shell::new(local, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             });
         });
