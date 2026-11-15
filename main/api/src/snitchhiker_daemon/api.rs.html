@@ -1921,7 +1921,7 @@
 <a href=#1921 id=1921 data-nosnippet>1921</a>
 <a href=#1922 id=1922 data-nosnippet>1922</a><span class="doccomment">/// The requests about remote devices: pairing, the devices, and their actions waiting for approval.
 <a href=#1923 id=1923 data-nosnippet>1923</a></span><span class="kw">fn </span>devices(
-<a href=#1924 id=1924 data-nosnippet>1924</a>    daemon: <span class="kw-2">&amp;</span>Daemon,
+<a href=#1924 id=1924 data-nosnippet>1924</a>    daemon: <span class="kw-2">&amp;</span>Arc&lt;Daemon&gt;,
 <a href=#1925 id=1925 data-nosnippet>1925</a>    caller: <span class="kw-2">&amp;</span>Caller,
 <a href=#1926 id=1926 data-nosnippet>1926</a>    app: <span class="kw-2">&amp;</span>str,
 <a href=#1927 id=1927 data-nosnippet>1927</a>    method: v1::request::Method,
@@ -2020,7 +2020,7 @@
 <a href=#2020 id=2020 data-nosnippet>2020</a>
 <a href=#2021 id=2021 data-nosnippet>2021</a><span class="doccomment">/// `StartPairing`: a dangerous action (a device paired as admin can change everything).
 <a href=#2022 id=2022 data-nosnippet>2022</a></span><span class="kw">fn </span>start_pairing(
-<a href=#2023 id=2023 data-nosnippet>2023</a>    daemon: <span class="kw-2">&amp;</span>Daemon,
+<a href=#2023 id=2023 data-nosnippet>2023</a>    daemon: <span class="kw-2">&amp;</span>Arc&lt;Daemon&gt;,
 <a href=#2024 id=2024 data-nosnippet>2024</a>    caller: <span class="kw-2">&amp;</span>Caller,
 <a href=#2025 id=2025 data-nosnippet>2025</a>    app: <span class="kw-2">&amp;</span>str,
 <a href=#2026 id=2026 data-nosnippet>2026</a>    start: <span class="kw-2">&amp;</span>v1::StartPairing,

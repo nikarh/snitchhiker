@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["ALPN","PAIR_ALPN"],"fn":["connect","fingerprint","secret"],"struct":["Accepted","Connected","Key","Listener","NodeAddress","Options","PairLink"]};
+window.SIDEBAR_ITEMS = {"constant":["ALPN","PAIR_ALPN"],"fn":["connect","fingerprint","secret"],"mod":["code"],"struct":["Accepted","Connected","Key","Listener","NodeAddress","Options","PairLink"]};
