@@ -146,6 +146,10 @@ const SCENARIOS: &[Scenario] = &[
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),
+    (
+        "remote/a-device-connects-through-the-relay",
+        remote::a_device_connects_through_the_relay,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",

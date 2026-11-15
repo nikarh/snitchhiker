@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.."
 profile=${SNITCHHIKER_E2E_PROFILE:-dev}
 e2e/vm.sh node start &
 boot=$!
-cargo build --locked --profile "${profile}" -p snitchhiker-daemon -p snitchhiker-e2e
+cargo build --locked --profile "${profile}" -p snitchhiker-daemon -p snitchhiker-e2e -p snitchhiker-relay
 wait "${boot}"
 e2e/vm.sh node up
 
@@ -39,6 +39,9 @@ e2e/vm.sh node ssh 'sudo systemctl stop snitchhikerd; sudo pkill -x snitchhikerd
 e2e/vm.sh node ssh 'sudo rm -f /usr/local/bin/snitchhikerd /usr/local/bin/snitchhiker'
 e2e/vm.sh node put "target/${dir}/snitchhiker-e2e" /tmp/snitchhiker-e2e
 e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-e2e /usr/local/bin/'
+# The relay, for the remote scenarios (it isn't part of the node's package).
+e2e/vm.sh node put "target/${dir}/snitchhiker-relay" /tmp/snitchhiker-relay
+e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-relay /usr/local/bin/'
 
 status=0
 e2e/vm.sh node ssh sudo snitchhiker-e2e "${1:-}" || status=$?

@@ -85,3 +85,92 @@ pub fn a_paired_device_connects_and_is_unpaired() -> Result<(), String> {
         &found,
     )
 }
+
+/// A relay of the user's, plain HTTP on loopback (TLS is a reverse proxy's job, or ACME's, in a deployment).
+struct Relay(std::process::Child);
+
+impl Relay {
+    fn start(allow: &[String]) -> Result<Self, String> {
+        let dir = "/tmp/snitchhiker-relay-test";
+        let _ = std::fs::create_dir_all(dir);
+        let allow: Vec<String> = allow.iter().map(|a| format!("\"{a}\"")).collect();
+        std::fs::write(
+            format!("{dir}/relay.toml"),
+            format!(
+                "http_bind = \"127.0.0.1:3340\"\nallow = [{}]\n",
+                allow.join(", ")
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        let child = std::process::Command::new("snitchhiker-relay")
+            .args(["--config", &format!("{dir}/relay.toml")])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::fs::File::create(format!("{dir}/relay.log")).map_err(|e| e.to_string())?)
+            .spawn()
+            .map_err(|e| format!("starting snitchhiker-relay: {e}"))?;
+        thread::sleep(Duration::from_secs(1));
+        Ok(Self(child))
+    }
+}
+
+impl Drop for Relay {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+const RELAY: &str = "http://127.0.0.1:3340";
+
+/// With no direct address known, a device reaches the node through the relay; a relay with an allow-list turns
+/// away keys it doesn't list.
+pub fn a_device_connects_through_the_relay() -> Result<(), String> {
+    let relay = Relay::start(&[])?;
+    let mut daemon = Running::start(
+        "remote-relay",
+        &format!("mode = \"monitor\"\nremote = true\nrelays = [\"{RELAY}\"]\n"),
+    )?;
+    let options = Options::default();
+    let device = Key::generate();
+    let mut link = link(&daemon, "phone")?;
+    let relays = link.node.relays.clone();
+    // Only the relay: no direct address.
+    link.node.addrs.clear();
+    let paired = pair(&device, &link, "phone", &options).map_err(|e| e.to_string());
+    let connected = connect(&device, &link.node, &options, "e2e", "0")
+        .map_err(|e| e.to_string())
+        .and_then(|mut c| status(&mut c));
+    drop(relay);
+    // Restarted with an allow-list that has the node but not the device: the device can't reach it.
+    let node_id = link.node.id.clone();
+    let relay = Relay::start(&[node_id])?;
+    daemon.restart(&format!(
+        "mode = \"monitor\"\nremote = true\nrelays = [\"{RELAY}\"]\n"
+    ))?;
+    thread::sleep(Duration::from_secs(2));
+    let refused = connect(&device, &link.node, &options, "e2e", "0")
+        .map_err(|e| e.to_string())
+        .and_then(|mut c| status(&mut c));
+    drop(relay);
+    let log = std::fs::read_to_string("/tmp/snitchhiker-relay-test/relay.log").unwrap_or_default();
+    let found = format!(
+        "relays in the link: {relays:?}\npaired: {paired:?}\nconnected: {:?}\nrefused: {:?}\n{log}",
+        connected.as_ref().map(|s| &s.daemon_version),
+        refused.as_ref().map(|s| &s.daemon_version)
+    );
+    check(
+        relays.iter().any(|r| r.starts_with(RELAY)),
+        "the link doesn't name the node's relay",
+        &found,
+    )?;
+    check(
+        paired.is_ok() && connected.is_ok(),
+        "the device didn't pair and connect through the relay",
+        &found,
+    )?;
+    check(
+        refused.is_err(),
+        "a key the relay doesn't allow got through it",
+        &found,
+    )
+}
