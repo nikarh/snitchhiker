@@ -439,3 +439,76 @@ pub fn a_rootless_podman_container_is_decided_inside_its_namespace() -> Result<(
         &format!("deleted: {deleted:?}\nrestored: {restored:?}\n{alerts}"),
     )
 }
+
+/// A named network namespace (`ip netns`): nothing in it passes the host's tables, so the daemon decides inside it,
+/// from when it is mounted: its connections carry its name, a rule on the namespace holds, and when it is deleted
+/// the daemon lets it go.
+pub fn a_named_namespaces_traffic_is_decided_inside_it() -> Result<(), String> {
+    let daemon = Running::start("netns", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let _ = run("ip", &["netns", "del", "e2e-ns"]);
+    run("ip", &["netns", "add", "e2e-ns"])?;
+    run(
+        "ip",
+        &["netns", "exec", "e2e-ns", "ip", "link", "set", "lo", "up"],
+    )?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--netns",
+        "e2e-ns",
+        "--port",
+        "9101",
+        "--name",
+        "the namespace",
+    ])?;
+    thread::sleep(Duration::from_secs(1));
+    let curl = |port: u16| {
+        let _ = run(
+            "ip",
+            &[
+                "netns",
+                "exec",
+                "e2e-ns",
+                "runuser",
+                "-u",
+                "mallory",
+                "--",
+                "curl",
+                "-s",
+                "-m",
+                "2",
+                &format!("http://127.0.0.1:{port}/"),
+            ],
+        );
+    };
+    curl(9100);
+    curl(9101);
+    run("ip", &["netns", "del", "e2e-ns"])?;
+    thread::sleep(Duration::from_millis(500));
+    let denied = decisions(&daemon, "127.0.0.1:9100")?;
+    let allowed = decisions(&daemon, "127.0.0.1:9101")?;
+    let log = std::fs::read_to_string("/tmp/snitchhiker-daemon-test/netns/daemon.log")
+        .unwrap_or_default();
+    let found = format!("{}\n{}\n{log}", denied.join("\n"), allowed.join("\n"));
+    check(
+        denied
+            .iter()
+            .any(|l| l.contains(" deny ") && l.contains("[netns e2e-ns] /usr/bin/curl")),
+        "a connection in the named namespace wasn't decided inside it, with its name",
+        &found,
+    )?;
+    check(
+        allowed
+            .iter()
+            .any(|l| l.contains(" allow ") && l.contains("[netns e2e-ns] /usr/bin/curl")),
+        "a rule on the namespace didn't hold",
+        &found,
+    )?;
+    check(
+        log.contains("a network namespace is let go")
+            || log.contains("deciding inside a network namespace"),
+        "the daemon didn't start deciding inside the namespace",
+        &found,
+    )
+}

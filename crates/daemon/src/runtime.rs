@@ -1257,6 +1257,10 @@ pub(crate) fn decide(
     }
     // A network helper isn't the program: the one in the container is, unknown from out here.
     let process = if helper { None } else { process };
+    // A named namespace's connections (queued inside it) carry its name.
+    let named = (netns != shared.netns)
+        .then(|| shared.namespaces.named(u64::from(netns)))
+        .flatten();
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: empty,
@@ -1273,7 +1277,7 @@ pub(crate) fn decide(
         now_ms: now,
         container: container.as_deref().map(|c| &c.container),
         vm: None,
-        netns: None,
+        netns: named.as_ref().map(|(name, _)| &**name),
     };
     let exe = process
         .as_ref()
@@ -1283,7 +1287,10 @@ pub(crate) fn decide(
         exe,
         pid,
         owner.map(|o| o.cookie),
-        container.as_ref().map(|c| Arc::clone(&c.key)),
+        container
+            .as_ref()
+            .map(|c| Arc::clone(&c.key))
+            .or_else(|| named.as_ref().map(|(_, key)| Arc::clone(key))),
     );
     let rules = shared.rules.load();
     let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {

@@ -54,6 +54,7 @@ Commands:
                                     --container <name>, --image <reference>, --compose <project/service>
                                                       in that container only (patterns: glob:..., re:...)
                                     --vm <name>       in that VM only
+                                    --netns <name>    in that named network namespace only (ip netns)
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
   rules move <id> <folder>        Move a rule to a folder (0: the top level)
@@ -1233,6 +1234,7 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
             name: args.values_from_str("--vm")?,
             ..Default::default()
         },
+        netns: args.values_from_str("--netns")?,
         ..Conditions::default()
     };
     Ok(RuleSpec {

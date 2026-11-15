@@ -270,6 +270,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::a_rootless_podman_container_is_decided_inside_its_namespace,
     ),
     (
+        "containers/a-named-namespaces-traffic-is-decided-inside-it",
+        containers::a_named_namespaces_traffic_is_decided_inside_it,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

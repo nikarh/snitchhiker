@@ -83,6 +83,8 @@ A container's connections are decided like a host program's, with its program as
 
 Rootless containers (Podman as a user, with pasta or slirp4netns) reach the network through a helper that makes their connections on the host. Snitchhiker ties the helper's connections to its container, and from the container's first connection on it decides inside the container's own network namespace, where the program is known: rules on a program hold there as in any other container. The first connection is decided as the container's alone, so only rules on the container (not on a program) apply to it. Should something in the container with `CAP_NET_ADMIN` delete Snitchhiker's table in its namespace, it is put back at once and an alert says so.
 
+Named network namespaces (`ip netns add`, a VPN's namespace) are covered the same way: from the moment one is mounted under `/run/netns`, Snitchhiker decides inside it, and its connections carry its name; `netns = ["vpn"]` (or `--netns vpn` on the command line) limits a rule to it.
+
 Rules name containers by `container.name`, `container.image`, `container.compose` and `container.label`; any of them limits the rule to containers. The Compose service and the image are the stable choices: a container's name can change when it's recreated, and its id always does (`container.id` exists for one-offs). On the command line:
 
 ```bash
