@@ -175,7 +175,12 @@ fn destinations(
                 broad = true;
                 risks.push(Risk::SensitiveAlias(net.to_string()));
             }
-            conditions.net.push(net.to_string());
+            // A single address stays as written; a network as the network.
+            conditions.net.push(if host.parse::<IpAddr>().is_ok() {
+                host.to_owned()
+            } else {
+                net.to_string()
+            });
             continue;
         }
         if let Some(suffix) = host.strip_prefix("*.") {
@@ -209,10 +214,11 @@ pub fn grounds(o: &Observation, conditions: &Conditions, exe: &str) -> bool {
                 )
             })
         })
-        || conditions
-            .net
-            .iter()
-            .any(|n| n.parse::<IpNet>().is_ok_and(|n| n.contains(&o.address)));
+        || conditions.net.iter().any(|n| {
+            n.parse::<IpNet>()
+                .or_else(|_| n.parse::<IpAddr>().map(IpNet::from))
+                .is_ok_and(|n| n.contains(&o.address))
+        });
     let port_ok = conditions.port.is_empty() || conditions.port.iter().any(|p| {
         let (a, b) = p.split_once('-').unwrap_or((p, p));
         matches!((a.parse::<u16>(), b.parse::<u16>()), (Ok(a), Ok(b)) if (a..=b).contains(&o.port))
@@ -359,6 +365,17 @@ mod tests {
         assert_eq!(pick("/usr/bin/curl").conditions.exe, vec!["/usr/bin/curl"]);
         assert_eq!(pick("/usr/bin/curl").risks, vec![]);
         assert_eq!(pick("/usr/bin/wget").risks, vec![Risk::Speculative]);
+        // An address is kept as written, and grounds like a network.
+        let observed = [Observation {
+            exe: "/usr/bin/curl".to_owned(),
+            host: None,
+            address: "192.0.2.7".parse().unwrap(),
+            port: 80,
+        }];
+        let shaped = shape(&proposed("", &["192.0.2.7"], &["80"]), &observed, NEVER).unwrap();
+        assert_eq!(shaped.conditions.net, vec!["192.0.2.7"]);
+        assert_eq!(shaped.conditions.exe, vec!["/usr/bin/curl"]);
+        assert_eq!(shaped.risks, vec![]);
     }
 
     #[test]
