@@ -224,6 +224,29 @@ ALTER TABLE devices ADD COLUMN push BLOB;
     r"
 ALTER TABLE events ADD COLUMN container INTEGER REFERENCES strings(id);
 ",
+    // The rollups by container too (0: none), the Explorer's fifth dimension: the table is rebuilt with the column in
+    // its key; the history before it had no containers.
+    r"
+CREATE TABLE rollups_new (
+    hour INTEGER NOT NULL,
+    exe INTEGER NOT NULL,
+    host INTEGER NOT NULL,
+    port INTEGER NOT NULL,
+    protocol INTEGER NOT NULL,
+    uid INTEGER NOT NULL,
+    container INTEGER NOT NULL,
+    action INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    bytes_out INTEGER NOT NULL,
+    bytes_in INTEGER NOT NULL,
+    PRIMARY KEY (hour, exe, host, port, protocol, uid, container, action)
+) WITHOUT ROWID;
+INSERT INTO rollups_new
+SELECT hour, exe, host, port, protocol, uid, 0, action, count, bytes_out, bytes_in FROM rollups;
+DROP TABLE rollups;
+ALTER TABLE rollups_new RENAME TO rollups;
+INSERT INTO rollups_by SELECT 5, hour, 0, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 4;
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -524,9 +547,9 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     (
         "rollups.add",
-        "INSERT INTO rollups (hour, exe, host, port, protocol, uid, action, count, bytes_out, bytes_in)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
-         ON CONFLICT (hour, exe, host, port, protocol, uid, action) DO UPDATE SET
+        "INSERT INTO rollups (hour, exe, host, port, protocol, uid, action, count, bytes_out, bytes_in, container)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+         ON CONFLICT (hour, exe, host, port, protocol, uid, container, action) DO UPDATE SET
              count = count + excluded.count,
              bytes_out = bytes_out + excluded.bytes_out,
              bytes_in = bytes_in + excluded.bytes_in",
@@ -555,7 +578,8 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
     (
         "events.by_cookie",
-        "SELECT seq, time_ms, exe, coalesce(host, 0), port, protocol, uid, action, bytes_out, bytes_in
+        "SELECT seq, time_ms, exe, coalesce(host, 0), port, protocol, uid, action, bytes_out, bytes_in,
+                coalesce(container, 0)
          FROM events WHERE cookie = ?1 ORDER BY seq DESC LIMIT 1",
     ),
     (
@@ -574,6 +598,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     explore!("uid", "exe"),
     explore!("uid", "host"),
     explore!("uid", "port"),
+    explore!("exe", "container"),
+    explore!("host", "container"),
+    explore!("port", "container"),
+    explore!("uid", "container"),
+    explore!("container", "exe"),
+    explore!("container", "host"),
+    explore!("container", "port"),
+    explore!("container", "uid"),
     (
         "events.prune",
         "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE time_ms < ?1 ORDER BY time_ms LIMIT ?2)",
@@ -1234,6 +1266,8 @@ pub enum Dimension {
     Host,
     Port,
     Uid,
+    /// The container (its identity's string id; 0: none).
+    Container,
 }
 
 impl Dimension {
@@ -1244,6 +1278,7 @@ impl Dimension {
             Self::Host => 2,
             Self::Port => 3,
             Self::Uid => 4,
+            Self::Container => 5,
         }
     }
 
@@ -1253,6 +1288,7 @@ impl Dimension {
             Self::Host => "host",
             Self::Port => "port",
             Self::Uid => "uid",
+            Self::Container => "container",
         }
     }
 }
@@ -1587,6 +1623,7 @@ impl Store {
                     1,
                     0,
                     0,
+                    container.unwrap_or(0),
                 ])?;
             add_by(
                 &self.connection,
@@ -1596,6 +1633,7 @@ impl Store {
                     host.unwrap_or(0),
                     i64::from(event.port),
                     i64::from(event.uid),
+                    container.unwrap_or(0),
                 ],
                 action_code(event.action),
                 (1, 0, 0),
@@ -2187,6 +2225,7 @@ impl Store {
                                 row.get(5)?,
                                 row.get(6)?,
                                 row.get(7)?,
+                                row.get(10)?,
                             ],
                             row.get::<_, i64>(8)?,
                             row.get::<_, i64>(9)?,
@@ -2198,12 +2237,12 @@ impl Store {
                 };
                 let (sent, read) = (db_id(sent), db_id(read));
                 update.execute(params![seq, sent, read])?;
-                let [hour, exe, host, port, protocol, uid, action] = key;
+                let [hour, exe, host, port, protocol, uid, action, container] = key;
                 let (out, inn) = ((sent - old_out).max(0), (read - old_in).max(0));
                 add_by(
                     &self.connection,
                     u64::try_from(hour).unwrap_or(0),
-                    [exe, host, port, uid],
+                    [exe, host, port, uid, container],
                     u8::try_from(action).unwrap_or(0),
                     (0, out, inn),
                 )?;
@@ -2218,6 +2257,7 @@ impl Store {
                     0,
                     (sent - old_out).max(0),
                     (read - old_in).max(0),
+                    container,
                 ])?;
             }
         }
@@ -2276,7 +2316,7 @@ impl Store {
     pub fn prune_rollups(&mut self, before_ms: u64) -> Result<usize, Error> {
         let hour = db_id(before_ms / HOUR_MS);
         let mut by = self.connection.prepare_cached(sql("rollups_by.prune")?)?;
-        for dimension in 1..=4 {
+        for dimension in 1..=5 {
             by.execute(params![dimension, hour])?;
         }
         let mut statement = self.connection.prepare_cached(sql("rollups.prune")?)?;
@@ -2296,12 +2336,12 @@ impl Store {
     }
 }
 
-/// Adds to the per-dimension rollups of an hour: `keys` are the program, host, port and user; `counts` the
+/// Adds to the per-dimension rollups of an hour: `keys` are the program, host, port, user and container; `counts` the
 /// connections and bytes out and in.
 fn add_by(
     connection: &Connection,
     hour: u64,
-    keys: [i64; 4],
+    keys: [i64; 5],
     action: u8,
     counts: (i64, i64, i64),
 ) -> Result<(), Error> {

@@ -1,4 +1,4 @@
-//! Explorer: the history grouped by program, host, port or user over a time range, busiest first, with what was
+//! Explorer: the history grouped by program, host, port, user or container over a time range, busiest first, with what was
 //! allowed and blocked; a group drills down into the next dimension. The node answers from hourly rollups, so a
 //! month of a million connections groups in tens of milliseconds.
 
@@ -18,12 +18,30 @@ use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::bytes;
 
-const DIMENSIONS: [(v1::Dimension, &str); 4] = [
+const DIMENSIONS: [(v1::Dimension, &str); 5] = [
     (v1::Dimension::Program, "Program"),
     (v1::Dimension::Host, "Host"),
     (v1::Dimension::Port, "Port"),
     (v1::Dimension::User, "User"),
+    (v1::Dimension::Container, "Container"),
 ];
+
+/// A group's key as shown: a container's identity as people know it (its runtime, then its Compose service or name,
+/// and its image), the host's connections for none; other keys as they are, and "(no name)" for an empty one.
+pub fn shown(dimension: v1::Dimension, key: &str) -> String {
+    if dimension == v1::Dimension::Container {
+        if key.is_empty() {
+            return "(the host)".to_owned();
+        }
+        let container = snitchhiker_core::context::Container::from_key(key);
+        return format!("[{}] {}", container.runtime, container.label());
+    }
+    if key.is_empty() {
+        "(no name)".to_owned()
+    } else {
+        key.to_owned()
+    }
+}
 
 const RANGES: [(u64, &str); 4] = [
     (1, "1 hour"),
@@ -55,10 +73,7 @@ fn name(dimension: v1::Dimension) -> &'static str {
 fn next(dimension: v1::Dimension) -> v1::Dimension {
     match dimension {
         v1::Dimension::Program => v1::Dimension::Host,
-        v1::Dimension::Host => v1::Dimension::Program,
-        v1::Dimension::Port | v1::Dimension::User | v1::Dimension::Unspecified => {
-            v1::Dimension::Program
-        }
+        _ => v1::Dimension::Program,
     }
 }
 
@@ -193,15 +208,8 @@ impl Explorer {
                     })),
             )
             .when_some(self.filter.clone(), |row, (dimension, value)| {
-                row.child("›").child(format!(
-                    "{}: {}",
-                    name(dimension),
-                    if value.is_empty() {
-                        "(no name)"
-                    } else {
-                        &value
-                    }
-                ))
+                row.child("›")
+                    .child(format!("{}: {}", name(dimension), shown(dimension, &value)))
             })
             .into_any_element()
     }
@@ -264,11 +272,7 @@ impl Render for Explorer {
                             .flex_none()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(if row.key.is_empty() {
-                                "(no name)".to_owned()
-                            } else {
-                                row.key.clone()
-                            }),
+                            .child(shown(group, &row.key)),
                     )
                     .child(
                         h_flex()

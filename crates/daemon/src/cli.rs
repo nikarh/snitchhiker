@@ -101,6 +101,9 @@ Commands:
                                   Connections of the last n hours (default 24), allowed and blocked, and their bytes,
                                   grouped by program (default), host, port or user, busiest first; --where narrows
                                   them to one program, host, port or user
+  contexts [<name>] [--hours <n>] The containers, VMs and named network namespaces connections came from in the last n
+                                  hours (default 24), with what they did; with a name (a container's, a Compose
+                                  service, a VM's, a namespace's), its programs and the hosts they reached
   connections                     The live TCP connections and connected UDP sockets, with their programs
   kill <tcp|udp> <local address:port> <remote address:port>
                                   Close a live connection, as a reject does
@@ -211,6 +214,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("alerts") => alerts(args, version),
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
+        Some("contexts") => contexts(args, version),
         Some("history") => history(args, version),
         Some("connections") => connections(args, version),
         Some("kill") => kill_connection(args, version),
@@ -786,8 +790,9 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         "host" => Ok(v1::Dimension::Host),
         "port" => Ok(v1::Dimension::Port),
         "user" => Ok(v1::Dimension::User),
+        "container" => Ok(v1::Dimension::Container),
         other => Err(Error::Usage(format!(
-            "unknown dimension `{other}` (program, host, port, user)"
+            "unknown dimension `{other}` (program, host, port, user, container)"
         ))),
     };
     let filter = match filter {
@@ -837,6 +842,93 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         _ => Err(unexpected()),
     }
+}
+
+/// `contexts`.
+fn contexts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let hours: u64 = args.opt_value_from_str("--hours")?.unwrap_or(24);
+    let name: Option<String> = args.opt_free_from_str()?;
+    reject_rest(args)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
+    let mut client = connect(version)?;
+    let mut explore =
+        |group: v1::Dimension, filter: Option<String>| -> Result<Vec<v1::ExploreRow>, Error> {
+            match client.call(Method::Explore(v1::Explore {
+                from_ms: now.saturating_sub(hours * 3_600_000),
+                to_ms: now,
+                group_by: group.into(),
+                filter: filter.map(|value| v1::ExploreFilter {
+                    dimension: v1::Dimension::Container.into(),
+                    value,
+                }),
+                limit: 200,
+            }))? {
+                v1::response::Result::Explored(page) => Ok(page.rows),
+                _ => Err(unexpected()),
+            }
+        };
+    let contexts = explore(v1::Dimension::Container, None)?;
+    let shown = |key: &str| {
+        let c = snitchhiker_core::context::Container::from_key(key);
+        format!("[{}] {}", c.runtime, c.label())
+    };
+    let Some(name) = name else {
+        let mut text = format!(
+            "{:>9} {:>9} {:>11} {:>11}  context\n",
+            "allowed", "blocked", "sent", "received"
+        );
+        for row in contexts.iter().filter(|r| !r.key.is_empty()) {
+            let _ = writeln!(
+                text,
+                "{:>9} {:>9} {:>11} {:>11}  {}",
+                row.allowed,
+                row.blocked,
+                row.bytes_out,
+                row.bytes_in,
+                shown(&row.key)
+            );
+        }
+        return out(&text);
+    };
+    let key = contexts
+        .iter()
+        .map(|r| &r.key)
+        .find(|key| {
+            let c = snitchhiker_core::context::Container::from_key(key);
+            c.name == name
+                || c.compose.as_deref() == Some(name.as_str())
+                || c.id.starts_with(name.as_str())
+        })
+        .cloned()
+        .ok_or_else(|| {
+            Error::Usage(format!(
+                "no container, VM or namespace `{name}` in the last {hours} hours"
+            ))
+        })?;
+    let mut text = format!("{}\n", shown(&key));
+    for (group, title) in [
+        (v1::Dimension::Program, "programs"),
+        (v1::Dimension::Host, "hosts"),
+    ] {
+        let _ = writeln!(text, "\n{title}:");
+        for row in explore(group, Some(key.clone()))? {
+            let _ = writeln!(
+                text,
+                "{:>9} allowed {:>9} blocked  {}",
+                row.allowed,
+                row.blocked,
+                if row.key.is_empty() {
+                    "(no name)"
+                } else {
+                    &row.key
+                }
+            );
+        }
+    }
+    out(&text)
 }
 
 /// `history`.

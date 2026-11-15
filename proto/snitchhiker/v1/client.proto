@@ -711,11 +711,13 @@ enum Dimension {
   DIMENSION_HOST = 2;
   DIMENSION_PORT = 3;
   DIMENSION_USER = 4;
+  // The container (or VM, or named namespace) connections came from; the key is its identity's history key.
+  DIMENSION_CONTAINER = 5;
 }
 
 message ExploreFilter {
   Dimension dimension = 1;
-  // A program's path, a host name (empty: connections without one), a port or a user id.
+  // A program's path, a host name (empty: connections without one), a port, a user id, or a container's key.
   string value = 2;
 }
 
@@ -731,7 +733,8 @@ message Explore {
 }
 
 message ExploreRow {
-  // The group: a program's path, a host name (empty: no name), a port or a user id.
+  // The group: a program's path, a host name (empty: no name), a port, a user id, or a container's key (empty: none;
+  // tab-separated runtime, id, name, image, Compose service, owner).
   string key = 1;
   uint64 allowed = 2;
   // Denied or rejected.

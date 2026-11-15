@@ -64,6 +64,9 @@ Commands:
                                   Connections of the last n hours (default 24), allowed and blocked, and their bytes,
                                   grouped by program (default), host, port or user, busiest first; --where narrows
                                   them to one program, host, port or user
+  contexts [<name>] [--hours <n>] The containers, VMs and named network namespaces connections came from in the last n
+                                  hours (default 24), with what they did; with a name (a container's, a Compose
+                                  service, a VM's, a namespace's), its programs and the hosts they reached
   connections                     The live TCP connections and connected UDP sockets, with their programs
   kill <tcp|udp> <local address:port> <remote address:port>
                                   Close a live connection, as a reject does

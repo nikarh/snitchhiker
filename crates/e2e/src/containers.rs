@@ -231,6 +231,14 @@ pub fn a_containers_prompt_names_it_and_its_answer_holds_for_its_service() -> Re
     thread::sleep(Duration::from_millis(500));
     let decided = decisions(&daemon, "203.0.113.80:8090")?;
     let rules = daemon.cli(&["rules"])?;
+    let contexts = daemon.cli(&["contexts"])?;
+    let service = daemon.cli(&["contexts", "shop/api"])?;
+    check(
+        contexts.contains("[docker] shop/api (snitchhiker-e2e/busybox)")
+            && service.contains("/bin/busybox"),
+        "`snitchhiker contexts` doesn't list the service, or its program",
+        &format!("{contexts}\n{service}"),
+    )?;
     let found = format!("{prompt:#?}\n{}\n{rules}", decided.join("\n"));
     let container = prompt.container.as_deref();
     check(
@@ -549,7 +557,16 @@ pub fn a_vm_on_a_bridge_is_decided_by_its_name() -> Result<(), String> {
     let daemon = Running::start("vm", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
     let _ = run("ip", &["link", "del", "virbr-e2e"]);
     for args in [
-        &["link", "add", "virbr-e2e", "type", "bridge"][..],
+        // Its address fixed: a bridge otherwise takes its ports' lowest, which may change when the tap joins.
+        &[
+            "link",
+            "add",
+            "virbr-e2e",
+            "address",
+            "02:00:00:00:00:01",
+            "type",
+            "bridge",
+        ][..],
         &["addr", "add", "192.168.199.1/24", "dev", "virbr-e2e"],
         &["link", "set", "virbr-e2e", "up"],
     ] {
@@ -592,7 +609,16 @@ pub fn a_vm_on_a_bridge_is_decided_by_its_name() -> Result<(), String> {
             "ip",
             &["link", "set", "tap-e2e", "master", "virbr-e2e", "up"],
         )?;
-        thread::sleep(Duration::from_millis(300));
+        // Until the port forwards and the bridge has carrier: frames sent before are lost.
+        for _ in 0..50 {
+            let port = run("bridge", &["link", "show", "dev", "tap-e2e"]).unwrap_or_default();
+            let bridge =
+                std::fs::read_to_string("/sys/class/net/virbr-e2e/carrier").unwrap_or_default();
+            if port.contains("state forwarding") && bridge.trim() == "1" {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
         vm.stdin
             .take()
             .ok_or("no stdin")?

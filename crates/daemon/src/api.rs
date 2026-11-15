@@ -1811,6 +1811,7 @@ fn dimension(dimension: v1::Dimension) -> Option<Dimension> {
         v1::Dimension::Host => Some(Dimension::Host),
         v1::Dimension::Port => Some(Dimension::Port),
         v1::Dimension::User => Some(Dimension::Uid),
+        v1::Dimension::Container => Some(Dimension::Container),
         v1::Dimension::Unspecified => None,
     }
 }
@@ -1829,7 +1830,8 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
                 return error(v1::ErrorCode::Invalid, "no dimension to filter by");
             };
             let value = match by {
-                Dimension::Host if filter.value.is_empty() => Ok(Some(0)),
+                Dimension::Host | Dimension::Container if filter.value.is_empty() => Ok(Some(0)),
+                Dimension::Container => store.string_id(StringKind::Container, &filter.value),
                 Dimension::Exe => store.string_id(StringKind::Exe, &filter.value),
                 Dimension::Host => store.string_id(StringKind::Host, &filter.value),
                 Dimension::Port | Dimension::Uid => match filter.value.parse() {
@@ -1856,7 +1858,10 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
         Err(e) => return internal(e),
     };
     // Programs and hosts by name.
-    let names = if matches!(group, Dimension::Exe | Dimension::Host) {
+    let names = if matches!(
+        group,
+        Dimension::Exe | Dimension::Host | Dimension::Container
+    ) {
         match store.strings_of(rows.iter().filter_map(|r| u32::try_from(r.key).ok())) {
             Ok(names) => names,
             Err(e) => return internal(e),
@@ -1869,10 +1874,12 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
             .iter()
             .map(|row| v1::ExploreRow {
                 key: match group {
-                    Dimension::Exe | Dimension::Host => u32::try_from(row.key)
-                        .ok()
-                        .and_then(|id| names.iter().find(|(i, _)| *i == id))
-                        .map_or_else(String::new, |(_, name)| name.to_string()),
+                    Dimension::Exe | Dimension::Host | Dimension::Container => {
+                        u32::try_from(row.key)
+                            .ok()
+                            .and_then(|id| names.iter().find(|(i, _)| *i == id))
+                            .map_or_else(String::new, |(_, name)| name.to_string())
+                    }
                     Dimension::Port | Dimension::Uid => row.key.to_string(),
                 },
                 allowed: row.allowed,

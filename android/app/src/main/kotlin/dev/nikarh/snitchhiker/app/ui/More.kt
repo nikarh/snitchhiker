@@ -302,6 +302,7 @@ private fun ExplorerPage(
                     Dimension.DIMENSION_HOST to "Hosts",
                     Dimension.DIMENSION_PORT to "Ports",
                     Dimension.DIMENSION_USER to "Users",
+                    Dimension.DIMENSION_CONTAINER to "Containers",
                 )) {
                     FilterChip(selected = by == dimension, onClick = { by = dimension }, label = { Text(label) })
                 }
@@ -317,7 +318,7 @@ private fun ExplorerPage(
         filter?.let { current ->
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Muted("Within ${current.value_.ifEmpty { "(none)" }}")
+                    Muted("Within ${shownKey(current.dimension, current.value_)}")
                     TextButton(onClick = { filter = null }) { Text("Back") }
                 }
             }
@@ -342,7 +343,7 @@ private fun ExplorerPage(
                     by = if (by == Dimension.DIMENSION_PROGRAM) Dimension.DIMENSION_HOST else Dimension.DIMENSION_PROGRAM
                 },
             ) {
-                Text(row.key, style = MaterialTheme.typography.titleSmall)
+                Text(shownKey(by, row.key), style = MaterialTheme.typography.titleSmall)
                 Muted("${row.allowed} allowed · ${row.blocked} blocked · ${row.bytes_out} B out · ${row.bytes_in} B in")
             }
         }
@@ -600,4 +601,21 @@ private fun PairDeviceDialog(
         },
         dismissButton = { if (pairing == null) TextButton(onClick = done) { Text("Cancel") } },
     )
+}
+
+/**
+ * A group's key as shown: a container's identity (tab-separated runtime, id, name, image, Compose service) as people know
+ * it, the host's connections for none; other keys as they are.
+ */
+fun shownKey(
+    dimension: Dimension,
+    key: String,
+): String {
+    if (dimension != Dimension.DIMENSION_CONTAINER) return key.ifEmpty { "(no name)" }
+    if (key.isEmpty()) return "(the host)"
+    val parts = key.split('\t')
+    val runtime = parts.getOrElse(0) { "" }
+    val name = parts.getOrElse(4) { "" }.ifEmpty { parts.getOrElse(2) { "" } }
+    val image = parts.getOrElse(3) { "" }
+    return "[$runtime] $name" + if (image.isEmpty()) "" else " ($image)"
 }
