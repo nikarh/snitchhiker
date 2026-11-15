@@ -24,6 +24,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers.
+      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       # The toolchain (with clippy and rustfmt) comes from rust-toolchain.toml.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -65,6 +67,8 @@ jobs:
           key: snitchhiker-e2e-arch-${{ hashFiles('e2e/vm.sh') }}
       # The VM boots while the toolchain is set up and the binaries build (e2e/run.sh then waits until it is ready).
       - run: e2e/vm.sh node start
+      # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers.
+      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:

@@ -54,6 +54,8 @@ jobs:
       - name: Check the tag matches the version
         if: startsWith(env.TAG, 'v')
         run: test "$TAG" = "v$(sed -n '/^\[workspace.package\]/,/^\[/s/^version *= *"\(.*\)"/\1/p' Cargo.toml)"
+      # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers.
+      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
