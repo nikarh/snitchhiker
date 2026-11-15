@@ -46,7 +46,19 @@ jobs:
           set -euo pipefail
 
           prs=$(gh pr list --state open --base main \
-            --json number,headRefOid,isDraft,mergeable,mergeStateStatus,author)
+            --json number,headRefOid,isDraft,mergeable,mergeStateStatus,author,labels)
+
+          # A release in flight is tagged by the release bot, which may not tag a commit whose workflows differ from
+          # main's: nothing is merged while a release PR is open, or in the hour after one was merged.
+          if jq -e 'any(.[]; any(.labels[]; .name == "release"))' <<<"$prs" >/dev/null; then
+            echo "A release PR is open; merging nothing until it is released."
+            exit 0
+          fi
+          released=$(gh pr list --state merged --base main --label release --limit 1 --json mergedAt --jq '.[0].mergedAt // empty')
+          if [[ -n "$released" ]] && (( $(date +%s) - $(date -d "$released" +%s) < 3600 )); then
+            echo "A release PR was merged less than an hour ago; merging nothing yet."
+            exit 0
+          fi
 
           jq -c '.[] | select(.isDraft | not) | select(.author.login == "app/dependabot")' <<<"$prs" | while IFS= read -r pr; do
             number=$(jq -r .number <<<"$pr")
