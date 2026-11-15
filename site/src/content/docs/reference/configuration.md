@@ -82,7 +82,9 @@ The group the client binaries are setgid to, and that the client socket belongs 
 
 ### `trusted_clients`
 
-The client binaries allowed on the client socket, by path. Default `["/usr/bin/snitchhiker-ui"]`. Each must be owned by root, setgid to `client_group`, and in directories only root can write to; see [Security](/internals/security/#clients).
+Client binaries allowed on the client socket by path alone. Default none. Each must be owned by root, setgid to `client_group`, and in directories only root can write to; see [Security](/internals/security/#clients).
+
+Clients are better registered with [`snitchhikerd trust-client`](/reference/cli/#trusted-clients), which also pins each to its SHA-256: packages register their client that way. The registry is `trusted-clients.toml` in the database's directory.
 
 ## Queues and storage
 

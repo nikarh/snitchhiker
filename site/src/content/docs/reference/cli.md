@@ -79,6 +79,15 @@ Prints the version.
 
 ```text
 snitchhikerd [--config <path>]
+snitchhikerd [--config <path>] trust-client <path>
+snitchhikerd [--config <path>] untrust-client <path>
+snitchhikerd [--config <path>] trusted-clients
 ```
 
 The daemon, started by its systemd unit. `--config` reads another [configuration](/reference/configuration/) file than `/etc/snitchhiker/daemon.toml`. `SIGHUP` (`systemctl reload snitchhikerd`) reads the rules again; `SIGTERM` and `SIGINT` stop it. Logs go to the journal; `RUST_LOG` sets their level (`info` by default).
+
+### Trusted clients
+
+`trust-client` registers a client binary for the client socket, pinned to its SHA-256; run it again after the binary is upgraded (packages do it from their install hook). The binary must be owned by root, in directories only root can write to, and setgid to `client_group`. `untrust-client` removes it, and `trusted-clients` lists the registered binaries and those in [`trusted_clients`](/reference/configuration/#trusted_clients).
+
+The registry is a file next to the database, read whenever a client connects: changes apply to the next connection, and the daemon needn't be running. See [Security](/internals/security/#clients).

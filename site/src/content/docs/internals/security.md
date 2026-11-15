@@ -36,10 +36,11 @@ The client binaries (the desktop app, later the MCP server) are installed root-o
 When a process connects to `client.sock`, the daemon takes a pidfd for it from the kernel (`SO_PEERPIDFD`, Linux 6.5) and checks, in this order:
 
 1. its effective or supplementary groups include `snitchhiker-ui`;
-2. the executable it runs is one of `trusted_clients`, compared by device and inode, so a different file at the same path doesn't pass;
+2. the executable it runs is a trusted client, compared by device and inode, so a different file at the same path doesn't pass;
 3. that file and every directory above it are owned by root and writable by nobody else;
-4. nothing is tracing it;
-5. it isn't dumpable.
+4. for a client registered with `snitchhikerd trust-client`, the file still has the SHA-256 it was registered with (read once per version of the file, by its inode and change time);
+5. nothing is tracing it;
+6. it isn't dumpable.
 
 Then it checks the pidfd still refers to a live process, so the process can't have exited and its pid been reused while it was being checked. A process that fails any check gets a refusal and the connection closes.
 
@@ -74,6 +75,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `local-auth/unregistered-setgid-binary-refused` | a setgid binary of the right group that root didn't register |
 | `local-auth/traced-client-refused` | a client started under a tracer |
 | `local-auth/same-user-cannot-attach-or-read-memory` | attaching to a client, or reading its memory |
+| `local-auth/registered-clients-are-pinned` | a registered client binary changed in place, and registering a binary that isn't a setgid client |
 | `local-auth/client-refuses-a-fake-node` | posing as the daemon to a client, with a socket of one's own |
 
 ## The daemon itself

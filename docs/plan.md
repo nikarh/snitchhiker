@@ -2013,7 +2013,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
         For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
         executable isn't checked, since only root runs as uid 0 and root is out of scope.
-  - [ ] Trusted-client registry and the `trust-client` command.
+  - [x] Trusted-client registry and the `trust-client` command.
   - [ ] Session lifecycle bound to the pidfd and logind session.
 - [ ] **Step-up**
   - [ ] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions.
