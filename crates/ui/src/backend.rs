@@ -35,6 +35,11 @@ pub enum Request {
         id: u64,
     },
     AddRule(v1::Rule),
+    /// A rule file (TOML), into a folder of that name.
+    ImportRules {
+        toml: String,
+        folder: String,
+    },
     UpdateRule(v1::Rule),
     /// The newest changes to rules and folders.
     Changes,
@@ -240,6 +245,10 @@ fn method(request: &Request) -> v1::request::Method {
             enabled: *enabled,
         }),
         Request::DeleteRule { id } => Method::DeleteRule(v1::DeleteRule { id: *id }),
+        Request::ImportRules { toml, folder } => Method::ImportRules(v1::ImportRules {
+            toml: toml.clone(),
+            folder: folder.clone(),
+        }),
         Request::AddRule(rule) => Method::AddRule(v1::AddRule {
             rule: Some(rule.clone()),
         }),

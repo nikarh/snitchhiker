@@ -26,4 +26,5 @@ nix = { version = "0.32.0", default-features = false, features = ["fs", "socket"
 snitchhiker-client = { version = "0.1.0", path = "../client" }
 snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
+toml = "1.2.1"
 zbus = "6.3.0"

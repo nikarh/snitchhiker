@@ -145,10 +145,34 @@ impl Explorer {
                 cx,
             ));
         }
+        let model = self.model.clone();
+        let group = name(self.group);
         h_flex()
             .gap_4()
             .child(dimensions)
             .child(ranges)
+            .child(div().flex_1())
+            .child(
+                Button::new("explorer-csv")
+                    .small()
+                    .label("Copy CSV")
+                    .on_click(move |_, _, cx| {
+                        let rows = model.read(cx).explored.iter().map(|row| {
+                            vec![
+                                row.key.clone(),
+                                row.allowed.to_string(),
+                                row.blocked.to_string(),
+                                row.bytes_out.to_string(),
+                                row.bytes_in.to_string(),
+                            ]
+                        });
+                        let csv = crate::csv::table(
+                            &[group, "allowed", "blocked", "sent", "received"],
+                            rows,
+                        );
+                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(csv));
+                    }),
+            )
             .into_any_element()
     }
 

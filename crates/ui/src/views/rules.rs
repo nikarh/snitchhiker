@@ -782,6 +782,29 @@ fn expires_menu(send: Send) -> impl IntoElement {
         })
 }
 
+/// The rules, as CSV.
+fn rules_csv(list: &v1::RuleList) -> String {
+    let rows = list.rules.iter().map(|rule| {
+        vec![
+            folder_path(list, rule.folder)
+                .trim_end_matches('/')
+                .to_owned(),
+            rule.name.clone(),
+            if rule.enabled { "on" } else { "off" }.to_owned(),
+            v1::Action::try_from(rule.action).map_or_else(
+                |_| String::new(),
+                |a| a.as_str_name().trim_start_matches("ACTION_").to_lowercase(),
+            ),
+            tier_name(rule.tier()).to_owned(),
+            conditions(rule.conditions.as_ref()),
+        ]
+    });
+    crate::csv::table(
+        &["folder", "name", "enabled", "action", "tier", "conditions"],
+        rows,
+    )
+}
+
 /// The folders depth first, by name, with their depth.
 fn ordered(list: &v1::RuleList) -> Vec<(v1::Folder, usize)> {
     fn walk(
@@ -881,6 +904,27 @@ impl Render for RulesPage {
                                     }),
                             )
                             .child(div().flex_1().child(Input::new(&self.search).cleanable(true)))
+                            .child({
+                                let requests = self.requests.clone();
+                                Button::new("import")
+                                    .small()
+                                    .label("Import…")
+                                    .tooltip("OpenSnitch's rules and system firewall, with a preview")
+                                    .on_click(move |_, window, cx| {
+                                        crate::views::import::open(requests.clone(), window, cx);
+                                    })
+                            })
+                            .child({
+                                let model = self.model.clone();
+                                Button::new("rules-csv")
+                                    .small()
+                                    .ghost()
+                                    .label("Copy CSV")
+                                    .on_click(move |_, _, cx| {
+                                        let csv = rules_csv(&model.read(cx).rules);
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(csv));
+                                    })
+                            })
                             .child(
                                 Button::new("lint")
                                     .small()

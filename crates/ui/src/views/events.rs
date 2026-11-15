@@ -137,6 +137,41 @@ impl EventsPage {
     }
 }
 
+/// The events loaded, as CSV.
+fn events_csv(model: &Model) -> String {
+    let rows = (0..model.events.len())
+        .filter_map(|i| model.events.get(i))
+        .map(|row| {
+            let action = v1::Action::try_from(i32::from(row.action)).map_or_else(
+                |_| String::new(),
+                |a| a.as_str_name().trim_start_matches("ACTION_").to_lowercase(),
+            );
+            vec![
+                time(row.time_ms),
+                action,
+                model.events.string(row.exe).unwrap_or("").to_owned(),
+                if row.host == 0 {
+                    String::new()
+                } else {
+                    model.events.string(row.host).unwrap_or("").to_owned()
+                },
+                address(row).to_string(),
+                row.port.to_string(),
+                protocol(row.protocol).to_string(),
+                row.uid.to_string(),
+                row.bytes_out.to_string(),
+                row.bytes_in.to_string(),
+            ]
+        });
+    crate::csv::table(
+        &[
+            "time", "action", "program", "host", "address", "port", "protocol", "uid", "sent",
+            "received",
+        ],
+        rows,
+    )
+}
+
 impl Render for EventsPage {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
@@ -145,7 +180,26 @@ impl Render for EventsPage {
                 v_flex()
                     .p_2()
                     .gap_1()
-                    .child(Input::new(&self.input).cleanable(true))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .child(Input::new(&self.input).cleanable(true)),
+                            )
+                            .child({
+                                let model = self.model.clone();
+                                Button::new("events-csv")
+                                    .small()
+                                    .label("Copy CSV")
+                                    .tooltip("The events loaded, as CSV")
+                                    .on_click(move |_, _, cx| {
+                                        let csv = events_csv(model.read(cx));
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(csv));
+                                    })
+                            }),
+                    )
                     .children(
                         self.error.clone().map(|error| {
                             div().text_sm().text_color(cx.theme().danger).child(error)

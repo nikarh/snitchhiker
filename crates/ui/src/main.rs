@@ -3,6 +3,7 @@
 
 mod app;
 mod backend;
+mod csv;
 mod env;
 mod model;
 mod notify;

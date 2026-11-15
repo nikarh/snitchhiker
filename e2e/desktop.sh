@@ -99,6 +99,7 @@ fi
 # 5. The session check: under the compositor no warning, through a proxy of its socket a warning.
 scripts/ui-vm.sh "${shots}/session" '
 runtime=/run/user/$uid
+rm -f $runtime/wayland-proxy
 runuser -u mallory -- socat UNIX-LISTEN:$runtime/wayland-proxy,fork UNIX-CONNECT:$runtime/wayland-1 </dev/null >/dev/null 2>&1 &
 sleep 1
 direct=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime WAYLAND_DISPLAY=wayland-1 /usr/bin/snitchhiker-ui --session-warnings)
@@ -112,6 +113,28 @@ if grep -q 'direct\[\]' <<<"${out}" && grep -q 'proxied\[The display server isn.
   pass session-weaknesses-are-warned-about
 else
   fail session-weaknesses-are-warned-about "the session check didn't tell the compositor from a proxy, or X11" "${out}"
+fi
+
+# 6. OpenSnitch imported in the app: the preview's Import adds the rules that convert; the system firewall stays.
+scripts/ui-vm.sh "${shots}/import" '
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
+mkdir -p /etc/opensnitchd/rules && rm -f /etc/opensnitchd/rules/*.json
+printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"allow\", \"duration\": \"always\", \"operator\": {\"type\": \"simple\", \"operand\": \"process.path\", \"data\": \"/usr/bin/curl\"}}" > /etc/opensnitchd/rules/000-allow-curl.json
+printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
+click 66 319
+sleep 1
+click 941 48
+sleep 2
+shot preview
+click 969 623
+sleep 2
+{ snitchhiker rules; snitchhiker system; } > /tmp/desktop-result.txt' >/dev/null 2>&1
+out=$(result)
+if grep -q "OpenSnitch/000-allow-curl" <<<"${out}" && ! grep -q "002-lists" <<<"${out}" && grep -q "system firewall off" <<<"${out}"; then
+  pass opensnitch-imported-in-the-app
+else
+  fail opensnitch-imported-in-the-app "the preview's Import didn't add just the rules that convert" "${out}"
 fi
 
 echo "screenshots in ${shots}"

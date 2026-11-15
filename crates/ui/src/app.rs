@@ -278,14 +278,29 @@ impl App {
                 v_flex()
                     .size_full()
                     .child(
-                        h_flex().p_2().child(
-                            Button::new("refresh-connections")
-                                .small()
-                                .label("Refresh")
-                                .on_click(move |_, _, _| {
-                                    let _ = requests.send(Request::Connections);
-                                }),
-                        ),
+                        h_flex()
+                            .p_2()
+                            .gap_2()
+                            .child(
+                                Button::new("refresh-connections")
+                                    .small()
+                                    .label("Refresh")
+                                    .on_click(move |_, _, _| {
+                                        let _ = requests.send(Request::Connections);
+                                    }),
+                            )
+                            .child({
+                                let model = self.model.clone();
+                                Button::new("connections-csv")
+                                    .small()
+                                    .label("Copy CSV")
+                                    .on_click(move |_, _, cx| {
+                                        let csv = crate::views::connections::csv(
+                                            &model.read(cx).connections,
+                                        );
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(csv));
+                                    })
+                            }),
                     )
                     .child(DataTable::new(&self.connections))
                     .into_any_element()

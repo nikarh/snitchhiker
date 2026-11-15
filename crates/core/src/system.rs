@@ -55,6 +55,23 @@ pub enum CtState {
 }
 
 impl CtState {
+    pub const ALL: [Self; 4] = [Self::New, Self::Established, Self::Related, Self::Invalid];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Established => "established",
+            Self::Related => "related",
+            Self::Invalid => "invalid",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name.trim())
+    }
+
     /// The kernel's bit for the state.
     #[must_use]
     pub const fn bit(self) -> u32 {
@@ -78,6 +95,28 @@ pub enum IcmpType {
 }
 
 impl IcmpType {
+    pub const ALL: [Self; 4] = [
+        Self::EchoRequest,
+        Self::EchoReply,
+        Self::DestinationUnreachable,
+        Self::TimeExceeded,
+    ];
+
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::EchoRequest => "echo-request",
+            Self::EchoReply => "echo-reply",
+            Self::DestinationUnreachable => "destination-unreachable",
+            Self::TimeExceeded => "time-exceeded",
+        }
+    }
+
+    #[must_use]
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.name() == name.trim())
+    }
+
     #[must_use]
     pub const fn number(self, v6: bool) -> u8 {
         match (self, v6) {
@@ -316,6 +355,341 @@ pub fn implied(firewall: &Firewall) -> Vec<Rule> {
     rules
 }
 
+/// OpenSnitch's `system-fw.json`, converted: the firewall, the rules that couldn't be expressed exactly (description,
+/// reason), and notes on what converted but behaves differently here.
+#[derive(Debug, Default)]
+pub struct Imported {
+    pub firewall: Option<Firewall>,
+    pub skipped: Vec<(String, String)>,
+    pub notes: Vec<String>,
+}
+
+mod opensnitch {
+    use serde::Deserialize;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Config {
+        #[serde(default)]
+        pub enabled: bool,
+        #[serde(default)]
+        pub system_rules: Vec<Entry>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Entry {
+        #[serde(default)]
+        pub rule: Option<Rule>,
+        #[serde(default)]
+        pub chains: Vec<Chain>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Chain {
+        #[serde(default)]
+        pub name: String,
+        #[serde(default)]
+        pub family: String,
+        #[serde(default, rename = "Type")]
+        pub kind: String,
+        #[serde(default)]
+        pub hook: String,
+        #[serde(default)]
+        pub policy: String,
+        #[serde(default)]
+        pub rules: Vec<Rule>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Rule {
+        #[serde(default)]
+        pub enabled: bool,
+        #[serde(default)]
+        pub description: String,
+        #[serde(default)]
+        pub parameters: String,
+        #[serde(default)]
+        pub expressions: Option<Vec<Expression>>,
+        #[serde(default)]
+        pub target: String,
+        #[serde(default)]
+        pub target_parameters: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Expression {
+        pub statement: Option<Statement>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Statement {
+        #[serde(default)]
+        pub op: String,
+        #[serde(default)]
+        pub name: String,
+        #[serde(default)]
+        pub values: Option<Vec<Value>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "PascalCase")]
+    pub struct Value {
+        #[serde(default)]
+        pub key: String,
+        #[serde(default)]
+        pub value: String,
+    }
+}
+
+/// Converts OpenSnitch's `system-fw.json`. What it holds beyond this model's statements is listed, never guessed at.
+#[must_use]
+pub fn import_opensnitch(json: &str) -> Imported {
+    let mut imported = Imported::default();
+    let config: opensnitch::Config = match serde_json::from_str(json) {
+        Ok(config) => config,
+        Err(e) => {
+            imported.skipped.push((
+                "system-fw.json".to_owned(),
+                format!("not OpenSnitch's format: {e}"),
+            ));
+            return imported;
+        }
+    };
+    let mut firewall = Firewall {
+        enabled: config.enabled,
+        input: ChainPolicy::Accept,
+        forward: ChainPolicy::Accept,
+        rules: Vec::new(),
+    };
+    for entry in &config.system_rules {
+        if let Some(rule) = &entry.rule
+            && (!rule.parameters.is_empty() || !rule.target.is_empty())
+        {
+            imported.skipped.push((
+                label(rule),
+                "an iptables rule (OpenSnitch's legacy format)".to_owned(),
+            ));
+        }
+        for chain in &entry.chains {
+            let ours = match (chain.hook.as_str(), chain.kind.as_str()) {
+                ("input", "filter" | "mangle") => Chain::Input,
+                ("forward", "filter" | "mangle") => Chain::Forward,
+                ("output", "filter" | "mangle") => Chain::Output,
+                _ => {
+                    for rule in &chain.rules {
+                        imported.skipped.push((
+                            label(rule),
+                            format!(
+                                "in {} ({} {}): only input, forward and output filtering are kept",
+                                chain.name, chain.kind, chain.hook
+                            ),
+                        ));
+                    }
+                    continue;
+                }
+            };
+            if chain.family != "inet" && !chain.family.is_empty() {
+                for rule in &chain.rules {
+                    imported.skipped.push((
+                        label(rule),
+                        format!("family {}: only inet is kept", chain.family),
+                    ));
+                }
+                continue;
+            }
+            if chain.policy.eq_ignore_ascii_case("drop") {
+                match ours {
+                    Chain::Input => firewall.input = ChainPolicy::Drop,
+                    Chain::Forward => firewall.forward = ChainPolicy::Drop,
+                    Chain::Output => imported.skipped.push((
+                        chain.name.clone(),
+                        "a drop policy for output: application rules decide what goes out"
+                            .to_owned(),
+                    )),
+                }
+            }
+            for rule in &chain.rules {
+                match convert(rule, ours) {
+                    Ok(converted) => {
+                        if ours == Chain::Output
+                            && converted.target == Target::Accept
+                            && chain.kind == "mangle"
+                        {
+                            imported.notes.push(format!(
+                                "{}: in OpenSnitch, accepting in mangle output also kept these connections from \
+                                 being asked about; here application rules decide those",
+                                label(rule)
+                            ));
+                        }
+                        firewall.rules.push(converted);
+                    }
+                    Err(reason) => imported.skipped.push((label(rule), reason)),
+                }
+            }
+        }
+    }
+    if let Err(e) = firewall.validate() {
+        imported
+            .skipped
+            .push(("system-fw.json".to_owned(), e.to_string()));
+        return imported;
+    }
+    imported.firewall = Some(firewall);
+    imported
+}
+
+fn label(rule: &opensnitch::Rule) -> String {
+    if rule.description.is_empty() {
+        "(no description)".to_owned()
+    } else {
+        rule.description.clone()
+    }
+}
+
+fn convert(rule: &opensnitch::Rule, chain: Chain) -> Result<Rule, String> {
+    let mut ours = Rule {
+        enabled: rule.enabled,
+        description: rule.description.clone(),
+        chain,
+        target: match rule.target.to_ascii_lowercase().as_str() {
+            "accept" => Target::Accept,
+            "drop" => Target::Drop,
+            "reject" => Target::Reject,
+            "log" => Target::Log,
+            "queue" if chain == Chain::Forward => Target::Queue,
+            other => {
+                return Err(format!("target `{other}` {}", rule.target_parameters)
+                    .trim()
+                    .to_owned());
+            }
+        },
+        ..Rule::default()
+    };
+    for expression in rule.expressions.iter().flatten() {
+        let Some(statement) = &expression.statement else {
+            continue;
+        };
+        if !matches!(statement.op.as_str(), "" | "==") {
+            return Err(format!("`{}` comparisons aren't kept", statement.op));
+        }
+        for value in statement.values.iter().flatten() {
+            apply(&mut ours, &statement.name, &value.key, value.value.trim())?;
+        }
+    }
+    Ok(ours)
+}
+
+fn apply(rule: &mut Rule, name: &str, key: &str, value: &str) -> Result<(), String> {
+    let set_protocol = |rule: &mut Rule, protocol: u8| match rule.protocol {
+        Some(p) if p != protocol => Err("two protocols in one rule".to_owned()),
+        _ => {
+            rule.protocol = Some(protocol);
+            Ok(())
+        }
+    };
+    match (name, key) {
+        ("tcp" | "udp", "dport" | "sport") => {
+            set_protocol(rule, if name == "tcp" { TCP } else { UDP })?;
+            let range = ports(value)?;
+            if key == "dport" {
+                rule.destination_ports = Some(range);
+            } else {
+                rule.source_ports = Some(range);
+            }
+        }
+        ("icmp" | "icmpv6", "type") => {
+            set_protocol(rule, if name == "icmp" { ICMP } else { ICMPV6 })?;
+            for kind in value.split(',').map(str::trim) {
+                rule.icmp_types
+                    .push(IcmpType::parse(kind).ok_or_else(|| format!("ICMP type `{kind}`"))?);
+            }
+        }
+        ("ct", "state") => {
+            for state in value.split(',').map(str::trim) {
+                rule.ct_state.push(
+                    CtState::parse(state).ok_or_else(|| format!("connection state `{state}`"))?,
+                );
+            }
+        }
+        ("ip" | "ip6", "saddr" | "daddr") => {
+            let net = parse_network(value)?;
+            if key == "saddr" {
+                rule.source.push(net);
+            } else {
+                rule.destination.push(net);
+            }
+        }
+        ("meta", "l4proto") => {
+            set_protocol(
+                rule,
+                match value {
+                    "tcp" => TCP,
+                    "udp" => UDP,
+                    "icmp" => ICMP,
+                    "icmpv6" => ICMPV6,
+                    other => other.parse().map_err(|_| format!("protocol `{other}`"))?,
+                },
+            )?;
+        }
+        ("iifname" | "meta", "iifname" | "") if name == "iifname" || key == "iifname" => {
+            rule.in_interface = Some(value.to_owned());
+        }
+        ("oifname" | "meta", "oifname" | "") if name == "oifname" || key == "oifname" => {
+            rule.out_interface = Some(value.to_owned());
+        }
+        _ => return Err(format!("`{name} {key}` isn't kept")),
+    }
+    Ok(())
+}
+
+fn ports(value: &str) -> Result<(u16, u16), String> {
+    if value.contains(',') {
+        return Err(format!(
+            "port lists (`{value}`): one port or range per rule"
+        ));
+    }
+    let (low, high) = value.split_once('-').unwrap_or((value, value));
+    let parse = |p: &str| {
+        p.trim()
+            .parse::<u16>()
+            .map_err(|_| format!("port `{value}`"))
+    };
+    Ok((parse(low)?, parse(high)?))
+}
+
+/// An address, a network, or a range that is exactly one network (`127.0.0.0-127.255.255.255`).
+pub fn parse_network(value: &str) -> Result<IpNet, String> {
+    let value = value.trim();
+    if let Ok(net) = value.parse::<IpNet>() {
+        return Ok(net);
+    }
+    if let Ok(address) = value.parse::<std::net::IpAddr>() {
+        return Ok(IpNet::from(address));
+    }
+    let (first, last) = value
+        .split_once('-')
+        .ok_or_else(|| format!("address `{value}`"))?;
+    let (first, last): (std::net::IpAddr, std::net::IpAddr) = (
+        first
+            .trim()
+            .parse()
+            .map_err(|_| format!("address `{value}`"))?,
+        last.trim()
+            .parse()
+            .map_err(|_| format!("address `{value}`"))?,
+    );
+    let bits = if first.is_ipv4() { 32 } else { 128 };
+    (0..=bits)
+        .filter_map(|length| IpNet::new(first, length).ok())
+        .find(|net| net.network() == first && net.broadcast() == last)
+        .ok_or_else(|| format!("the range `{value}` isn't one network"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -370,6 +744,59 @@ mod tests {
             .validate(),
             Err(Invalid::Families(1))
         );
+    }
+
+    #[test]
+    fn opensnitchs_defaults_import() {
+        let json = r#"{"Enabled": true, "Version": 1, "SystemRules": [
+          {"Rule": {"Table": "mangle", "Chain": "OUTPUT", "Enabled": false, "Position": "0", "Description": "Allow icmp",
+                    "Parameters": "-p icmp", "Expressions": [], "Target": "ACCEPT", "TargetParameters": ""}, "Chains": []},
+          {"Chains": [
+            {"Name": "filter_input", "Table": "opensnitch", "Family": "inet", "Priority": "", "Type": "filter",
+             "Hook": "input", "Policy": "drop", "Rules": [
+               {"Enabled": false, "Position": "0", "Description": "SSH", "Parameters": "",
+                "Expressions": [{"Statement": {"Op": "", "Name": "tcp", "Values": [{"Key": "dport", "Value": "22"}]}}],
+                "Target": "accept", "TargetParameters": ""}]},
+            {"Name": "nat_output", "Table": "opensnitch", "Family": "inet", "Type": "natdest", "Hook": "output",
+             "Policy": "accept", "Rules": [{"Enabled": true, "Description": "redirect", "Target": "redirect"}]},
+            {"Name": "mangle_output", "Table": "opensnitch", "Family": "inet", "Priority": "", "Type": "mangle",
+             "Hook": "output", "Policy": "accept", "Rules": [
+               {"Enabled": false, "Position": "0", "Description": "localhost",
+                "Expressions": [{"Statement": {"Op": "==", "Name": "ip", "Values": [{"Key": "daddr", "Value": "127.0.0.0-127.255.255.255"}]}}],
+                "Target": "accept", "TargetParameters": ""},
+               {"Enabled": true, "Position": "0", "Description": "ICMP",
+                "Expressions": [{"Statement": {"Op": "", "Name": "icmp", "Values": [{"Key": "type", "Value": "echo-request,echo-reply"}]}}],
+                "Target": "accept", "TargetParameters": ""},
+               {"Enabled": true, "Description": "not https", "Expressions": [{"Statement": {"Op": "!=", "Name": "tcp",
+                "Values": [{"Key": "dport", "Value": "443"}]}}], "Target": "drop"}]},
+            {"Name": "mangle_forward", "Table": "opensnitch", "Family": "inet", "Type": "mangle", "Hook": "forward",
+             "Policy": "accept", "Rules": [{"Enabled": false, "Description": "forwarded",
+               "Expressions": [{"Statement": {"Op": "", "Name": "ct", "Values": [{"Key": "state", "Value": "new"}]}}],
+               "Target": "queue", "TargetParameters": "num 0"}]}
+          ]}]}"#;
+        let imported = import_opensnitch(json);
+        let firewall = imported.firewall.unwrap();
+        assert!(firewall.enabled);
+        assert_eq!(firewall.input, ChainPolicy::Drop);
+        let names: Vec<&str> = firewall
+            .rules
+            .iter()
+            .map(|r| r.description.as_str())
+            .collect();
+        assert_eq!(names, vec!["SSH", "localhost", "ICMP", "forwarded"]);
+        assert_eq!(firewall.rules[0].destination_ports, Some((22, 22)));
+        assert_eq!(
+            firewall.rules[1].destination,
+            vec!["127.0.0.0/8".parse::<IpNet>().unwrap()]
+        );
+        assert_eq!(firewall.rules[3].target, Target::Queue);
+        let skipped: Vec<&str> = imported
+            .skipped
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        assert_eq!(skipped, vec!["Allow icmp", "redirect", "not https"]);
+        assert_eq!(imported.notes.len(), 2);
     }
 
     #[test]

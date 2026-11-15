@@ -80,6 +80,9 @@ Commands:
                                   Replace it with a file's; with --trial, it reverts after that many seconds
                                   unless `system confirm` comes first
   system confirm                  Keep a change made with --trial
+  system import-opensnitch [<file>] [--dry-run]
+                                  Replace it with OpenSnitch's (default /etc/opensnitchd/system-fw.json), listing
+                                  what can't be expressed exactly; --dry-run prints it as TOML instead
   alerts [--all]                  Alerts not acknowledged yet (--all: the newest 50 of every kind)
   alerts ack <id>... | --all      Acknowledge alerts
   alerts rules                    The alert rules
@@ -517,8 +520,49 @@ fn system(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             client.call(Method::ConfirmSystemFirewall(v1::ConfirmSystemFirewall {}))?;
             out("kept\n")
         }
+        Some("import-opensnitch") => system_import_opensnitch(args, &mut client, set),
         Some(other) => Err(Error::Usage(format!("unknown command `system {other}`"))),
     }
+}
+
+/// `system import-opensnitch`.
+fn system_import_opensnitch(
+    mut args: pico_args::Arguments,
+    client: &mut Client,
+    set: impl Fn(&mut Client, v1::SystemFirewall, u32) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let dry_run = args.contains("--dry-run");
+    let path: String = args
+        .opt_free_from_str()?
+        .unwrap_or_else(|| "/etc/opensnitchd/system-fw.json".to_owned());
+    reject_rest(args)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::Usage(format!("{path}: {e}")))?;
+    let imported = snitchhiker_core::system::import_opensnitch(&text);
+    let mut report = String::new();
+    for (name, reason) in &imported.skipped {
+        let _ = writeln!(report, "skipped {name}: {reason}");
+    }
+    for note in &imported.notes {
+        let _ = writeln!(report, "note: {note}");
+    }
+    let Some(firewall) = imported.firewall else {
+        return Err(Error::Usage(format!("nothing to import:\n{report}")));
+    };
+    if dry_run {
+        let toml = toml::to_string(&firewall).map_err(|e| Error::Usage(e.to_string()))?;
+        let comments = report.lines().fold(String::new(), |mut text, line| {
+            let _ = writeln!(text, "# {line}");
+            text
+        });
+        return out(&format!("{toml}{comments}"));
+    }
+    let rules = firewall.rules.len();
+    set(client, crate::system::wire(&firewall, 0), 0)?;
+    let _ = writeln!(
+        report,
+        "imported {rules} rules of OpenSnitch's system firewall"
+    );
+    out(&report)
 }
 
 fn format_system(firewall: &v1::SystemFirewall) -> String {

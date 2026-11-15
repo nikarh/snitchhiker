@@ -14,6 +14,19 @@ sudo snitchhiker rules import-opensnitch                               # then im
 
 The rules go in a folder named `OpenSnitch`, where they can be reviewed, moved and edited like any other.
 
+In the desktop app, **Import…** on the Rules page reads the same files and shows what would convert and what wouldn't (with the reason) before anything changes. It also reads OpenSnitch's system firewall, below.
+
+## The system firewall
+
+OpenSnitch's `/etc/opensnitchd/system-fw.json` converts to Snitchhiker's [system firewall](/guides/system-firewall/): its input, forward and output chains (filter or mangle), their drop policies, and rules over TCP and UDP ports, ICMP types, connection state, addresses (a range like `127.0.0.0-127.255.255.255` becomes the network it is), protocols and interfaces. Not converted, and listed: NAT and prerouting chains, `!=` comparisons, port lists, marks, legacy iptables rules, and targets other than accept, drop, reject, log and queue.
+
+```bash
+sudo snitchhiker system import-opensnitch --dry-run   # look first
+sudo snitchhiker system import-opensnitch             # replaces this node's system firewall
+```
+
+One difference: in OpenSnitch an accept in the `mangle_output` chain (its ICMP, localhost and WireGuard rules) also kept those connections from being asked about. Snitchhiker's system firewall doesn't decide application connections: application rules do. The import says which rules this concerns.
+
 ## How rules convert
 
 | OpenSnitch | Snitchhiker |

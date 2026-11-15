@@ -63,6 +63,12 @@ fn name(text: &str, prefix: &str) -> String {
     text.trim_start_matches(prefix).to_lowercase()
 }
 
+/// A firewall as the protocol has it.
+#[must_use]
+pub fn wire(firewall: &snitchhiker_core::system::Firewall) -> v1::SystemFirewall {
+    snitchhiker_proto::system::firewall(firewall, 0)
+}
+
 /// A rule on one line: `tcp dport 22 from 10.0.0.0/8`.
 #[must_use]
 pub fn summary(rule: &v1::SystemRule) -> String {

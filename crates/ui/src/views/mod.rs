@@ -7,6 +7,7 @@ pub mod events;
 pub mod explain;
 pub mod explorer;
 pub mod history;
+pub mod import;
 pub mod lint;
 pub mod prompts;
 pub mod rules;

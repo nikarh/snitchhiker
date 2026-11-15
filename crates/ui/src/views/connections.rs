@@ -44,6 +44,30 @@ fn endpoint(address: &[u8], port: u32) -> String {
     })
 }
 
+/// The connections, as CSV.
+#[must_use]
+pub fn csv(connections: &[v1::LiveConnection]) -> String {
+    let rows = connections.iter().map(|c| {
+        vec![
+            protocol(u8::try_from(c.protocol).unwrap_or(0)).to_string(),
+            c.state.clone(),
+            c.exe.clone(),
+            endpoint(&c.local, c.local_port),
+            endpoint(&c.remote, c.remote_port),
+            c.host.clone(),
+            c.uid.to_string(),
+            c.bytes_out.to_string(),
+            c.bytes_in.to_string(),
+        ]
+    });
+    crate::csv::table(
+        &[
+            "protocol", "state", "program", "local", "remote", "host", "uid", "sent", "received",
+        ],
+        rows,
+    )
+}
+
 impl TableDelegate for ConnectionsTable {
     fn columns_count(&self, _: &App) -> usize {
         COLUMNS.len()
