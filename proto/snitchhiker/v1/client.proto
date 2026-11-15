@@ -109,6 +109,11 @@ message Request {
     GetSystemFirewall get_system_firewall = 39;
     SetSystemFirewall set_system_firewall = 40;
     ConfirmSystemFirewall confirm_system_firewall = 41;
+    ListAlerts list_alerts = 42;
+    AcknowledgeAlerts acknowledge_alerts = 43;
+    ListAlertRules list_alert_rules = 44;
+    PutAlertRule put_alert_rule = 45;
+    DeleteAlertRule delete_alert_rule = 46;
   }
 }
 
@@ -135,6 +140,8 @@ message Response {
     NodePolicy policy = 31;
     TrustedClients trusted_clients = 32;
     SystemFirewall system_firewall = 33;
+    AlertPage alerts = 34;
+    AlertRules alert_rules = 35;
   }
 }
 
@@ -180,6 +187,8 @@ message Status {
   uint32 rules = 7;
   uint32 pending_prompts = 8;
   uint32 clients = 9;
+  // Alerts not acknowledged yet.
+  uint32 open_alerts = 10;
 }
 
 enum Mode {
@@ -448,6 +457,8 @@ enum Topic {
   TOPIC_EVENTS = 2;
   // A rule or folder changed: list them again.
   TOPIC_RULES = 3;
+  // Alerts as they are raised, and when alerts are acknowledged.
+  TOPIC_ALERTS = 4;
 }
 
 message Subscribe {
@@ -476,6 +487,8 @@ message Notice {
     ConnectionEvent event = 4;
     RulesChanged rules_changed = 5;
     EventBlock event_block = 7;
+    Alert alert = 8;
+    AlertsChanged alerts_changed = 9;
   }
   // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
   // resubscribes from the last event it saw, or lists prompts or rules again.
@@ -709,6 +722,81 @@ message SetPolicy {
   // 1 to 3650.
   optional uint32 retention_days = 6;
   repeated string reset = 7;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Alerts: what the node raises about itself (the daemon stopped unexpectedly, the kernel dropped packets, its table was
+// removed, a dangerous action was done) and what the user's alert rules catch in the connections. They are kept until
+// the history's retention, and acknowledged by any client for all of them.
+
+message Alert {
+  uint64 id = 1;
+  uint64 time_ms = 2;
+  // What raised it: crashed, dropped_events, queue_overflow, table_removed, rule_files, dangerous_action, alert_rule.
+  string kind = 3;
+  string title = 4;
+  string body = 5;
+  // The alert rule that raised it.
+  optional uint64 rule = 6;
+  bool acknowledged = 7;
+  // The client that acknowledged it.
+  string acknowledged_by = 8;
+}
+
+// Alerts were acknowledged: `open` are left.
+message AlertsChanged {
+  uint32 open = 1;
+}
+
+// Alerts with ids below `before` (0: from the newest), newest first.
+message ListAlerts {
+  uint64 before = 1;
+  uint32 limit = 2;
+  // Only those not acknowledged.
+  bool open_only = 3;
+}
+
+message AlertPage {
+  repeated Alert alerts = 1;
+  // How many aren't acknowledged, of all.
+  uint32 open = 2;
+}
+
+message AcknowledgeAlerts {
+  repeated uint64 ids = 1;
+  // Every alert not acknowledged yet.
+  bool all = 2;
+}
+
+// An alert rule: connections its query matches, `threshold` of them within `window_secs`, raise an alert (then it
+// stays quiet for the window, or a minute). With `first_program`, only connections of programs never seen before
+// count.
+message AlertRule {
+  // 0 for a new one.
+  uint64 id = 1;
+  string name = 2;
+  bool enabled = 3;
+  // The query language; empty for every connection.
+  string query = 4;
+  // At least 1.
+  uint32 threshold = 5;
+  uint32 window_secs = 6;
+  bool first_program = 7;
+}
+
+message ListAlertRules {}
+
+message AlertRules {
+  repeated AlertRule rules = 1;
+}
+
+// Adds a rule (id 0) or replaces one; answers with all of them.
+message PutAlertRule {
+  AlertRule rule = 1;
+}
+
+message DeleteAlertRule {
+  uint64 id = 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

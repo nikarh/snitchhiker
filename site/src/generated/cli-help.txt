@@ -43,6 +43,13 @@ Commands:
                                   Replace it with a file's; with --trial, it reverts after that many seconds
                                   unless `system confirm` comes first
   system confirm                  Keep a change made with --trial
+  alerts [--all]                  Alerts not acknowledged yet (--all: the newest 50 of every kind)
+  alerts ack <id>... | --all      Acknowledge alerts
+  alerts rules                    The alert rules
+  alerts rules add <name> [--query <q>] [--threshold <n>] [--window <secs>] [--first-program]
+                                  Raise an alert when n connections the query matches come within the window;
+                                  --first-program counts only programs never seen before
+  alerts rules rm <id>            Delete an alert rule
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it

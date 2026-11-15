@@ -163,6 +163,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::changes_are_recorded_and_undone,
     ),
     (
+        "daemon/alerts-are-raised-and-acknowledged",
+        daemon::alerts_are_raised_and_acknowledged,
+    ),
+    (
         "daemon/system-firewall-filters-inbound",
         daemon::system_firewall_filters_inbound,
     ),

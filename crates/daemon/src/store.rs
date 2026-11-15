@@ -10,6 +10,7 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension as _, params};
 use snitchhiker_core::query::{self, EventFilter, SqlValue};
 
+use crate::alerts::{AlertRule, NewAlert, StoredAlert};
 use crate::policy::Overrides;
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
 use snitchhiker_core::system::Firewall;
@@ -160,6 +161,25 @@ CREATE TABLE system_firewall (
     firewall TEXT NOT NULL
 );
 ",
+    // Alerts, and the user's alert rules (the alerts module's model as JSON).
+    r"
+CREATE TABLE alerts (
+    id INTEGER PRIMARY KEY,
+    time_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    rule INTEGER,
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    acknowledged_by TEXT
+);
+CREATE INDEX alerts_open ON alerts(acknowledged, id);
+CREATE INDEX alerts_time ON alerts(time_ms);
+CREATE TABLE alert_rules (
+    id INTEGER PRIMARY KEY,
+    rule TEXT NOT NULL
+);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -235,6 +255,37 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
     ("policy.get", "SELECT overrides FROM policy WHERE id = 1"),
     ("system.get", "SELECT firewall FROM system_firewall WHERE id = 1"),
+    (
+        "alerts.insert",
+        "INSERT INTO alerts (time_ms, kind, title, body, rule) VALUES (?1, ?2, ?3, ?4, ?5)",
+    ),
+    (
+        "alerts.page",
+        "SELECT id, time_ms, kind, title, body, rule, acknowledged, acknowledged_by FROM alerts
+         WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    (
+        "alerts.open_page",
+        "SELECT id, time_ms, kind, title, body, rule, acknowledged, acknowledged_by FROM alerts
+         WHERE acknowledged = 0 AND id < ?1 ORDER BY id DESC LIMIT ?2",
+    ),
+    (
+        "alerts.open_count",
+        "SELECT count(*) FROM alerts WHERE acknowledged = 0",
+    ),
+    (
+        "alerts.ack",
+        "UPDATE alerts SET acknowledged = 1, acknowledged_by = ?2 WHERE id = ?1 AND acknowledged = 0",
+    ),
+    (
+        "alerts.ack_all",
+        "UPDATE alerts SET acknowledged = 1, acknowledged_by = ?1 WHERE acknowledged = 0",
+    ),
+    ("alerts.prune", "DELETE FROM alerts WHERE time_ms < ?1"),
+    ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
+    ("alert_rules.insert", "INSERT INTO alert_rules (rule) VALUES (?1)"),
+    ("alert_rules.update", "UPDATE alert_rules SET rule = ?2 WHERE id = ?1"),
+    ("alert_rules.delete", "DELETE FROM alert_rules WHERE id = ?1"),
     (
         "system.put",
         "INSERT INTO system_firewall (id, firewall) VALUES (1, ?1)
@@ -1028,7 +1079,7 @@ impl Store {
 
 /// Tables small enough that scanning them is fine (and SQLite may choose to).
 #[cfg(test)]
-const SCANNABLE: &[&str] = &["folders", "rules"];
+const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules"];
 
 /// Statements that group what an index range yields, and so sort it: the Explorer's, over the rollups of a range of
 /// hours. Their cost is the rollup rows of those hours (the variety of the traffic), not the size of the history; the
@@ -1078,6 +1129,8 @@ pub struct Recorded {
     pub seq: i64,
     pub exe: u32,
     pub host: u32,
+    /// The program was never recorded before.
+    pub new_exe: bool,
 }
 
 /// An hour, in ms: rollups are kept per hour.
@@ -1347,19 +1400,16 @@ impl Store {
         let mut hits: HashMap<RuleId, u64> = HashMap::new();
         let transaction = self.connection.unchecked_transaction()?;
         for event in events {
-            let exe = intern(
+            let (exe, new_exe) = intern(
                 &self.connection,
                 &mut self.strings,
                 StringKind::Exe,
                 &event.exe,
             )?;
             let host = match &event.host {
-                Some(host) => Some(intern(
-                    &self.connection,
-                    &mut self.strings,
-                    StringKind::Host,
-                    host,
-                )?),
+                Some(host) => {
+                    Some(intern(&self.connection, &mut self.strings, StringKind::Host, host)?.0)
+                }
                 None => None,
             };
             let address = match event.address {
@@ -1414,6 +1464,7 @@ impl Store {
                 seq,
                 exe: u32::try_from(exe).unwrap_or(0),
                 host: host.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
+                new_exe,
             });
             if let Some(rule) = event.rule {
                 let hit = hits.entry(rule).or_insert(0);
@@ -1498,6 +1549,132 @@ impl Store {
             .prepare_cached(sql("system.put")?)?
             .execute(params![after])?;
         self.record_change(batch, SYSTEM, 0, Some(&before), Some(&after), what)
+    }
+
+    /// Keeps a new alert.
+    pub fn insert_alert(&self, alert: &NewAlert, now_ms: u64) -> Result<StoredAlert, Error> {
+        self.connection
+            .prepare_cached(sql("alerts.insert")?)?
+            .execute(params![
+                db_id(now_ms),
+                alert.kind,
+                alert.title,
+                alert.body,
+                alert.rule.map(db_id),
+            ])?;
+        Ok(StoredAlert {
+            id: id_of(self.connection.last_insert_rowid()),
+            time_ms: now_ms,
+            kind: alert.kind.to_owned(),
+            title: alert.title.clone(),
+            body: alert.body.clone(),
+            rule: alert.rule,
+            acknowledged: false,
+            acknowledged_by: None,
+        })
+    }
+
+    /// Alerts with ids below `before` (`u64::MAX`: from the newest), newest first.
+    pub fn alerts(
+        &self,
+        before: u64,
+        limit: u32,
+        open_only: bool,
+    ) -> Result<Vec<StoredAlert>, Error> {
+        let mut statement = self.connection.prepare_cached(sql(if open_only {
+            "alerts.open_page"
+        } else {
+            "alerts.page"
+        })?)?;
+        let rows = statement.query_map(params![db_id(before), limit], |row| {
+            Ok(StoredAlert {
+                id: id_of(row.get(0)?),
+                time_ms: id_of(row.get(1)?),
+                kind: row.get(2)?,
+                title: row.get(3)?,
+                body: row.get(4)?,
+                rule: row.get::<_, Option<i64>>(5)?.map(id_of),
+                acknowledged: row.get::<_, i64>(6)? != 0,
+                acknowledged_by: row.get(7)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// How many alerts aren't acknowledged.
+    pub fn open_alerts(&self) -> Result<u32, Error> {
+        let count: i64 = self
+            .connection
+            .prepare_cached(sql("alerts.open_count")?)?
+            .query_row([], |row| row.get(0))?;
+        Ok(u32::try_from(count).unwrap_or(u32::MAX))
+    }
+
+    /// Acknowledges `ids` (or every open alert, with `all`) for `by`; returns how many were open.
+    pub fn acknowledge_alerts(&self, ids: &[u64], all: bool, by: &str) -> Result<usize, Error> {
+        if all {
+            return Ok(self
+                .connection
+                .prepare_cached(sql("alerts.ack_all")?)?
+                .execute(params![by])?);
+        }
+        let mut statement = self.connection.prepare_cached(sql("alerts.ack")?)?;
+        let mut count = 0;
+        for id in ids {
+            count += statement.execute(params![db_id(*id), by])?;
+        }
+        Ok(count)
+    }
+
+    pub fn prune_alerts(&self, before_ms: u64) -> Result<usize, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("alerts.prune")?)?
+            .execute(params![db_id(before_ms)])?)
+    }
+
+    pub fn alert_rules(&self) -> Result<Vec<AlertRule>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("alert_rules.all")?)?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut rules = Vec::new();
+        for row in rows {
+            let (id, text) = row?;
+            let mut rule: AlertRule = serde_json::from_str(&text).map_err(|e| Error::Corrupt {
+                what: "an alert rule",
+                error: e.to_string(),
+            })?;
+            rule.id = id_of(id);
+            rules.push(rule);
+        }
+        Ok(rules)
+    }
+
+    /// Adds `rule` (id 0) or replaces the one with its id; returns its id.
+    pub fn put_alert_rule(&self, rule: &AlertRule) -> Result<u64, Error> {
+        if rule.id == 0 {
+            self.connection
+                .prepare_cached(sql("alert_rules.insert")?)?
+                .execute(params![json(rule)])?;
+            return Ok(id_of(self.connection.last_insert_rowid()));
+        }
+        let changed = self
+            .connection
+            .prepare_cached(sql("alert_rules.update")?)?
+            .execute(params![db_id(rule.id), json(rule)])?;
+        if changed == 0 {
+            return Err(Error::NotFound("alert rule", rule.id));
+        }
+        Ok(rule.id)
+    }
+
+    pub fn delete_alert_rule(&self, id: u64) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("alert_rules.delete")?)?
+            .execute(params![db_id(id)])?
+            > 0)
     }
 
     /// For each rule: when it was last changed, and when it last decided a connection.
@@ -1822,24 +1999,24 @@ fn intern(
     cache: &mut HashMap<(StringKind, std::sync::Arc<str>), i64>,
     kind: StringKind,
     value: &std::sync::Arc<str>,
-) -> Result<i64, Error> {
+) -> Result<(i64, bool), Error> {
     if let Some(&id) = cache.get(&(kind, std::sync::Arc::clone(value))) {
-        return Ok(id);
+        return Ok((id, false));
     }
     let found: Option<i64> = connection
         .prepare_cached(sql("strings.find")?)?
         .query_row(params![kind as u8, &**value], |row| row.get(0))
         .optional()?;
-    let id = if let Some(id) = found {
-        id
+    let (id, inserted) = if let Some(id) = found {
+        (id, false)
     } else {
         connection
             .prepare_cached(sql("strings.insert")?)?
             .execute(params![kind as u8, &**value])?;
-        connection.last_insert_rowid()
+        (connection.last_insert_rowid(), true)
     };
     cache.insert((kind, std::sync::Arc::clone(value)), id);
-    Ok(id)
+    Ok((id, inserted))
 }
 
 /// A column's JSON (the model's types always serialize).
@@ -1859,7 +2036,8 @@ fn address_from(bytes: &[u8]) -> std::net::IpAddr {
     )
 }
 
-fn action_code(action: Action) -> u8 {
+#[must_use]
+pub fn action_code(action: Action) -> u8 {
     match action {
         Action::Allow => 1,
         Action::Deny => 2,

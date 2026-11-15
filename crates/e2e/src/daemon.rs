@@ -110,6 +110,15 @@ impl Running {
         Ok(())
     }
 
+    /// Kills the daemon with SIGKILL, as a crash would end it.
+    pub fn kill(&mut self) -> Result<(), String> {
+        if let Some(mut child) = self.child.take() {
+            child.kill().map_err(|e| e.to_string())?;
+            child.wait().map_err(|e| e.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Stops the daemon with SIGTERM and waits for it.
     pub fn stop(&mut self) -> Result<(), String> {
         if let Some(mut child) = self.child.take() {
@@ -919,6 +928,90 @@ pub fn system_firewall_filters_inbound() -> Result<(), String> {
     check(
         off && table_gone,
         "turning it off didn't remove the table",
+        &found,
+    )
+}
+
+/// Alerts: an alert rule's threshold, a program never seen before, a dangerous action, the daemon's table removed by
+/// someone else (and put back), a crash noticed at the next start; acknowledging them for everyone.
+pub fn alerts_are_raised_and_acknowledged() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let settings = "mode = \"enforce\"\nno_match = \"reject\"\n";
+    let mut daemon = Running::start("alerts", settings)?;
+    daemon.cli(&[
+        "alerts",
+        "rules",
+        "add",
+        "rejected twice",
+        "--query",
+        &format!("port:{port} action:reject"),
+        "--threshold",
+        "2",
+        "--window",
+        "60",
+    ])?;
+    daemon.cli(&[
+        "alerts",
+        "rules",
+        "add",
+        "new program",
+        "--first-program",
+        "--query",
+        &format!("port:{port}"),
+    ])?;
+    // The rules reach the writer with the next batch: one connection first.
+    mallory_connects(port)?;
+    thread::sleep(Duration::from_millis(1500));
+    mallory_connects(port)?;
+    mallory_connects(port)?;
+    // A copy of python under a new path: a program never seen before.
+    let copy = format!("/tmp/snitchhiker-new-program-{}", std::process::id());
+    std::fs::copy("/usr/bin/python3", &copy).map_err(|e| e.to_string())?;
+    let script = format!(
+        "import socket\ntry:\n    socket.create_connection(('127.0.0.1', {port}), timeout=2)\nexcept OSError:\n    pass"
+    );
+    let _ = Command::new("runuser")
+        .args(["-u", "mallory", "--", &copy, "-c", &script])
+        .output();
+    daemon.cli(&["policy", "set", "retention_days=7"])?;
+    daemon.cli(&["policy", "set", "no_match=allow"])?;
+    run("nft", &["delete", "table", "inet", "snitchhiker"])?;
+    thread::sleep(Duration::from_secs(12));
+    let table_back = run("nft", &["list", "tables"])?.contains("inet snitchhiker\n");
+    let raised = daemon.cli(&["alerts"])?;
+    let status = daemon.cli(&["status"])?;
+    daemon.cli(&["alerts", "ack", "--all"])?;
+    let after_ack = daemon.cli(&["alerts"])?;
+    daemon.kill()?;
+    daemon.restart(settings)?;
+    let after_crash = daemon.cli(&["alerts"])?;
+    daemon.stop()?;
+    let _ = std::fs::remove_file(&copy);
+    let found = format!("{raised}{status}{after_ack}{after_crash}table back {table_back}");
+    check(
+        raised.contains("alert_rule rejected twice: 2 connections in 60 s")
+            && raised.contains(&format!(
+                "alert_rule new program: A program's first connection: {copy}"
+            )),
+        "the alert rules didn't raise their alerts",
+        &found,
+    )?;
+    check(
+        raised.contains("dangerous_action cli was allowed to change the policy")
+            && !raised.contains("retention_days 30 → 7"),
+        "a dangerous action (and only that) wasn't alerted",
+        &found,
+    )?;
+    check(
+        raised.contains("table_removed Something removed the daemon's nftables table")
+            && table_back,
+        "the table removed by someone else wasn't put back with an alert",
+        &found,
+    )?;
+    check(
+        after_ack.trim_end().ends_with("0 not acknowledged")
+            && after_crash.contains("crashed The daemon stopped unexpectedly"),
+        "acknowledging or noticing the crash didn't work",
         &found,
     )
 }

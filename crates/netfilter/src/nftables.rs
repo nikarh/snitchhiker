@@ -11,6 +11,7 @@ use crate::netlink::{
 };
 
 const NFT_MSG_NEWTABLE: u16 = 0;
+const NFT_MSG_GETTABLE: u16 = 1;
 const NFT_MSG_DELTABLE: u16 = 2;
 const NFT_MSG_NEWCHAIN: u16 = 3;
 const NFT_MSG_NEWRULE: u16 = 6;
@@ -330,6 +331,22 @@ pub fn encode_system(writer: &mut Writer, table: &SystemTable, sequence: u32) ->
         batch.rule(&table.name, rule.chain.name(), |e| e.system_rule(rule));
     }
     batch.end()
+}
+
+/// Writes a request for table `name` (only that one is read): the kernel answers with it, or with `ENOENT`. Returns the
+/// request's sequence number.
+pub fn encode_get_table(writer: &mut Writer, name: &str, sequence: u32) -> u32 {
+    writer.clear();
+    let message = writer.begin(
+        (NFNL_SUBSYS_NFTABLES << 8) | NFT_MSG_GETTABLE,
+        NLM_F_ACK,
+        sequence,
+        NFPROTO_INET,
+        0,
+    );
+    writer.string(NFTA_TABLE_NAME, name);
+    writer.finish(message);
+    sequence
 }
 
 /// Writes the batch that deletes the table (created first, so deleting it never fails because it is missing).

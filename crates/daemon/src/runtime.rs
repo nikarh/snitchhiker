@@ -17,7 +17,7 @@ use snitchhiker_core::engine::{Facts, RuleSet};
 use snitchhiker_core::rule::{Action, Condition, ContextKind};
 use snitchhiker_ebpf::{Attribution, FlowKey};
 use snitchhiker_netfilter::netlink::{Socket, Writer};
-use snitchhiker_netfilter::nftables::{Table, encode_install, encode_remove};
+use snitchhiker_netfilter::nftables::{Table, encode_get_table, encode_install, encode_remove};
 use snitchhiker_netfilter::packet;
 use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
@@ -86,6 +86,8 @@ fn placement_error(error: crate::placement::Error) -> AnswerError {
 /// What the deciding threads share.
 pub struct Shared {
     pub config: Config,
+    /// Counts changes of the alert rules, so the writer loads them again.
+    pub alert_rules_changed: AtomicU64,
     pub rules: ArcSwap<RuleSet>,
     attribution: Attribution,
     names: RwLock<Names>,
@@ -173,6 +175,7 @@ impl Daemon {
             decided: AtomicU64::new(0),
             hub: Arc::new(Hub::default()),
             broker,
+            alert_rules_changed: AtomicU64::new(0),
             policy: ArcSwap::from_pointee(policy),
             config,
         });
@@ -205,6 +208,10 @@ impl Daemon {
                 .name("writer".to_owned())
                 .spawn(move || write_loop(&shared, &store, &receiver))?;
         }
+        check_marker(
+            &shared,
+            &store.lock().unwrap_or_else(PoisonError::into_inner),
+        );
         // The system firewall as last set: a rule the kernel refuses mustn't keep the daemon from deciding.
         let firewall = store
             .lock()
@@ -220,7 +227,74 @@ impl Daemon {
             trial: Mutex::new(Trial::default()),
         });
         daemon.spawn_prompt_timeouts()?;
+        daemon.spawn_table_watch()?;
         Ok(daemon)
+    }
+
+    /// Every few seconds, checks that the tables are still there: one removed by someone else is put back, with an alert.
+    fn spawn_table_watch(self: &Arc<Self>) -> std::io::Result<()> {
+        let daemon = Arc::clone(self);
+        thread::Builder::new()
+            .name("table-watch".to_owned())
+            .spawn(move || {
+                loop {
+                    thread::sleep(TABLE_WATCH_EVERY);
+                    daemon.check_tables();
+                }
+            })?;
+        Ok(())
+    }
+
+    fn check_tables(&self) {
+        let missing = |name: &str| {
+            let mut writer = Writer::new();
+            let sequence = encode_get_table(&mut writer, name, 1);
+            Socket::open()
+                .and_then(|mut socket| socket.transact(&writer, sequence, sequence))
+                .is_err_and(|e| e.raw_os_error() == Some(2))
+        };
+        if missing(&self.table.name) {
+            let put_back = install(&self.table);
+            self.raise_table_removed("the daemon's", &put_back);
+        }
+        let firewall = self.store().system_firewall();
+        if firewall.as_ref().is_ok_and(|f| f.enabled) && missing(crate::system::TABLE) {
+            let put_back = self
+                .apply_system()
+                .map_err(|e| std::io::Error::other(e.to_string()));
+            self.raise_table_removed("the system firewall's", &put_back);
+        }
+    }
+
+    fn raise_table_removed(&self, which: &str, put_back: &std::io::Result<()>) {
+        crate::alerts::raise(
+            &self.shared.hub,
+            &self.store(),
+            &crate::alerts::NewAlert {
+                kind: "table_removed",
+                title: format!("Something removed {which} nftables table"),
+                body: match put_back {
+                    Ok(()) => {
+                        "It was put back. Another firewall tool may be flushing the whole ruleset."
+                            .to_owned()
+                    }
+                    Err(error) => format!("Putting it back failed: {error}"),
+                },
+                rule: None,
+            },
+        );
+    }
+
+    /// Raises an alert from the API's side.
+    pub fn raise(&self, alert: &crate::alerts::NewAlert) {
+        crate::alerts::raise(&self.shared.hub, &self.store(), alert);
+    }
+
+    /// The alert rules changed: the writer loads them again.
+    pub fn alert_rules_changed(&self) {
+        self.shared
+            .alert_rules_changed
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     /// Prompts nobody answered in time are decided by the policy's `on_timeout`.
@@ -642,6 +716,7 @@ impl Daemon {
     /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
     /// nothing new gets out until the daemon is back.
     pub fn stop(&self) {
+        let _ = std::fs::remove_file(config_marker(&self.shared.config));
         if self.shared.config.fail == Fail::Open {
             if let Err(error) = remove(&self.table.name) {
                 warn!(%error, "removing the table");
@@ -1044,8 +1119,100 @@ fn event_row(event: &Event, recorded: &crate::store::Recorded) -> EventRow {
     }
 }
 
+/// Raises an alert when the last daemon didn't stop cleanly (its marker is still there: it crashed, was killed, or the
+/// machine lost power), then puts this one's marker in place.
+fn check_marker(shared: &Shared, store: &Store) {
+    let marker = config_marker(&shared.config);
+    if marker.exists() {
+        crate::alerts::raise(
+            &shared.hub,
+            store,
+            &crate::alerts::NewAlert {
+                kind: "crashed",
+                title: "The daemon stopped unexpectedly".to_owned(),
+                body: "It didn't stop cleanly last time: it crashed, was killed, or the machine lost power."
+                    .to_owned(),
+                rule: None,
+            },
+        );
+    }
+    let _ = std::fs::write(&marker, b"");
+}
+
+/// Where a running daemon keeps its marker: next to its database, so a crash is noticed after a reboot too.
+fn config_marker(config: &Config) -> std::path::PathBuf {
+    config.database.with_extension("running")
+}
+
+/// How often the tables are checked.
+const TABLE_WATCH_EVERY: Duration = Duration::from_secs(10);
+/// How often the counters of what was lost are checked.
+const LOSS_CHECK_EVERY: Duration = Duration::from_secs(60);
+
+/// Packets the kernel dropped on queues `first..first + count` (`/proc/net/netfilter/nfnetlink_queue`: the queue
+/// overflowed, or the daemon's socket couldn't take them).
+fn queue_drops(first: u16, count: u16) -> u64 {
+    std::fs::read_to_string("/proc/net/netfilter/nfnetlink_queue").map_or(0, |text| {
+        text.lines()
+            .filter_map(|line| {
+                let fields: Vec<u64> = line
+                    .split_whitespace()
+                    .filter_map(|f| f.parse().ok())
+                    .collect();
+                let queue = u16::try_from(*fields.first()?).ok()?;
+                (queue >= first && queue < first.saturating_add(count)).then(|| {
+                    fields.get(5).copied().unwrap_or(0) + fields.get(6).copied().unwrap_or(0)
+                })
+            })
+            .sum()
+    })
+}
+
+/// Alerts about what the node lost since the last check: events the history couldn't keep, packets the kernel
+/// dropped.
+fn check_losses(shared: &Shared, store: &Store, seen: &mut (u64, u64)) {
+    let dropped = shared.dropped_events.load(Ordering::Relaxed);
+    if dropped > seen.0 {
+        crate::alerts::raise(
+            &shared.hub,
+            store,
+            &crate::alerts::NewAlert {
+                kind: "dropped_events",
+                title: "Connections weren't recorded".to_owned(),
+                body: format!(
+                    "{} connections were decided but not kept in the history: the database couldn't keep up.",
+                    dropped - seen.0
+                ),
+                rule: None,
+            },
+        );
+    }
+    let queued = queue_drops(shared.config.queue, shared.config.queues);
+    if queued > seen.1 {
+        crate::alerts::raise(
+            &shared.hub,
+            store,
+            &crate::alerts::NewAlert {
+                kind: "queue_overflow",
+                title: "The kernel dropped packets waiting for a decision".to_owned(),
+                body: format!(
+                    "{} packets were dropped on the daemon's queues: they overflowed. New connections were refused \
+                     while that lasted.",
+                    queued - seen.1
+                ),
+                rule: None,
+            },
+        );
+    }
+    *seen = (dropped, queued.max(seen.1));
+}
+
 fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
     let mut batch = Vec::with_capacity(BATCH);
+    let mut engine = crate::alerts::Engine::default();
+    let mut rules_seen = u64::MAX;
+    let mut last_loss_check = Instant::now();
+    let mut losses = (0, queue_drops(shared.config.queue, shared.config.queues));
     let mut recorded = Vec::with_capacity(BATCH);
     let mut last_prune = Instant::now();
     let mut last_bytes = Instant::now();
@@ -1067,11 +1234,28 @@ fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
             }
         }
         let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
+        let generation = shared.alert_rules_changed.load(Ordering::Relaxed);
+        if generation != rules_seen {
+            rules_seen = generation;
+            match store.alert_rules() {
+                Ok(rules) => engine.load(rules),
+                Err(error) => error!(%error, "loading the alert rules"),
+            }
+        }
         if !batch.is_empty() {
             match store.record(&batch, &mut recorded) {
-                Ok(()) => publish_events(shared, &batch, &recorded),
+                Ok(()) => {
+                    publish_events(shared, &batch, &recorded);
+                    for alert in engine.check(&batch, &recorded) {
+                        crate::alerts::raise(&shared.hub, &store, &alert);
+                    }
+                }
                 Err(error) => error!(%error, events = batch.len(), "recording events"),
             }
+        }
+        if last_loss_check.elapsed() >= LOSS_CHECK_EVERY {
+            last_loss_check = Instant::now();
+            check_losses(shared, &store, &mut losses);
         }
         if last_bytes.elapsed() >= BYTES_EVERY {
             last_bytes = Instant::now();
@@ -1098,6 +1282,9 @@ fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
                 if pruned < PRUNE_CHUNK as usize {
                     break;
                 }
+            }
+            if let Err(error) = store.prune_alerts(cutoff) {
+                error!(%error, "pruning alerts");
             }
             if let Err(error) = store.prune_rollups(cutoff) {
                 error!(%error, "pruning rollups");

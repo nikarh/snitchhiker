@@ -58,6 +58,17 @@ pub enum Request {
     SetPolicy(v1::SetPolicy),
     SystemFirewall,
     SetSystemFirewall(v1::SetSystemFirewall),
+    /// The newest alerts.
+    Alerts,
+    Acknowledge {
+        ids: Vec<u64>,
+        all: bool,
+    },
+    AlertRules,
+    PutAlertRule(v1::AlertRule),
+    DeleteAlertRule {
+        id: u64,
+    },
     TrustedClients,
     /// The lint report, with rules unused for `days`.
     Lint {
@@ -97,11 +108,20 @@ pub enum Update {
     Lint(v1::LintReport),
     Policy(v1::NodePolicy),
     SystemFirewall(v1::SystemFirewall),
+    /// A page of alerts, and how many are open.
+    Alerts(Vec<v1::Alert>, u32),
+    /// An alert was raised.
+    Alert(v1::Alert),
+    /// Alerts were acknowledged; how many are left.
+    AlertsChanged(u32),
+    AlertRules(Vec<v1::AlertRule>),
     TrustedClients(Vec<v1::TrustedClient>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
     ShowPrompts,
+    /// An alert's notification was clicked: show the alerts.
+    ShowAlerts,
 }
 
 /// Events in one page of history.
@@ -246,6 +266,20 @@ fn method(request: &Request) -> v1::request::Method {
         Request::Policy => Method::GetPolicy(v1::GetPolicy {}),
         Request::SystemFirewall => Method::GetSystemFirewall(v1::GetSystemFirewall {}),
         Request::SetSystemFirewall(set) => Method::SetSystemFirewall(set.clone()),
+        Request::Alerts => Method::ListAlerts(v1::ListAlerts {
+            before: 0,
+            limit: 200,
+            open_only: false,
+        }),
+        Request::Acknowledge { ids, all } => Method::AcknowledgeAlerts(v1::AcknowledgeAlerts {
+            ids: ids.clone(),
+            all: *all,
+        }),
+        Request::AlertRules => Method::ListAlertRules(v1::ListAlertRules {}),
+        Request::PutAlertRule(rule) => Method::PutAlertRule(v1::PutAlertRule {
+            rule: Some(rule.clone()),
+        }),
+        Request::DeleteAlertRule { id } => Method::DeleteAlertRule(v1::DeleteAlertRule { id: *id }),
         Request::SetPolicy(set) => Method::SetPolicy(set.clone()),
         Request::TrustedClients => Method::ListTrustedClients(v1::ListTrustedClients {}),
         Request::Lint { days } => Method::LintRules(v1::LintRules { unused_days: *days }),
@@ -265,6 +299,8 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::LintReport(report) => Some(Update::Lint(report)),
         R::Policy(policy) => Some(Update::Policy(policy)),
         R::SystemFirewall(firewall) => Some(Update::SystemFirewall(firewall)),
+        R::Alerts(page) => Some(Update::Alerts(page.alerts, page.open)),
+        R::AlertRules(list) => Some(Update::AlertRules(list.rules)),
         R::TrustedClients(list) => Some(Update::TrustedClients(list.clients)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
@@ -334,6 +370,7 @@ fn subscribe(
     client
         .subscribe(v1::Topic::Prompts)
         .and_then(|_| client.subscribe(v1::Topic::Rules))
+        .and_then(|_| client.subscribe(v1::Topic::Alerts))
         .and_then(|_| client.subscribe_with(v1::Topic::Events, *last_seq, true))
         .map_err(|e| e.to_string())?;
     loop {
@@ -342,6 +379,8 @@ fn subscribe(
             Some(v1::notice::Body::Prompt(prompt)) => Update::Prompt(prompt),
             Some(v1::notice::Body::PromptResolved(resolved)) => Update::Resolved(resolved),
             Some(v1::notice::Body::RulesChanged(_)) => Update::RulesChanged,
+            Some(v1::notice::Body::Alert(alert)) => Update::Alert(alert),
+            Some(v1::notice::Body::AlertsChanged(changed)) => Update::AlertsChanged(changed.open),
             Some(v1::notice::Body::EventBlock(event_block)) => {
                 let (rows, strings) = block(&event_block)?;
                 if let Some(newest) = rows.iter().map(|r| r.seq).max() {

@@ -47,6 +47,8 @@ pub enum Notice {
     Show(v1::Prompt),
     /// A prompt was resolved: take its notification down.
     Close(u64),
+    /// An alert was raised.
+    Alert(v1::Alert),
 }
 
 const ALLOW: &str = "allow-once";
@@ -83,6 +85,23 @@ pub fn text(prompt: &v1::Prompt) -> (String, String) {
     )
 }
 
+async fn show_prompt(server: &NotificationsProxy<'_>, prompt: &v1::Prompt) -> zbus::Result<u32> {
+    let (summary, body) = text(prompt);
+    let hints = HashMap::from([("urgency", Value::U8(2)), ("resident", Value::Bool(true))]);
+    server
+        .notify(
+            "Snitchhiker",
+            0,
+            "snitchhiker",
+            &summary,
+            &body,
+            &[OPEN, "Open", ALLOW, "Allow once", DENY, "Deny"],
+            hints,
+            0,
+        )
+        .await
+}
+
 async fn run(
     incoming: &async_channel::Receiver<Notice>,
     requests: &mpsc::Sender<Request>,
@@ -93,6 +112,8 @@ async fn run(
     let mut actions = server.receive_action_invoked().await?;
     // notification id <-> prompt id
     let mut shown: HashMap<u32, u64> = HashMap::new();
+    // notifications of alerts
+    let mut alerts: std::collections::HashSet<u32> = std::collections::HashSet::new();
     loop {
         enum Next {
             Notice(Notice),
@@ -116,22 +137,24 @@ async fn run(
         match next {
             Next::Done => return Ok(()),
             Next::Notice(Notice::Show(prompt)) => {
-                let (summary, body) = text(&prompt);
-                let hints =
-                    HashMap::from([("urgency", Value::U8(2)), ("resident", Value::Bool(true))]);
+                let id = show_prompt(&server, &prompt).await?;
+                shown.insert(id, prompt.id);
+            }
+            Next::Notice(Notice::Alert(alert)) => {
+                let hints = HashMap::from([("urgency", Value::U8(1))]);
                 let id = server
                     .notify(
                         "Snitchhiker",
                         0,
                         "snitchhiker",
-                        &summary,
-                        &body,
-                        &[OPEN, "Open", ALLOW, "Allow once", DENY, "Deny"],
+                        &alert.title,
+                        &alert.body,
+                        &[OPEN, "Open"],
                         hints,
-                        0,
+                        -1,
                     )
                     .await?;
-                shown.insert(id, prompt.id);
+                alerts.insert(id);
             }
             Next::Notice(Notice::Close(prompt)) => {
                 let ids: Vec<u32> = shown
@@ -143,6 +166,9 @@ async fn run(
                     shown.remove(&id);
                     let _ = server.close_notification(id).await;
                 }
+            }
+            Next::Action(id, _) if alerts.remove(&id) => {
+                let _ = updates.send(Update::ShowAlerts).await;
             }
             Next::Action(id, action) => {
                 let Some(&prompt) = shown.get(&id) else {

@@ -131,7 +131,15 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     while signals.wait()? == Signal::SIGHUP {
         match daemon.reload_rules() {
             Ok(count) => info!(rules = count, "rules reloaded"),
-            Err(error) => error!(%error, "reloading the rules; keeping the previous ones"),
+            Err(error) => {
+                error!(%error, "reloading the rules; keeping the previous ones");
+                daemon.raise(&snitchhiker_daemon::alerts::NewAlert {
+                    kind: "rule_files",
+                    title: "Reloading the rules failed".to_owned(),
+                    body: format!("{error}. The rules from before are still in effect."),
+                    rule: None,
+                });
+            }
         }
     }
     snitchhiker_daemon::notify::notify("STOPPING=1");

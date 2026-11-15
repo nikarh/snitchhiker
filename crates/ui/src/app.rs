@@ -15,6 +15,7 @@ use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 use crate::backend::{Request, Update};
 use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
+use crate::views::alerts::Alerts;
 use crate::views::connections::ConnectionsTable;
 use crate::views::events::{self, EventsPage, EventsTable};
 use crate::views::explain;
@@ -29,6 +30,7 @@ use crate::views::system::SystemPage;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Prompts,
+    Alerts,
     Events,
     Explorer,
     Connections,
@@ -52,6 +54,7 @@ pub struct App {
     connections: Entity<TableState<ConnectionsTable>>,
     status: Entity<Status>,
     settings: Entity<Settings>,
+    alerts: Entity<Alerts>,
     system: Entity<SystemPage>,
     requests: mpsc::Sender<Request>,
 }
@@ -78,6 +81,7 @@ impl App {
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let settings = cx.new(|cx| Settings::new(model.clone(), requests.clone(), cx));
+        let alerts = cx.new(|cx| Alerts::new(model.clone(), requests.clone(), cx));
         let system = cx.new(|cx| SystemPage::new(model.clone(), requests.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
@@ -91,7 +95,12 @@ impl App {
         Self::explain_on_double_click(&events, window, cx);
         let notices = notify::start(requests.clone(), updates_sender);
         let own_requests = requests.clone();
-        for request in [Request::Status, Request::Rules, Request::Changes] {
+        for request in [
+            Request::Status,
+            Request::Rules,
+            Request::Changes,
+            Request::Alerts,
+        ] {
             let _ = requests.send(request);
         }
         events::request_page(&model, &requests, cx);
@@ -113,6 +122,7 @@ impl App {
             connections,
             status,
             settings,
+            alerts,
             system,
             requests: own_requests,
         }
@@ -175,6 +185,19 @@ impl App {
                             app.page = Page::Prompts;
                             cx.activate(true);
                         }
+                        Changed::ShowAlerts => {
+                            app.page = Page::Alerts;
+                            app.alerts.read(cx).refresh();
+                            cx.activate(true);
+                        }
+                        Changed::Alert => {
+                            if let Some(alert) = app.model.read(cx).alerts.first() {
+                                let _ = notices.try_send(Notice::Alert(alert.clone()));
+                            }
+                        }
+                        Changed::AlertsOnNode => {
+                            let _ = requests.send(Request::Alerts);
+                        }
                         Changed::Prompts | Changed::Status | Changed::Nothing => {}
                     }
                     cx.notify();
@@ -227,6 +250,9 @@ impl App {
                 if page == Page::Firewall {
                     app.system.read(cx).refresh();
                 }
+                if page == Page::Alerts {
+                    app.alerts.read(cx).refresh();
+                }
                 cx.notify();
             }))
     }
@@ -235,6 +261,12 @@ impl App {
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let waiting = self.model.read(cx).prompts.len();
+        let open_alerts = self.model.read(cx).open_alerts;
+        let alerts_label: SharedString = if open_alerts == 0 {
+            "Alerts".into()
+        } else {
+            format!("Alerts ({open_alerts})").into()
+        };
         let prompts_label: SharedString = if waiting == 0 {
             "Prompts".into()
         } else {
@@ -252,6 +284,12 @@ impl Render for App {
                 SidebarGroup::new("Node").child(
                     SidebarMenu::new()
                         .child(self.item(Page::Prompts, prompts_label, IconName::Bell, cx))
+                        .child(self.item(
+                            Page::Alerts,
+                            alerts_label,
+                            gpui_kit_assets::IconName::TriangleAlert,
+                            cx,
+                        ))
                         .child(self.item(
                             Page::Events,
                             "Events".into(),
@@ -307,6 +345,7 @@ impl Render for App {
             }
             Page::Status => self.status.clone().into_any_element(),
             Page::Settings => self.settings.clone().into_any_element(),
+            Page::Alerts => self.alerts.clone().into_any_element(),
             Page::Firewall => self.system.clone().into_any_element(),
         };
         h_flex()

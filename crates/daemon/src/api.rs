@@ -331,6 +331,8 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::GetPolicy(_)
             | Method::ListTrustedClients(_)
             | Method::GetSystemFirewall(_)
+            | Method::ListAlerts(_)
+            | Method::ListAlertRules(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -387,6 +389,11 @@ fn handle(
         },
         Method::SetPolicy(set) => set_policy(daemon, caller, app, &set),
         Method::ListTrustedClients(_) => trusted_clients(&daemon.shared.config),
+        Method::ListAlerts(list) => list_alerts(daemon, &list),
+        Method::AcknowledgeAlerts(ack) => acknowledge_alerts(daemon, app, &ack),
+        Method::ListAlertRules(_) => alert_rules(daemon),
+        Method::PutAlertRule(put) => put_alert_rule(daemon, &put),
+        Method::DeleteAlertRule(delete) => delete_alert_rule(daemon, delete.id),
         Method::GetSystemFirewall(_) => match daemon.store().system_firewall() {
             Ok(firewall) => {
                 R::SystemFirewall(crate::system::wire(&firewall, daemon.system_reverts_at()))
@@ -685,6 +692,93 @@ fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::r
 
 /// Deleting more rules than this at once is a dangerous action.
 const DANGEROUS_DELETE: usize = 20;
+
+fn list_alerts(daemon: &Daemon, list: &v1::ListAlerts) -> v1::response::Result {
+    let before = if list.before == 0 {
+        u64::MAX
+    } else {
+        list.before
+    };
+    let store = daemon.store();
+    match store
+        .alerts(before, list.limit.clamp(1, 500), list.open_only)
+        .and_then(|alerts| Ok((alerts, store.open_alerts()?)))
+    {
+        Ok((alerts, open)) => v1::response::Result::Alerts(v1::AlertPage {
+            alerts: alerts
+                .iter()
+                .map(crate::alerts::StoredAlert::wire)
+                .collect(),
+            open,
+        }),
+        Err(e) => internal(e),
+    }
+}
+
+fn acknowledge_alerts(
+    daemon: &Daemon,
+    app: &str,
+    ack: &v1::AcknowledgeAlerts,
+) -> v1::response::Result {
+    let store = daemon.store();
+    let done = store
+        .acknowledge_alerts(&ack.ids, ack.all, app)
+        .and_then(|_| store.open_alerts());
+    drop(store);
+    match done {
+        Ok(open) => {
+            daemon.shared.hub.publish(
+                v1::Topic::Alerts,
+                &v1::notice::Body::AlertsChanged(v1::AlertsChanged { open }),
+            );
+            v1::response::Result::Done(v1::Done {})
+        }
+        Err(e) => internal(e),
+    }
+}
+
+fn alert_rules(daemon: &Daemon) -> v1::response::Result {
+    match daemon.store().alert_rules() {
+        Ok(rules) => v1::response::Result::AlertRules(v1::AlertRules {
+            rules: rules.iter().map(crate::alerts::AlertRule::wire).collect(),
+        }),
+        Err(e) => internal(e),
+    }
+}
+
+fn delete_alert_rule(daemon: &Daemon, id: u64) -> v1::response::Result {
+    // The store's lock is let go before the rules are listed again.
+    let deleted = daemon.store().delete_alert_rule(id);
+    match deleted {
+        Ok(true) => {
+            daemon.alert_rules_changed();
+            alert_rules(daemon)
+        }
+        Ok(false) => error(v1::ErrorCode::NotFound, format!("no alert rule {id}")),
+        Err(e) => internal(e),
+    }
+}
+
+fn put_alert_rule(daemon: &Daemon, put: &v1::PutAlertRule) -> v1::response::Result {
+    let Some(wire) = &put.rule else {
+        return error(v1::ErrorCode::Invalid, "no rule");
+    };
+    let rule = match crate::alerts::AlertRule::from_wire(wire) {
+        Ok(rule) => rule,
+        Err(e) => return error(v1::ErrorCode::Invalid, e),
+    };
+    let stored = daemon.store().put_alert_rule(&rule);
+    match stored {
+        Ok(_) => {
+            daemon.alert_rules_changed();
+            alert_rules(daemon)
+        }
+        Err(StoreError::NotFound(what, id)) => {
+            error(v1::ErrorCode::NotFound, format!("no {what} {id}"))
+        }
+        Err(e) => internal(e),
+    }
+}
 
 /// A trial lasts at least this long (time to confirm) and at most this long.
 const SYSTEM_TRIAL_SECS: std::ops::RangeInclusive<u32> = 10..=600;
@@ -1221,6 +1315,7 @@ fn status(daemon: &Daemon) -> v1::Status {
         decided: daemon.shared.decided.load(Ordering::Relaxed),
         dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),
         rules: u32::try_from(daemon.shared.rules.load().len()).unwrap_or(u32::MAX),
+        open_alerts: daemon.store().open_alerts().unwrap_or(0),
         pending_prompts: u32::try_from(daemon.shared.broker.count()).unwrap_or(u32::MAX),
         clients: u32::try_from(connected()).unwrap_or(u32::MAX),
     }
@@ -1428,6 +1523,23 @@ fn step_up(
         ?outcome,
         "dangerous action"
     );
+    if outcome != v1::AuditOutcome::Refused {
+        daemon.raise(&crate::alerts::NewAlert {
+            kind: "dangerous_action",
+            title: format!("{app} was allowed to {action}"),
+            body: format!(
+                "uid {}, pid {}: {}",
+                caller.uid,
+                caller.pid,
+                if outcome == v1::AuditOutcome::Authorized {
+                    "authorized with polkit"
+                } else {
+                    "unchecked (root, or step-up off)"
+                }
+            ),
+            rule: None,
+        });
+    }
     if outcome == v1::AuditOutcome::Refused {
         return Err(error(
             v1::ErrorCode::NotAuthorized,

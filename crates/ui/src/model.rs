@@ -197,6 +197,10 @@ pub struct Model {
     pub lint: Option<v1::LintReport>,
     pub policy: Option<v1::NodePolicy>,
     pub system: Option<v1::SystemFirewall>,
+    /// The newest alerts, newest first, and how many of all aren't acknowledged.
+    pub alerts: Vec<v1::Alert>,
+    pub open_alerts: u32,
+    pub alert_rules: Vec<v1::AlertRule>,
     pub trusted: Vec<v1::TrustedClient>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
@@ -215,9 +219,41 @@ pub enum Changed {
     /// The prompts are to be shown.
     ShowPrompts,
     Connections,
+    /// The alerts are to be shown.
+    ShowAlerts,
+    /// An alert was raised: to notify.
+    Alert,
+    /// Alerts were acknowledged somewhere: list them again.
+    AlertsOnNode,
 }
 
 impl Model {
+    fn apply_alert(&mut self, update: Update) -> Changed {
+        match update {
+            Update::Alerts(alerts, open) => {
+                self.alerts = alerts;
+                self.open_alerts = open;
+                Changed::Status
+            }
+            Update::Alert(alert) => {
+                if !alert.acknowledged {
+                    self.open_alerts += 1;
+                }
+                self.alerts.insert(0, alert);
+                Changed::Alert
+            }
+            Update::AlertsChanged(open) => {
+                self.open_alerts = open;
+                Changed::AlertsOnNode
+            }
+            Update::AlertRules(rules) => {
+                self.alert_rules = rules;
+                Changed::Status
+            }
+            _ => Changed::Nothing,
+        }
+    }
+
     pub fn apply(&mut self, update: Update) -> Changed {
         match update {
             Update::Connected(welcome) => {
@@ -285,6 +321,10 @@ impl Model {
                 self.connections = connections;
                 Changed::Connections
             }
+            update @ (Update::Alerts(..)
+            | Update::Alert(_)
+            | Update::AlertsChanged(_)
+            | Update::AlertRules(_)) => self.apply_alert(update),
             Update::SystemFirewall(firewall) => {
                 self.system = Some(firewall);
                 Changed::Status
@@ -306,6 +346,7 @@ impl Model {
                 Changed::Status
             }
             Update::ShowPrompts => Changed::ShowPrompts,
+            Update::ShowAlerts => Changed::ShowAlerts,
             Update::Failed(error) => {
                 self.error = Some(error);
                 Changed::Status

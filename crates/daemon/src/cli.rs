@@ -80,6 +80,13 @@ Commands:
                                   Replace it with a file's; with --trial, it reverts after that many seconds
                                   unless `system confirm` comes first
   system confirm                  Keep a change made with --trial
+  alerts [--all]                  Alerts not acknowledged yet (--all: the newest 50 of every kind)
+  alerts ack <id>... | --all      Acknowledge alerts
+  alerts rules                    The alert rules
+  alerts rules add <name> [--query <q>] [--threshold <n>] [--window <secs>] [--first-program]
+                                  Raise an alert when n connections the query matches come within the window;
+                                  --first-program counts only programs never seen before
+  alerts rules rm <id>            Delete an alert rule
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
@@ -170,6 +177,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("rules") => rules(args, version),
         Some("policy") => policy(args, version),
         Some("system") => system(args, version),
+        Some("alerts") => alerts(args, version),
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
         Some("history") => history(args, version),
@@ -306,6 +314,137 @@ fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
         ids,
         edit: Some(edit),
     })
+}
+
+/// `alerts` and its subcommands.
+fn alerts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let all = args.contains("--all");
+    let command = args.subcommand()?;
+    let mut client = connect(version)?;
+    let print_rules = |result| match result {
+        v1::response::Result::AlertRules(list) => {
+            let mut text = String::new();
+            for rule in &list.rules {
+                let _ = writeln!(
+                    text,
+                    "{:>4} {} {:?}: {} in {} s{}{}",
+                    rule.id,
+                    if rule.enabled { "on " } else { "off" },
+                    rule.name,
+                    rule.threshold,
+                    rule.window_secs,
+                    if rule.query.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" matching `{}`", rule.query)
+                    },
+                    if rule.first_program {
+                        ", programs never seen before"
+                    } else {
+                        ""
+                    },
+                );
+            }
+            out(&text)
+        }
+        _ => Err(unexpected()),
+    };
+    match command.as_deref() {
+        None | Some("list") => {
+            reject_rest(args)?;
+            match client.call(Method::ListAlerts(v1::ListAlerts {
+                before: 0,
+                limit: 50,
+                open_only: !all,
+            }))? {
+                v1::response::Result::Alerts(page) => {
+                    let mut text = String::new();
+                    for alert in &page.alerts {
+                        let _ = writeln!(
+                            text,
+                            "{:>6} {} {}{}: {}",
+                            alert.id,
+                            alert.kind,
+                            alert.title,
+                            if alert.acknowledged {
+                                format!(" (acknowledged by {})", alert.acknowledged_by)
+                            } else {
+                                String::new()
+                            },
+                            alert.body,
+                        );
+                    }
+                    let _ = writeln!(text, "{} not acknowledged", page.open);
+                    out(&text)
+                }
+                _ => Err(unexpected()),
+            }
+        }
+        Some("ack") => {
+            let ids: Vec<u64> = args
+                .finish()
+                .iter()
+                .map(|a| {
+                    a.to_string_lossy().parse().map_err(|_| {
+                        Error::Usage(format!("`{}` isn't an alert id", a.to_string_lossy()))
+                    })
+                })
+                .collect::<Result<_, _>>()?;
+            if ids.is_empty() && !all {
+                return Err(Error::Usage("alerts ack <id>... | --all".to_owned()));
+            }
+            client.call(Method::AcknowledgeAlerts(v1::AcknowledgeAlerts {
+                ids,
+                all,
+            }))?;
+            out("acknowledged\n")
+        }
+        Some("rules") => alert_rules(args, &mut client, print_rules),
+        Some(other) => Err(Error::Usage(format!("unknown command `alerts {other}`"))),
+    }
+}
+
+/// `alerts rules` and its subcommands.
+fn alert_rules(
+    mut args: pico_args::Arguments,
+    client: &mut Client,
+    print_rules: impl Fn(v1::response::Result) -> Result<(), Error>,
+) -> Result<(), Error> {
+    use v1::request::Method;
+    match args.subcommand()?.as_deref() {
+        None => {
+            reject_rest(args)?;
+            print_rules(client.call(Method::ListAlertRules(v1::ListAlertRules {}))?)
+        }
+        Some("add") => {
+            let query: String = args.opt_value_from_str("--query")?.unwrap_or_default();
+            let threshold: u32 = args.opt_value_from_str("--threshold")?.unwrap_or(1);
+            let window_secs: u32 = args.opt_value_from_str("--window")?.unwrap_or(0);
+            let first_program = args.contains("--first-program");
+            let name: String = args.free_from_str()?;
+            reject_rest(args)?;
+            print_rules(client.call(Method::PutAlertRule(v1::PutAlertRule {
+                rule: Some(v1::AlertRule {
+                    id: 0,
+                    name,
+                    enabled: true,
+                    query,
+                    threshold,
+                    window_secs,
+                    first_program,
+                }),
+            }))?)
+        }
+        Some("rm") => {
+            let id: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            print_rules(client.call(Method::DeleteAlertRule(v1::DeleteAlertRule { id }))?)
+        }
+        Some(other) => Err(Error::Usage(format!(
+            "unknown command `alerts rules {other}`"
+        ))),
+    }
 }
 
 /// `system` and its subcommands.
@@ -1028,7 +1167,7 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
 fn format_status(status: &v1::Status) -> String {
     format!(
         "version          {}\nmode             {:?}\nno match         {:?}\nfail open        {}\nrules            {}\n\
-         decided          {}\ndropped events   {}\npending prompts  {}\nclients          {}\n",
+         decided          {}\ndropped events   {}\npending prompts  {}\nclients          {}\nopen alerts      {}\n",
         status.daemon_version,
         status.mode(),
         status.no_match(),
@@ -1038,6 +1177,7 @@ fn format_status(status: &v1::Status) -> String {
         status.dropped_events,
         status.pending_prompts,
         status.clients,
+        status.open_alerts,
     )
 }
 

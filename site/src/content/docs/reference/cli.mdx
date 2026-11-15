@@ -30,6 +30,26 @@ The daemon's version, mode and policy, and its counters: rules in effect, connec
 | `policy set <setting>=<value>...` | Change settings while the daemon runs: `mode=enforce\|monitor`, `no_match=ask\|allow\|deny\|reject`, `no_client=…`, `on_timeout=…` (`allow`, `deny`, `reject`), `prompt_timeout_secs=<5–3600>`, `retention_days=<1–3650>` |
 | `policy reset [<setting>...]` | Return settings (all, without names) to `daemon.toml`'s |
 
+## `alerts`
+
+| Command | |
+| --- | --- |
+| `alerts [--all]` | Alerts not acknowledged yet; `--all`: the newest 50 of any state |
+| `alerts ack <id>...`, `alerts ack --all` | Acknowledge alerts, for every client |
+| `alerts rules` | The [alert rules](/guides/alerts/#alert-rules) |
+| `alerts rules add <name> [--query <q>] [--threshold <n>] [--window <secs>] [--first-program]` | Add one |
+| `alerts rules rm <id>` | Delete one |
+
+## `system`
+
+| Command | |
+| --- | --- |
+| `system` | The [system firewall](/guides/system-firewall/): on or off, its policies and rules |
+| `system on`, `system off` | Turn it on or off |
+| `system input <accept\|drop>`, `system forward <accept\|drop>` | Its policies |
+| `system export`, `system import <file> [--trial <secs>]` | As TOML; with `--trial`, an import reverts by itself unless confirmed |
+| `system confirm` | Keep a change made with `--trial` |
+
 ## `rules`
 
 | Command | |
