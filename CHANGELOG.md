@@ -42,6 +42,7 @@ All notable changes to this project are documented in this file. The format is b
 - **proto:** Add columnar event blocks by @nikarh
 - **daemon:** Send event pages and live batches as columnar blocks by @nikarh
 - **proto:** Add the columnar messages to the schema by @nikarh
+- **ui:** Add the desktop app by @nikarh
 
 ### Fixes
 
