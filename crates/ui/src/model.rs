@@ -93,6 +93,8 @@ pub struct Model {
     pub rules: v1::RuleList,
     pub prompts: BTreeMap<u64, v1::Prompt>,
     pub events: Events,
+    /// The history of rules and folders, newest first.
+    pub changes: Vec<v1::Change>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -157,6 +159,10 @@ impl Model {
                 Changed::Events
             }
             Update::RulesChanged => Changed::RulesOnNode,
+            Update::Changes(changes) => {
+                self.changes = changes;
+                Changed::Status
+            }
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::Failed(error) => {
                 self.error = Some(error);

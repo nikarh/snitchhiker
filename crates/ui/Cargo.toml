@@ -23,5 +23,6 @@ gpui-kit-assets = "0.9.1"
 gpui-pre-linux = { version = "=0.3.12", default-features = false, features = ["wayland", "x11"] }
 gpui-pre-platform = "=0.3.12"
 snitchhiker-client = { version = "0.1.0", path = "../client" }
+snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
 zbus = "6.3.0"

@@ -6525,6 +6525,8 @@ dependencies = [
  "snitchhiker-ebpf",
  "snitchhiker-netfilter",
  "snitchhiker-proto",
+ "wayland-client",
+ "wayland-protocols-wlr",
 ]
 
 [[package]]
@@ -6570,6 +6572,7 @@ dependencies = [
  "gpui-pre-linux",
  "gpui-pre-platform",
  "snitchhiker-client",
+ "snitchhiker-core",
  "snitchhiker-proto",
  "zbus 6.3.0",
 ]

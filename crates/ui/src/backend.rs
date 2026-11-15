@@ -33,6 +33,13 @@ pub enum Request {
     DeleteRule {
         id: u64,
     },
+    AddRule(v1::Rule),
+    UpdateRule(v1::Rule),
+    /// The newest changes to rules and folders.
+    Changes,
+    Undo {
+        change: u64,
+    },
 }
 
 /// What the node tells the app.
@@ -54,6 +61,8 @@ pub enum Update {
         more: bool,
     },
     RulesChanged,
+    /// The history of rules and folders, newest first.
+    Changes(Vec<v1::Change>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -179,10 +188,22 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         Request::DeleteRule { id } => {
             client.call(Method::DeleteRule(v1::DeleteRule { id: *id }))?
         }
+        Request::AddRule(rule) => client.call(Method::AddRule(v1::AddRule {
+            rule: Some(rule.clone()),
+        }))?,
+        Request::UpdateRule(rule) => client.call(Method::UpdateRule(v1::UpdateRule {
+            rule: Some(rule.clone()),
+        }))?,
+        Request::Changes => client.call(Method::ListChanges(v1::ListChanges {
+            before: 0,
+            limit: 500,
+        }))?,
+        Request::Undo { change } => client.call(Method::Undo(v1::Undo { change: *change }))?,
     };
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
         R::Rules(rules) => Some(Update::Rules(rules)),
+        R::Changes(page) => Some(Update::Changes(page.changes)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

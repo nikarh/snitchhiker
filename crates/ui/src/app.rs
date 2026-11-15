@@ -7,14 +7,17 @@ use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Window, div,
 };
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_component::table::{DataTable, TableState};
-use gpui_component::{ActiveTheme as _, IconName, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
 use crate::backend::{Request, Update};
 use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
+use crate::views::editor;
 use crate::views::events::EventsTable;
+use crate::views::history::History;
 use crate::views::prompts::Prompts;
 use crate::views::rules::RulesTable;
 use crate::views::status::Status;
@@ -24,6 +27,7 @@ pub enum Page {
     Prompts,
     Events,
     Rules,
+    History,
     Status,
 }
 
@@ -33,7 +37,9 @@ pub struct App {
     prompts: Entity<Prompts>,
     events: Entity<TableState<EventsTable>>,
     rules: Entity<TableState<RulesTable>>,
+    history: Entity<History>,
     status: Entity<Status>,
+    requests: mpsc::Sender<Request>,
 }
 
 impl App {
@@ -57,10 +63,13 @@ impl App {
             TableState::new(RulesTable::new(model.clone(), requests.clone()), window, cx)
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
+        let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let notices = notify::start(requests.clone(), updates_sender);
+        let own_requests = requests.clone();
         for request in [
             Request::Status,
             Request::Rules,
+            Request::Changes,
             Request::Events { before: 0 },
         ] {
             let _ = requests.send(request);
@@ -89,6 +98,7 @@ impl App {
                         Changed::RulesOnNode => {
                             let _ = requests.send(Request::Rules);
                             let _ = requests.send(Request::Status);
+                            let _ = requests.send(Request::Changes);
                         }
                         Changed::Events => app.events.update(cx, TableState::refresh),
                         Changed::Rules => app.rules.update(cx, TableState::refresh),
@@ -115,7 +125,9 @@ impl App {
             prompts,
             events,
             rules,
+            history,
             status,
+            requests: own_requests,
         }
     }
 
@@ -163,13 +175,33 @@ impl Render for App {
                             cx,
                         ))
                         .child(self.item(Page::Rules, "Rules".into(), IconName::BookOpen, cx))
+                        .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
                         .child(self.item(Page::Status, "Status".into(), IconName::Info, cx)),
                 ),
             );
         let page: AnyElement = match self.page {
             Page::Prompts => self.prompts.clone().into_any_element(),
             Page::Events => DataTable::new(&self.events).into_any_element(),
-            Page::Rules => DataTable::new(&self.rules).into_any_element(),
+            Page::Rules => {
+                let model = self.model.clone();
+                let requests = self.requests.clone();
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex().p_2().child(
+                            Button::new("new-rule")
+                                .small()
+                                .primary()
+                                .label("New rule")
+                                .on_click(move |_, window, cx| {
+                                    editor::open(model.clone(), requests.clone(), None, window, cx);
+                                }),
+                        ),
+                    )
+                    .child(DataTable::new(&self.rules))
+                    .into_any_element()
+            }
+            Page::History => self.history.clone().into_any_element(),
             Page::Status => self.status.clone().into_any_element(),
         };
         h_flex()

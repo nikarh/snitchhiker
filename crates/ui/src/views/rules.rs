@@ -16,12 +16,12 @@ use crate::backend::Request;
 use crate::model::Model;
 
 const COLUMNS: [(&str, &str, f32); 6] = [
-    ("on", "On", 70.),
-    ("action", "Action", 80.),
-    ("tier", "Tier", 90.),
-    ("name", "Folder / name", 320.),
-    ("conditions", "Conditions", 420.),
-    ("actions", "", 100.),
+    ("on", "On", 64.),
+    ("action", "Action", 76.),
+    ("tier", "Tier", 80.),
+    ("name", "Folder / name", 250.),
+    ("conditions", "Conditions", 340.),
+    ("actions", "", 150.),
 ];
 
 pub struct RulesTable {
@@ -160,13 +160,28 @@ impl TableDelegate for RulesTable {
                 .into_any_element(),
             5 if !rule.locked => {
                 let requests = self.requests.clone();
-                Button::new(SharedString::from(format!("delete-{id}")))
-                    .small()
-                    .ghost()
-                    .label("Delete")
-                    .on_click(move |_, _, _| {
-                        let _ = requests.send(Request::DeleteRule { id });
-                    })
+                let editing = (self.model.clone(), self.requests.clone(), rule.clone());
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Button::new(SharedString::from(format!("edit-{id}")))
+                            .small()
+                            .ghost()
+                            .label("Edit")
+                            .on_click(move |_, window, cx| {
+                                let (model, requests, rule) = editing.clone();
+                                crate::views::editor::open(model, requests, Some(rule), window, cx);
+                            }),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("delete-{id}")))
+                            .small()
+                            .ghost()
+                            .label("Delete")
+                            .on_click(move |_, _, _| {
+                                let _ = requests.send(Request::DeleteRule { id });
+                            }),
+                    )
                     .into_any_element()
             }
             _ => div().into_any_element(),
