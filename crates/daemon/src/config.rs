@@ -2,13 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use snitchhiker_core::rule::Action;
 
 pub const DEFAULT_PATH: &str = "/etc/snitchhiker/daemon.toml";
 
 /// Whether the daemon enforces its decisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
     /// Rules and the policy decide.
@@ -19,7 +19,7 @@ pub enum Mode {
 }
 
 /// What happens to a connection no rule decides.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Policy {
     Allow,
@@ -31,7 +31,7 @@ pub enum Policy {
 }
 
 /// What happens to new connections while the daemon isn't running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Fail {
     /// They pass (and the daemon's table is removed when it stops).
@@ -42,7 +42,7 @@ pub enum Fail {
 }
 
 /// What confirms a dangerous action asked for by a client (not root).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum StepUp {
     /// polkit authorizes the client's process (`org.snitchhiker.manage`): the user's password, usually.
@@ -52,7 +52,7 @@ pub enum StepUp {
     Off,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
     pub mode: Mode,

@@ -444,7 +444,7 @@ message AnswerPrompt {
   uint32 suggestion = 4;
   // Or conditions of the client's own (instead of a suggestion).
   optional Conditions conditions = 5;
-  // The folder the rule goes in. Without one, a rule naming a program goes in the program's folder (Apps/<program>,
+  // The folder the rule goes in. Without one, a rule naming a program goes in the program's folder (`Apps/<program>`,
   // scoped to it, made if needed), and others at the top level.
   optional uint64 folder = 6;
 }

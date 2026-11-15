@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use nix::sys::signal::{SigSet, Signal};
-use snitchhiker_daemon::cli;
+use snitchhiker_daemon::cli::{self, DAEMON_HELP};
 use snitchhiker_daemon::config::{self, Config};
 use snitchhiker_daemon::runtime::Daemon;
 use snitchhiker_daemon::trust;
@@ -17,30 +17,6 @@ use tracing::{error, info};
 
 /// The version, with the suffix of development builds (`0.1.0-dev+abc1234`).
 const VERSION: &str = env!("SNITCHHIKER_VERSION");
-
-const DAEMON_HELP: &str = "\
-snitchhikerd: Snitchhiker's interactive application firewall daemon
-
-Usage: snitchhikerd [--config <path>]
-       snitchhikerd [--config <path>] trust-client <path>
-       snitchhikerd [--config <path>] untrust-client <path>
-       snitchhikerd [--config <path>] trusted-clients
-       snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
-
-Commands:
-  trust-client <path>    Trust a client binary on the client socket, pinned to its SHA-256 (again after an
-                         upgrade). It must be root's, in directories only root can write, and setgid to the
-                         client group. Applies to the next connection; the daemon needn't run.
-  untrust-client <path>  Stop trusting it
-  trusted-clients        List the trusted client binaries
-
-Options:
-  --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)
-  -h, --help       Print this help
-  -V, --version    Print the version
-
-Signals: SIGHUP reloads the rules; SIGTERM and SIGINT stop the daemon.
-";
 
 #[derive(Debug, thiserror::Error)]
 enum Error {
