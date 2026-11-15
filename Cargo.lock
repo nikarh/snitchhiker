@@ -12,6 +12,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocation-counter"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "beb9e990c0a33699f1984d85a6abead615ccc72dd8130bf3e15dcabe2ca149c9"
+
+[[package]]
 name = "arc-swap"
 version = "1.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -829,6 +835,7 @@ checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 name = "snitchhiker-core"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "ipnet",
  "regex",
  "serde",
