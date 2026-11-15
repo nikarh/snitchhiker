@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["report","writable_by_user"],"struct":["Facts"]};
