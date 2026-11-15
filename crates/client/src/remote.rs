@@ -17,6 +17,19 @@ pub fn connect(
     Client::handshake(connected.stream, Some(connected.keep), app, version)
 }
 
+/// Pairs this device with the node offering `code` (found on the LAN, or through `options`' relays): the link the
+/// code stands for, and the node's answer.
+pub fn pair_with_code(
+    key: &Key,
+    code: &snitchhiker_remote::code::Code,
+    name: &str,
+    options: &Options,
+) -> Result<(PairLink, v1::PairResponse), Error> {
+    let link = snitchhiker_remote::code::redeem(code, options)?;
+    let response = pair(key, &link, name, options)?;
+    Ok((link, response))
+}
+
 /// Pairs this device (`key`, called `name`) with the node of `link`; the node's answer.
 pub fn pair(
     key: &Key,

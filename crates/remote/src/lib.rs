@@ -15,6 +15,8 @@ use std::sync::Arc;
 use iroh::endpoint::presets;
 use iroh::{Endpoint, EndpointAddr, PublicKey, RelayMode, RelayUrl, SecretKey, TransportAddr};
 
+pub mod code;
+
 /// The protocol's ALPN: major version 1.
 pub const ALPN: &[u8] = b"snitchhiker/1";
 /// Pairing a device with a one-time secret (a link or a QR code).
@@ -155,6 +157,8 @@ pub struct Options {
     pub port: u16,
     /// Ask the gateway for a port mapping (`UPnP`, NAT-PMP, PCP), for direct connections from outside.
     pub port_mapping: bool,
+    /// Find and be found on the local network (mDNS): a node announces itself, a client looks nodes up there.
+    pub lan: bool,
 }
 
 fn builder(key: &Key, options: &Options) -> io::Result<iroh::endpoint::Builder> {
@@ -166,6 +170,9 @@ fn builder(key: &Key, options: &Options) -> io::Result<iroh::endpoint::Builder> 
         } else {
             iroh::endpoint::PortmapperConfig::Disabled
         });
+    if options.lan {
+        builder = builder.address_lookup(iroh_mdns_address_lookup::MdnsAddressLookup::builder());
+    }
     if options.port != 0 {
         builder = builder
             .clear_ip_transports()

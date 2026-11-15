@@ -1222,6 +1222,9 @@ message Pairing {
   // The node's id and its fingerprint, for people to compare.
   string node_id = 3;
   string fingerprint = 4;
+  // The same pairing as a code to type (`7-orbit-velvet-canyon`), found on the LAN or through the node's relays: one
+  // attempt, after which it is spent (decision 0010).
+  string code = 5;
 }
 
 message ListDevices {}

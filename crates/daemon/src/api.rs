@@ -1921,7 +1921,7 @@ fn agents(
 
 /// The requests about remote devices: pairing, the devices, and their actions waiting for approval.
 fn devices(
-    daemon: &Daemon,
+    daemon: &Arc<Daemon>,
     caller: &Caller,
     app: &str,
     method: v1::request::Method,
@@ -2020,7 +2020,7 @@ fn decide_approval(
 
 /// `StartPairing`: a dangerous action (a device paired as admin can change everything).
 fn start_pairing(
-    daemon: &Daemon,
+    daemon: &Arc<Daemon>,
     caller: &Caller,
     app: &str,
     start: &v1::StartPairing,

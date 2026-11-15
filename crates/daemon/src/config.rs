@@ -54,6 +54,10 @@ pub enum StepUp {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "daemon.toml's settings: each is a switch of its own"
+)]
 pub struct Config {
     pub mode: Mode,
     /// What happens to a connection no rule decides.
@@ -95,6 +99,9 @@ pub struct Config {
     pub relays: Vec<String>,
     /// The UDP port of the remote endpoint (0: any free port).
     pub remote_port: u16,
+    /// Announce the node on the local network (mDNS), so devices there find it without a relay, and pairing codes
+    /// work there.
+    pub lan_discovery: bool,
     /// Which clients are notified of a prompt (all of them can answer it).
     pub prompt_routing: Routing,
     /// With `escalate`: how long a prompt waits for the clients on this machine before remote devices are notified.
@@ -136,6 +143,7 @@ impl Default for Config {
             remote: false,
             relays: Vec::new(),
             remote_port: 0,
+            lan_discovery: true,
             prompt_routing: Routing::All,
             escalate_after_secs: 20,
         }

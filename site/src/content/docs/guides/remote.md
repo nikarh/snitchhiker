@@ -43,6 +43,12 @@ The link carries a one-time secret: it pairs one device, within 10 minutes, and 
 
 `--role viewer` pairs a device that can look but not change anything.
 
+### Pairing by code
+
+`snitchhiker pair` also prints a code, such as `412-orbit-velvet-canyon`, for when a link can't be pasted or scanned: a server's console, a device without a camera. Type it in **Add node** instead of the link. The device finds the node on the local network, or through the relays of the nodes it already knows.
+
+The code is good for one attempt: a device that types it wrong spends it (start pairing again), and the node raises an alert. Behind it, the device and the node agree on a key from the code without sending it (SPAKE2), so neither the network nor a relay learns it; the node then sends the pairing link, sealed with that key ([decision 0010](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0010-pairing-codes.md)).
+
 ## Managing several nodes
 
 Each node in the app has its own pages and its own live connection, so prompts, alerts and proposals of every node arrive while you look at another, and the tray counts the prompts of all of them. A notification shows its node when clicked.

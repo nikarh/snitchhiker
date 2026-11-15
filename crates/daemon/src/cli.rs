@@ -1616,9 +1616,17 @@ fn pair(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                         .build()
                 },
             );
+            let code = if pairing.code.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "Or type this code in Add node (nearby, or through the node's relay): {}\n",
+                    pairing.code
+                )
+            };
             out(&format!(
-                "{qr}\n{}\n\nOpen the link on the device, scan the code, or paste the link into the app's Add node.\n\
-                 It pairs one device, within 10 minutes.\nThis node: {}\n",
+                "{qr}\n{}\n\nOpen the link on the device, scan the QR code, or paste the link into the app's Add node.\n\
+                 {code}It pairs one device, within 10 minutes.\nThis node: {}\n",
                 pairing.link, pairing.fingerprint
             ))
         }

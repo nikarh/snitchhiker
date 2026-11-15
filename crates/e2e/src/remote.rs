@@ -483,3 +483,66 @@ pub fn prompts_escalate_to_devices_and_not_to_muted_ones() -> Result<(), String>
         &found,
     )
 }
+
+fn code_of(printed: &str) -> Result<snitchhiker_remote::code::Code, String> {
+    printed
+        .lines()
+        .find_map(|l| l.split_once("this code").map(|(_, rest)| rest))
+        .and_then(|rest| rest.rsplit(' ').next())
+        .ok_or_else(|| format!("no code printed:\n{printed}"))?
+        .trim()
+        .parse()
+}
+
+/// A device pairs by typing the node's code (found on the LAN by mDNS); a wrong code is spent, and reported.
+pub fn a_device_pairs_by_code_on_the_lan() -> Result<(), String> {
+    use snitchhiker_client::remote::pair_with_code;
+    let daemon = Running::start("remote-code", "mode = \"monitor\"\nremote = true\n")?;
+    let options = Options {
+        lan: true,
+        ..Options::default()
+    };
+    let device = Key::generate();
+    let printed = daemon.cli(&["pair", "--name", "tablet"])?;
+    let code = code_of(&printed)?;
+    let paired = pair_with_code(&device, &code, "tablet", &options).map_err(|e| e.to_string());
+    let connected = paired
+        .as_ref()
+        .map_err(Clone::clone)
+        .and_then(|(link, _)| {
+            connect(&device, &link.node, &options, "e2e", "0").map_err(|e| e.to_string())
+        })
+        .and_then(|mut c| status(&mut c));
+    // A wrong guess spends the code: the right one fails after it.
+    let second = code_of(&daemon.cli(&["pair"])?)?;
+    let mut wrong = second.clone();
+    let replacement = if wrong.words[0] == "zoo" {
+        "zone"
+    } else {
+        "zoo"
+    };
+    replacement.clone_into(&mut wrong.words[0]);
+    let guessed =
+        pair_with_code(&Key::generate(), &wrong, "intruder", &options).map_err(|e| e.to_string());
+    let after =
+        pair_with_code(&Key::generate(), &second, "late", &options).map_err(|e| e.to_string());
+    let alerts = daemon.cli(&["alerts"])?;
+    let devices = daemon.cli(&["devices"])?;
+    let found = format!(
+        "{printed}\npaired: {:?}\nconnected: {:?}\nguessed: {guessed:?}\nafter: {after:?}\n{alerts}\n{devices}",
+        paired
+            .as_ref()
+            .map(|(link, response)| (&link.name, response.role())),
+        connected.as_ref().map(|s| &s.daemon_version)
+    );
+    check(
+        paired.is_ok() && connected.is_ok() && devices.contains("tablet"),
+        "the device didn't pair by the code and connect",
+        &found,
+    )?;
+    check(
+        guessed.is_err() && after.is_err() && alerts.contains("pairing code with the wrong words"),
+        "a wrong code wasn't refused, didn't spend the code, or wasn't reported",
+        &found,
+    )
+}

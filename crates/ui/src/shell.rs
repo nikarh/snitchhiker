@@ -130,8 +130,10 @@ impl Shell {
     }
 
     fn start_adding(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let link =
-            cx.new(|cx| InputState::new(window, cx).placeholder("snitchhiker://pair?v=1&node=…"));
+        let link = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("snitchhiker://pair?v=1&node=…  or  7-orbit-velvet-canyon")
+        });
         let name =
             cx.new(|cx| InputState::new(window, cx).default_value(crate::nodes::device_name()));
         self.adding = Some(Adding {
@@ -149,14 +151,25 @@ impl Shell {
         };
         let text = adding.link.read(cx).value().to_string();
         let device_name = adding.name.read(cx).value().trim().to_owned();
-        let link: snitchhiker_remote::PairLink = match text.parse() {
-            Ok(link) => link,
-            Err(error) => {
-                adding.error = Some(error);
-                cx.notify();
-                return;
-            }
-        };
+        // A link, or a code to look up nearby or through the relays of the nodes already known.
+        let target: Result<snitchhiker_remote::PairLink, snitchhiker_remote::code::Code> =
+            match text.parse() {
+                Ok(link) => Ok(link),
+                Err(error) => {
+                    let Ok(code) = text.parse::<snitchhiker_remote::code::Code>() else {
+                        adding.error = Some(format!("{error}, nor a pairing code"));
+                        cx.notify();
+                        return;
+                    };
+                    Err(code)
+                }
+            };
+        let relays: Vec<String> = self
+            .nodes
+            .iter()
+            .filter_map(|n| n.remote.as_ref())
+            .flat_map(|r| r.relays.clone())
+            .collect();
         adding.busy = true;
         adding.error = None;
         cx.notify();
@@ -165,13 +178,30 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let key = crate::nodes::device_key().map_err(|e| e.to_string())?;
-                    let response = snitchhiker_client::remote::pair(
-                        &key,
-                        &link,
-                        &device_name,
-                        &snitchhiker_remote::Options::default(),
-                    )
-                    .map_err(|e| e.to_string())?;
+                    let options = snitchhiker_remote::Options {
+                        relays,
+                        lan: true,
+                        ..snitchhiker_remote::Options::default()
+                    };
+                    let (link, response) = match target {
+                        Ok(link) => {
+                            let response = snitchhiker_client::remote::pair(
+                                &key,
+                                &link,
+                                &device_name,
+                                &options,
+                            )
+                            .map_err(|e| e.to_string())?;
+                            (link, response)
+                        }
+                        Err(code) => snitchhiker_client::remote::pair_with_code(
+                            &key,
+                            &code,
+                            &device_name,
+                            &options,
+                        )
+                        .map_err(|e| e.to_string())?,
+                    };
                     let node = RemoteNode {
                         name: if response.node_name.is_empty() {
                             link.name.clone()
@@ -245,7 +275,7 @@ impl Shell {
             .child(div().text_lg().child("Add a node"))
             .child(div().text_color(theme.muted_foreground).child(
                 "On the other node, run `sudo snitchhiker pair` (or Devices → Pair a device in its app), and paste \
-                 the link it shows.",
+                 the link it shows, or type its code.",
             ))
             .child(Input::new(&adding.link))
             .child(div().text_sm().text_color(theme.muted_foreground).child("This device's name there"))

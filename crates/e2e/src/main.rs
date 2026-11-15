@@ -147,6 +147,10 @@ const SCENARIOS: &[Scenario] = &[
         remote::a_paired_device_connects_and_is_unpaired,
     ),
     (
+        "remote/a-device-pairs-by-code-on-the-lan",
+        remote::a_device_pairs_by_code_on_the_lan,
+    ),
+    (
         "remote/a-device-connects-through-the-relay",
         remote::a_device_connects_through_the_relay,
     ),

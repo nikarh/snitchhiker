@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::thread;
 
 use snitchhiker_proto::{frame, v1};
+use snitchhiker_remote::code::{Code, Offer};
 use snitchhiker_remote::{Accepted, Key, Listener, Options, PAIR_ALPN, PairLink};
 use tracing::{info, warn};
 
@@ -34,6 +35,8 @@ struct Pairing {
 pub struct Remote {
     listener: OnceLock<Listener>,
     pairings: Mutex<HashMap<String, Pairing>>,
+    /// The codes offered, by their pairing's secret.
+    offers: Mutex<HashMap<String, Offer>>,
     /// Each device's open connections, by a number of their own.
     connections: Mutex<HashMap<String, Vec<(u64, UnixStream)>>>,
     next: std::sync::atomic::AtomicU64,
@@ -57,11 +60,7 @@ fn key_path(daemon: &Daemon) -> PathBuf {
 pub fn start(daemon: &Arc<Daemon>) -> std::io::Result<()> {
     let key = Key::load_or_create(&key_path(daemon))?;
     let config = &daemon.shared.config;
-    let options = Options {
-        relays: config.relays.clone(),
-        port: config.remote_port,
-        port_mapping: false,
-    };
+    let options = options(config);
     let weak = Arc::downgrade(daemon);
     let listener = Listener::bind(&key, &options, move |accepted| {
         let Some(daemon) = weak.upgrade() else {
@@ -74,6 +73,15 @@ pub fn start(daemon: &Arc<Daemon>) -> std::io::Result<()> {
     info!(id = %listener.id(), relays = ?config.relays, "remote endpoint started");
     let _ = daemon.remote.listener.set(listener);
     Ok(())
+}
+
+fn options(config: &crate::config::Config) -> Options {
+    Options {
+        relays: config.relays.clone(),
+        port: config.remote_port,
+        port_mapping: false,
+        lan: config.lan_discovery,
+    }
 }
 
 fn serve(daemon: &Arc<Daemon>, accepted: &Accepted) {
@@ -147,7 +155,10 @@ fn pair(daemon: &Daemon, peer: &str, stream: &UnixStream) {
         pairings.retain(|_, p| p.expires_ms > now);
         let secret = pairings.keys().find(|s| same(s, &request.secret)).cloned();
         // Single use: taken whatever happens next.
-        secret.and_then(|s| pairings.remove(&s))
+        secret.and_then(|s| {
+            lock(&daemon.remote.offers).remove(&s);
+            pairings.remove(&s)
+        })
     };
     let response = match found {
         None => {
@@ -212,8 +223,57 @@ fn error(code: v1::ErrorCode, message: impl Into<String>) -> v1::response::Resul
     })
 }
 
-/// `StartPairing`: a one-time secret, and the link that carries it.
-pub fn start_pairing(daemon: &Daemon, name: &str, role: v1::Role) -> v1::response::Result {
+/// Offers `link` as a code too; a wrong attempt spends the pairing (and is reported). The code goes after the
+/// pairing's time.
+fn offer_code(daemon: &Arc<Daemon>, secret: &str, link: &PairLink) -> Option<Code> {
+    let code = Code::generate().ok()?;
+    let weak = Arc::downgrade(daemon);
+    let spent = secret.to_owned();
+    let offer = Offer::open(
+        &code,
+        &options(&daemon.shared.config),
+        link.to_string(),
+        move |right| {
+            let Some(daemon) = weak.upgrade() else {
+                return;
+            };
+            if !right {
+                warn!("a pairing code was tried with the wrong words");
+                lock(&daemon.remote.pairings).remove(&spent);
+                daemon.raise(&crate::alerts::NewAlert {
+                    kind: "pairing",
+                    title: "A device tried a pairing code with the wrong words".to_owned(),
+                    body: "The code is spent: start pairing again.".to_owned(),
+                    rule: None,
+                });
+            }
+        },
+    );
+    match offer {
+        Ok(offer) => {
+            lock(&daemon.remote.offers).insert(secret.to_owned(), offer);
+            let weak = Arc::downgrade(daemon);
+            let secret = secret.to_owned();
+            let _ = thread::Builder::new()
+                .name("pairing-expiry".to_owned())
+                .spawn(move || {
+                    thread::sleep(std::time::Duration::from_millis(PAIRING_MS));
+                    if let Some(daemon) = weak.upgrade() {
+                        lock(&daemon.remote.offers).remove(&secret);
+                        lock(&daemon.remote.pairings).remove(&secret);
+                    }
+                });
+            Some(code)
+        }
+        Err(error) => {
+            warn!(%error, "offering a pairing code");
+            None
+        }
+    }
+}
+
+/// `StartPairing`: a one-time secret, the link that carries it, and the same as a code.
+pub fn start_pairing(daemon: &Arc<Daemon>, name: &str, role: v1::Role) -> v1::response::Result {
     let Some(listener) = daemon.remote.listener.get() else {
         return error(
             v1::ErrorCode::Invalid,
@@ -242,7 +302,7 @@ pub fn start_pairing(daemon: &Daemon, name: &str, role: v1::Role) -> v1::respons
     let link = PairLink {
         node: node.clone(),
         name: hostname(),
-        secret,
+        secret: secret.clone(),
         role: if role == v1::Role::Viewer {
             "viewer"
         } else {
@@ -250,10 +310,12 @@ pub fn start_pairing(daemon: &Daemon, name: &str, role: v1::Role) -> v1::respons
         }
         .to_owned(),
     };
+    let code = offer_code(daemon, &secret, &link);
     v1::response::Result::Pairing(v1::Pairing {
         link: link.to_string(),
         expires_ms,
         fingerprint: snitchhiker_remote::fingerprint(&node.id),
+        code: code.map_or_else(String::new, |c| c.to_string()),
         node_id: node.id,
     })
 }
