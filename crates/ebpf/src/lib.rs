@@ -24,7 +24,7 @@ const HOOKS: &[(&str, &str)] = &[
 const AF_INET: u8 = 2;
 const AF_INET6: u8 = 10;
 const KEY_LEN: usize = 28;
-const OWNER_LEN: usize = 48;
+const OWNER_LEN: usize = 56;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -99,6 +99,8 @@ pub struct FlowOwner {
     pub cgroup: u64,
     /// `CLOCK_MONOTONIC` nanoseconds when the flow was recorded.
     pub ktime: u64,
+    /// When the process started, in nanoseconds since boot; with `pid`, it identifies the process.
+    pub start_boottime: u64,
     /// The process (thread group) id.
     pub pid: u32,
     /// The thread id.
@@ -124,16 +126,17 @@ impl FlowOwner {
                 .map_or(0, u32::from_ne_bytes)
         };
         let mut comm = [0_u8; 16];
-        if let Some(source) = bytes.get(32..48) {
+        if let Some(source) = bytes.get(40..56) {
             comm.copy_from_slice(source);
         }
         Self {
             cgroup: u64_at(0),
             ktime: u64_at(8),
-            pid: u32_at(16),
-            tid: u32_at(20),
-            uid: u32_at(24),
-            gid: u32_at(28),
+            start_boottime: u64_at(16),
+            pid: u32_at(24),
+            tid: u32_at(28),
+            uid: u32_at(32),
+            gid: u32_at(36),
             comm,
         }
     }
@@ -232,10 +235,12 @@ mod tests {
     #[test]
     fn owners_decode_the_c_layout() {
         let mut bytes = [0_u8; OWNER_LEN];
-        bytes[16..20].copy_from_slice(&42_u32.to_ne_bytes());
-        bytes[24..28].copy_from_slice(&1001_u32.to_ne_bytes());
-        bytes[32..36].copy_from_slice(b"curl");
+        bytes[16..24].copy_from_slice(&7_u64.to_ne_bytes());
+        bytes[24..28].copy_from_slice(&42_u32.to_ne_bytes());
+        bytes[32..36].copy_from_slice(&1001_u32.to_ne_bytes());
+        bytes[40..44].copy_from_slice(b"curl");
         let owner = FlowOwner::decode(&bytes);
+        assert_eq!(owner.start_boottime, 7);
         assert_eq!(owner.pid, 42);
         assert_eq!(owner.uid, 1001);
         assert_eq!(owner.comm(), b"curl");

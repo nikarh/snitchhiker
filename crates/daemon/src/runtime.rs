@@ -61,6 +61,8 @@ pub struct Shared {
     host: HostNamespaces,
     events: SyncSender<Event>,
     pub dropped_events: AtomicU64,
+    /// The executable recorded for connections whose process isn't known.
+    unknown: Arc<str>,
     pub decided: AtomicU64,
 }
 
@@ -103,6 +105,7 @@ impl Daemon {
             host: HostNamespaces::read()?,
             events: sender,
             dropped_events: AtomicU64::new(0),
+            unknown: Arc::from(""),
             decided: AtomicU64::new(0),
             config,
         });
@@ -268,7 +271,7 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         destination_port: headers.destination_port,
     };
     let owner = shared.attribution.owner(&key);
-    let process = owner.and_then(|owner| processes.get(owner.pid));
+    let process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
     let now = now_ms();
     let uid = process
         .as_ref()
@@ -284,7 +287,7 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
     let facts = Facts {
-        exe: process.as_ref().map_or("", |p| p.exe.as_str()),
+        exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: empty,
         cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
@@ -318,7 +321,7 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         time_ms: now,
         exe: process
             .as_ref()
-            .map_or_else(|| Arc::from(""), |p| Arc::from(p.exe.as_str())),
+            .map_or_else(|| Arc::clone(&shared.unknown), |p| Arc::clone(&p.exe)),
         host: hosts.first().cloned(),
         uid,
         pid,

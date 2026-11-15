@@ -1,6 +1,8 @@
 //! What the daemon knows about the process behind a connection, read from `/proc` and cached.
 //!
-//! Entries are keyed by pid *and* start time, so a pid reused by a new process is never given the old one's facts.
+//! Entries are keyed by pid *and* start time (from the attribution programs, so a hit reads nothing from `/proc`);
+//! on a miss the process in `/proc` must have exactly that start time, so a pid reused by a new process is never
+//! given the old one's facts.
 
 use std::collections::HashMap;
 use std::fs;
@@ -10,6 +12,9 @@ use std::sync::Arc;
 
 use snitchhiker_core::rule::ContextKind;
 
+/// The unit of the start time in `/proc/<pid>/stat`: clock ticks of `USER_HZ`, 100 on Linux (fixed for
+/// userspace whatever the kernel's tick rate).
+const NANOS_PER_TICK: u64 = 1_000_000_000 / 100;
 /// How many ancestors are recorded.
 const MAX_ANCESTORS: usize = 16;
 /// Entries kept before the oldest are dropped.
@@ -19,7 +24,7 @@ const CAPACITY: usize = 4096;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessInfo {
     pub pid: u32,
-    pub exe: String,
+    pub exe: Arc<str>,
     pub cmdline: String,
     pub uid: u32,
     pub home: Option<String>,
@@ -65,13 +70,17 @@ impl ProcessCache {
         }
     }
 
-    /// The process `pid`, if it still exists.
-    pub fn get(&mut self, pid: u32) -> Option<Arc<ProcessInfo>> {
-        let start = start_time(pid)?;
+    /// The process `pid` that started at `start_boottime` (nanoseconds since boot), if it still exists.
+    pub fn get(&mut self, pid: u32, start_boottime: u64) -> Option<Arc<ProcessInfo>> {
+        let start = start_boottime / NANOS_PER_TICK;
         self.clock += 1;
         if let Some((used, info)) = self.entries.get_mut(&(pid, start)) {
             *used = self.clock;
             return Some(Arc::clone(info));
+        }
+        // A different process may have the pid now.
+        if start_time(pid)? != start {
+            return None;
         }
         let info = Arc::new(self.read(pid)?);
         if self.entries.len() >= CAPACITY {
@@ -84,7 +93,7 @@ impl ProcessCache {
 
     fn read(&mut self, pid: u32) -> Option<ProcessInfo> {
         let exe = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
-        let exe = exe.to_string_lossy().into_owned();
+        let exe = Arc::from(exe.to_string_lossy());
         let cmdline = fs::read(format!("/proc/{pid}/cmdline")).map_or_else(
             |_| String::new(),
             |bytes| {
@@ -201,14 +210,18 @@ mod tests {
     }
 
     #[test]
-    fn reads_this_process() {
+    fn reads_this_process_once_and_checks_its_start_time() {
         let host = HostNamespaces::read().unwrap_or(HostNamespaces { mnt: 0, net: 0 });
         let mut cache = ProcessCache::new(host);
-        let me = cache.get(std::process::id()).unwrap();
-        assert_eq!(me.pid, std::process::id());
+        let pid = std::process::id();
+        let start = start_time(pid).unwrap() * NANOS_PER_TICK;
+        let me = cache.get(pid, start).unwrap();
+        assert_eq!(me.pid, pid);
         assert!(me.exe.contains("snitchhiker_daemon") || me.exe.contains("snitchhiker-daemon"));
-        let again = cache.get(std::process::id()).unwrap();
+        let again = cache.get(pid, start).unwrap();
         assert!(Arc::ptr_eq(&me, &again));
+        // Another start time is another process: not this one.
+        assert!(cache.get(pid, start + NANOS_PER_TICK).is_none());
     }
 
     #[test]

@@ -81,6 +81,11 @@ struct sockaddr_in6 {
 	struct in6_addr sin6_addr;
 } __attribute__((preserve_access_index));
 
+struct task_struct {
+	struct task_struct *group_leader;
+	__u64 start_boottime;
+} __attribute__((preserve_access_index));
+
 struct msghdr {
 	void *msg_name;
 	int msg_namelen;
@@ -98,10 +103,13 @@ struct flow_key {
 	__u8 daddr[16];
 };
 
-// Who opened it. 48 bytes, no padding.
+// Who opened it. 56 bytes, no padding.
 struct flow_owner {
 	__u64 cgroup;
 	__u64 ktime;
+	// When the process started, in nanoseconds since boot (what /proc/<pid>/stat reports in clock ticks): with the
+	// pid, it identifies the process even after the pid is reused.
+	__u64 start_boottime;
 	__u32 tgid;
 	__u32 tid;
 	__u32 uid;
@@ -139,6 +147,8 @@ static __always_inline void record(struct flow_key *key)
 
 	owner.cgroup = bpf_get_current_cgroup_id();
 	owner.ktime = bpf_ktime_get_ns();
+	struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+	owner.start_boottime = BPF_CORE_READ(task, group_leader, start_boottime);
 	owner.tgid = pid_tgid >> 32;
 	owner.tid = (__u32)pid_tgid;
 	owner.uid = (__u32)uid_gid;
