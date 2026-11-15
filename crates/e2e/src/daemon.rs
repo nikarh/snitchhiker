@@ -20,6 +20,9 @@ pub struct Running {
 
 impl Running {
     pub fn start(name: &str, settings: &str) -> Result<Self, String> {
+        // The packaged service must not run next to a test daemon (they would share queues and the table).
+        let _ = run("systemctl", &["stop", "snitchhikerd"]);
+        let _ = run("systemctl", &["reset-failed", "snitchhikerd"]);
         let dir = format!("{DIR}/{name}");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -61,10 +64,10 @@ impl Running {
         Ok(running)
     }
 
+    /// The command line, which talks to the running daemon (there is one at a time).
     pub fn cli(&self, args: &[&str]) -> Result<String, String> {
-        let mut all = vec!["--config", &self.config];
-        all.extend_from_slice(args);
-        run("snitchhiker", &all)
+        debug_assert!(self.child.is_some(), "the daemon isn't running");
+        run("snitchhiker", args)
     }
 
     /// Stops the daemon and starts it again with `settings` instead, keeping its database.
@@ -280,7 +283,18 @@ pub fn reject_fails_at_once() -> Result<(), String> {
 /// The packaged service: systemd reports it active only once the table is in place, and it stops cleanly.
 pub fn service_starts_ready_and_stops() -> Result<(), String> {
     let _ = std::fs::remove_file(PIDFILE);
-    run("systemctl", &["start", "snitchhikerd"])?;
+    let started = run("systemctl", &["start", "snitchhikerd"]);
+    if let Err(error) = started {
+        let log = run(
+            "journalctl",
+            &["-u", "snitchhikerd", "--no-pager", "-n", "20"],
+        )
+        .unwrap_or_default();
+        // A failing service restarts itself: stop it, so it doesn't run next to the other scenarios' daemons.
+        let _ = run("systemctl", &["stop", "snitchhikerd"]);
+        let _ = run("nft", &["delete", "table", "inet", "snitchhiker"]);
+        return Err(format!("{error}\n{log}"));
+    }
     // `systemctl start` of a Type=notify unit returns once the daemon said READY=1.
     let tables = run("nft", &["list", "tables"]);
     let status = run(

@@ -14,6 +14,7 @@ mod local_auth;
 mod names;
 mod nftables;
 mod perf;
+mod prompts;
 mod queue;
 mod util;
 
@@ -96,6 +97,22 @@ const SCENARIOS: &[Scenario] = &[
     (
         "perf/foreign-sets-dont-slow-us-down",
         perf::foreign_sets_dont_slow_us_down,
+    ),
+    (
+        "prompts/an-answer-decides-and-leaves-a-rule",
+        prompts::an_answer_decides_and_leaves_a_rule,
+    ),
+    (
+        "prompts/unanswered-prompts-time-out",
+        prompts::unanswered_prompts_time_out,
+    ),
+    (
+        "prompts/the-same-connections-share-a-prompt",
+        prompts::the_same_connections_share_a_prompt,
+    ),
+    (
+        "prompts/without-listeners-no-client-decides",
+        prompts::without_listeners_no_client_decides,
     ),
     ("escape/tcp-fast-open", escape::tcp_fast_open),
     ("escape/udp-sendto", escape::udp_sendto),
