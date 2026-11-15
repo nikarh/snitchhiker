@@ -5,9 +5,15 @@
 # (`snitchhiker events`), to learn what a machine does before enforcing. Packages start in monitor mode.
 mode = "monitor"
 
-# What happens to a connection no rule decides: allow, deny (dropped; the program times out) or reject (dropped,
-# and the program's socket closed at once).
+# What happens to a connection no rule decides: allow, deny (dropped; the program times out), reject (dropped,
+# and the program's socket closed at once) or ask (held while the connected clients are asked).
 no_match = "deny"
+
+# With no_match = "ask": what happens when no client listens for prompts, how long a prompt waits for an answer
+# (1 to 3600 seconds), and what happens when nobody answers in time. Each of allow, deny or reject.
+#no_client = "deny"
+#prompt_timeout_secs = 30
+#on_timeout = "deny"
 
 # While the daemon isn't running: closed (nothing new gets out; the table stays when it stops) or open (everything
 # passes; the table is removed when it stops). On servers reached over the network, open is the safer choice.

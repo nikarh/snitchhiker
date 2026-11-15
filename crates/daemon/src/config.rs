@@ -191,6 +191,12 @@ mod tests {
     }
 
     #[test]
+    fn the_packaged_file_parses() {
+        let config = Config::parse(include_str!("../../../dist/daemon.toml")).unwrap();
+        assert_eq!(config.mode, Mode::Monitor);
+    }
+
+    #[test]
     fn rejects_nonsense() {
         assert!(Config::parse("queues = 0").is_err());
         assert!(Config::parse("typo = 1").is_err());
