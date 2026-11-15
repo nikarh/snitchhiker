@@ -11,6 +11,7 @@ use std::os::fd::{AsFd, AsRawFd as _, OwnedFd};
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 use nix::sys::socket::{getsockopt, sockopt};
@@ -40,6 +41,9 @@ pub struct Peer {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrustedExe {
     pub path: PathBuf,
+    /// The SHA-256 of the binary, when it was registered with `snitchhikerd trust-client`: a binary changed in place
+    /// is then refused until it is registered again.
+    pub sha256: Option<[u8; 32]>,
 }
 
 /// What a peer must be to be a client.
@@ -62,6 +66,8 @@ pub enum Refusal {
     Traced(u32),
     #[error("other processes may read the process's memory (it isn't running set-id)")]
     Dumpable,
+    #[error("{0} changed since it was registered (snitchhikerd trust-client registers it again)")]
+    Changed(PathBuf),
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -157,6 +163,11 @@ pub fn verify(peer: &Peer, policy: &ClientPolicy) -> Result<(), Refusal> {
         })
         .ok_or_else(|| Refusal::UntrustedExe(peer.exe.clone()))?;
     root_owned_and_unwritable(&trusted.path)?;
+    if let Some(expected) = trusted.sha256
+        && !digest_is(&trusted.path, peer.exe_id, &expected)
+    {
+        return Err(Refusal::Changed(trusted.path.clone()));
+    }
     if peer.tracer != 0 {
         return Err(Refusal::Traced(peer.tracer));
     }
@@ -166,9 +177,67 @@ pub fn verify(peer: &Peer, policy: &ClientPolicy) -> Result<(), Refusal> {
     Ok(())
 }
 
+/// What identifies a file's contents without reading them: an inode whose size, modification and change times are the
+/// same. Only the kernel sets the change time, so a write can't hide behind it.
+type ContentKey = (u64, u64, u64, i64, i64, i64, i64);
+
+/// Digests of client binaries, so a client's binary is read once, not on every connection.
+static DIGESTS: Mutex<Vec<(ContentKey, [u8; 32])>> = Mutex::new(Vec::new());
+/// Digests remembered; a few binaries are clients, more is churn from upgrades.
+const DIGESTS_KEPT: usize = 16;
+
+/// Whether the file at `path`, which must be the inode `exe_id` (the one the process runs), has the digest `expected`.
+fn digest_is(path: &Path, exe_id: (u64, u64), expected: &[u8; 32]) -> bool {
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let Ok(meta) = file.metadata() else {
+        return false;
+    };
+    if (meta.dev(), meta.ino()) != exe_id {
+        return false;
+    }
+    let key = (
+        meta.dev(),
+        meta.ino(),
+        meta.size(),
+        meta.mtime(),
+        meta.mtime_nsec(),
+        meta.ctime(),
+        meta.ctime_nsec(),
+    );
+    let mut digests = DIGESTS.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, digest)) = digests.iter().find(|(k, _)| *k == key) {
+        return digest == expected;
+    }
+    let Ok(digest) = sha256(&mut file) else {
+        return false;
+    };
+    if digests.len() >= DIGESTS_KEPT {
+        digests.remove(0);
+    }
+    digests.push((key, digest));
+    digest == *expected
+}
+
+/// The SHA-256 of what `input` holds.
+pub fn sha256(input: &mut impl io::Read) -> io::Result<[u8; 32]> {
+    use sha2::Digest as _;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = vec![0_u8; 1 << 16];
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(buffer.get(..read).unwrap_or_default());
+    }
+    Ok(hasher.finalize().into())
+}
+
 /// The file and every directory above it belong to root and only root may write to them, so no other user can
 /// replace the binary.
-fn root_owned_and_unwritable(path: &Path) -> Result<(), Refusal> {
+pub fn root_owned_and_unwritable(path: &Path) -> Result<(), Refusal> {
     const GROUP_OR_OTHER_WRITE: u32 = 0o022;
     for ancestor in path.ancestors() {
         if ancestor.as_os_str().is_empty() {

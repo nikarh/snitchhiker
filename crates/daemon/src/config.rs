@@ -54,7 +54,8 @@ pub struct Config {
     pub on_timeout: Action,
     /// The group the client binaries are setgid to, and the client socket belongs to.
     pub client_group: String,
-    /// The client binaries (desktop app, MCP server) allowed on the client socket.
+    /// Client binaries allowed on the client socket by path alone, besides those registered with
+    /// `snitchhikerd trust-client` (which are also pinned to their digest).
     pub trusted_clients: Vec<PathBuf>,
     pub fail: Fail,
     /// NFQUEUE queues, one deciding thread each.
@@ -82,7 +83,7 @@ impl Default for Config {
             prompt_timeout_secs: 30,
             on_timeout: Action::Deny,
             client_group: "snitchhiker-ui".to_owned(),
-            trusted_clients: vec![PathBuf::from("/usr/bin/snitchhiker-ui")],
+            trusted_clients: Vec::new(),
             fail: Fail::Closed,
             queues: 4,
             queue: 0,

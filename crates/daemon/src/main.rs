@@ -3,6 +3,7 @@
 //! `snitchhikerd cli ...`.
 
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -11,6 +12,7 @@ use nix::sys::signal::{SigSet, Signal};
 use snitchhiker_daemon::cli;
 use snitchhiker_daemon::config::{self, Config};
 use snitchhiker_daemon::runtime::Daemon;
+use snitchhiker_daemon::trust;
 use tracing::{error, info};
 
 /// The version, with the suffix of development builds (`0.1.0-dev+abc1234`).
@@ -20,7 +22,17 @@ const DAEMON_HELP: &str = "\
 snitchhikerd: Snitchhiker's interactive application firewall daemon
 
 Usage: snitchhikerd [--config <path>]
+       snitchhikerd [--config <path>] trust-client <path>
+       snitchhikerd [--config <path>] untrust-client <path>
+       snitchhikerd [--config <path>] trusted-clients
        snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
+
+Commands:
+  trust-client <path>    Trust a client binary on the client socket, pinned to its SHA-256 (again after an
+                         upgrade). It must be root's, in directories only root can write, and setgid to the
+                         client group. Applies to the next connection; the daemon needn't run.
+  untrust-client <path>  Stop trusting it
+  trusted-clients        List the trusted client binaries
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)
@@ -40,6 +52,10 @@ enum Error {
     Config(#[from] config::Error),
     #[error(transparent)]
     Runtime(#[from] snitchhiker_daemon::runtime::Error),
+    #[error(transparent)]
+    Trust(#[from] snitchhiker_daemon::trust::Error),
+    #[error("{0} isn't a trusted client")]
+    NotTrusted(PathBuf),
     #[error("unknown command `{0}`; see --help")]
     UnknownCommand(String),
     #[error("signals: {0}")]
@@ -82,13 +98,42 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
         return out(&format!("snitchhikerd {VERSION}\n"));
     }
     let config_path: Option<PathBuf> = args.opt_value_from_str("--config")?;
+    let config_path = config_path.unwrap_or_else(|| PathBuf::from(config::DEFAULT_PATH));
     if let Some(command) = args.subcommand()? {
         return match command.as_str() {
             "cli" => Ok(cli::run(args, VERSION)?),
+            "trust-client" => {
+                let path: PathBuf = args.free_from_str()?;
+                let entry = trust::trust(&Config::load(&config_path)?, &path)?;
+                out(&format!(
+                    "trusted {} (sha256 {})\n",
+                    entry.path.display(),
+                    entry.sha256
+                ))
+            }
+            "untrust-client" => {
+                let path: PathBuf = args.free_from_str()?;
+                if trust::untrust(&Config::load(&config_path)?, &path)? {
+                    out(&format!("{} is no longer trusted\n", path.display()))
+                } else {
+                    Err(Error::NotTrusted(path))
+                }
+            }
+            "trusted-clients" => {
+                let config = Config::load(&config_path)?;
+                let mut text = String::new();
+                for entry in trust::load(&trust::registry_path(&config))? {
+                    let _ = writeln!(text, "{}  sha256 {}", entry.path.display(), entry.sha256);
+                }
+                for path in &config.trusted_clients {
+                    let _ = writeln!(text, "{}  (daemon.toml, by path)", path.display());
+                }
+                out(&text)
+            }
             other => Err(Error::UnknownCommand(other.to_owned())),
         };
     }
-    let config = Config::load(&config_path.unwrap_or_else(|| PathBuf::from(config::DEFAULT_PATH)))?;
+    let config = Config::load(&config_path)?;
 
     // Signals are taken synchronously in this thread; blocked before any thread starts, so none of them gets one.
     let mut signals = SigSet::empty();

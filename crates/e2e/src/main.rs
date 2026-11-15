@@ -71,6 +71,10 @@ const SCENARIOS: &[Scenario] = &[
         local_auth::daemon_client_socket,
     ),
     (
+        "local-auth/registered-clients-are-pinned",
+        local_auth::registered_clients_are_pinned,
+    ),
+    (
         "local-auth/client-refuses-a-fake-node",
         local_auth::client_refuses_a_fake_node,
     ),

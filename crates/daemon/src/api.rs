@@ -19,7 +19,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::{Config, Mode, Policy};
 use crate::hub::OUTBOUND;
-use crate::peer::{ClientPolicy, TrustedExe, identify, verify};
+use crate::peer::{identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
@@ -45,19 +45,14 @@ pub fn spawn(daemon: &Arc<Daemon>) -> std::io::Result<()> {
     }
 
     let client = bind(CLIENT_SOCKET, 0o660, group)?;
-    let policy = ClientPolicy {
-        group: group.unwrap_or(u32::MAX),
-        trusted: config
-            .trusted_clients
-            .iter()
-            .map(|path| TrustedExe { path: path.clone() })
-            .collect(),
-    };
     {
         let daemon = Arc::clone(daemon);
+        let access = Access::Client {
+            group: group.unwrap_or(u32::MAX),
+        };
         thread::Builder::new()
             .name("api-client".to_owned())
-            .spawn(move || accept(&daemon, &client, &Access::Client(policy)))?;
+            .spawn(move || accept(&daemon, &client, &access))?;
     }
     let admin = bind(ADMIN_SOCKET, 0o600, Some(0))?;
     let daemon = Arc::clone(daemon);
@@ -76,7 +71,8 @@ fn bind(path: &str, mode: u32, group: Option<u32>) -> std::io::Result<UnixListen
 }
 
 /// The gid of a group, from the group database.
-fn group_id(name: &str) -> Option<u32> {
+#[must_use]
+pub fn group_id(name: &str) -> Option<u32> {
     let groups = std::fs::read_to_string("/etc/group").ok()?;
     groups.lines().find_map(|line| {
         let mut fields = line.split(':');
@@ -88,7 +84,10 @@ fn group_id(name: &str) -> Option<u32> {
 
 /// Who a socket admits.
 enum Access {
-    Client(ClientPolicy),
+    /// Trusted client binaries, setgid to this group (the registry is read for every connection).
+    Client {
+        group: u32,
+    },
     Admin,
 }
 
@@ -101,7 +100,7 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
                 continue;
             }
         };
-        let role = match admit(&stream, access) {
+        let role = match admit(&stream, access, &daemon.shared.config) {
             Ok(role) => role,
             Err(reason) => {
                 info!(%reason, "refused a client");
@@ -123,7 +122,7 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
 }
 
 /// The role a connection gets, or why it is refused.
-fn admit(stream: &UnixStream, access: &Access) -> Result<v1::Role, String> {
+fn admit(stream: &UnixStream, access: &Access, config: &Config) -> Result<v1::Role, String> {
     match access {
         Access::Admin => {
             let credentials =
@@ -134,9 +133,11 @@ fn admit(stream: &UnixStream, access: &Access) -> Result<v1::Role, String> {
                 Err("the admin socket is root's".to_owned())
             }
         }
-        Access::Client(policy) => {
+        Access::Client { group } => {
+            let policy = crate::trust::policy(config, *group)
+                .map_err(|e| format!("the trusted-client registry: {e}"))?;
             let peer = identify(stream).map_err(|e| e.to_string())?;
-            verify(&peer, policy).map_err(|e| e.to_string())?;
+            verify(&peer, &policy).map_err(|e| e.to_string())?;
             Ok(v1::Role::Admin)
         }
     }

@@ -26,6 +26,10 @@ fail = "closed"
 # Learn the names of addresses from the DNS answers processes receive, so rules can name hosts.
 #learn_dns = true
 
+# Client binaries allowed on the client socket by path alone. Packages register their client with
+# `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
+#trusted_clients = []
+
 # The built-in System folder: loopback allowed, as OpenSnitch does by default. Its rules are in the fallback tier, so
 # any other matching rule decides instead.
 #default_rules = true

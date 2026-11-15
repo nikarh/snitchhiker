@@ -70,6 +70,13 @@ impl Running {
         run("snitchhiker", args)
     }
 
+    /// `snitchhikerd --config <its config> <args>`: the daemon's own commands (trust-client and the like).
+    pub fn daemon_command(&self, args: &[&str]) -> Result<String, String> {
+        let mut all = vec!["--config", self.config.as_str()];
+        all.extend_from_slice(args);
+        run("snitchhikerd", &all)
+    }
+
     /// Stops the daemon and starts it again with `settings` instead, keeping its database.
     pub fn restart(&mut self, settings: &str) -> Result<(), String> {
         self.stop()?;

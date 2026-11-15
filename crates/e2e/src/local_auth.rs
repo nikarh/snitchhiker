@@ -131,6 +131,7 @@ fn serve(name: &str, mode: u32) -> Result<String, String> {
         group: gid,
         trusted: vec![TrustedExe {
             path: CLIENT.into(),
+            sha256: None,
         }],
     };
     thread::spawn(move || {
@@ -294,5 +295,62 @@ pub fn client_refuses_a_fake_node() -> Result<(), String> {
         !ok && text.contains("not a Snitchhiker node's socket"),
         "the client talked to a fake node",
         &text,
+    )
+}
+
+/// Against the daemon, with no client in daemon.toml: a client registered with `snitchhikerd trust-client` gets in;
+/// the same binary changed in place is refused until it is registered again; and a binary that isn't a client can't be
+/// registered.
+pub fn registered_clients_are_pinned() -> Result<(), String> {
+    let _ = serve("registry-setup", 0o660)?;
+    let mut daemon = crate::daemon::Running::start("client-registry", "mode = \"monitor\"\n")?;
+    let socket = "/run/snitchhiker/client.sock";
+    let (before_ok, before) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    let trusted = daemon.daemon_command(&["trust-client", CLIENT])?;
+    let listed = daemon.daemon_command(&["trusted-clients"])?;
+    let (registered_ok, registered) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    // Root changes the binary in place (same inode): a byte appended to an ELF file still runs.
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(CLIENT)
+        .and_then(|mut file| file.write_all(b"\0"))
+        .map_err(|e| e.to_string())?;
+    let (changed_ok, changed) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    daemon.daemon_command(&["trust-client", CLIENT])?;
+    let (again_ok, again) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    let copy = daemon.daemon_command(&["trust-client", MALLORY_COPY]);
+    daemon.daemon_command(&["untrust-client", CLIENT])?;
+    let (untrusted_ok, untrusted) = as_mallory(CLIENT, &["--protocol-client", socket])?;
+    daemon.stop()?;
+    check(!before_ok, "an unregistered client got in", &before)?;
+    check(
+        trusted.contains("sha256") && listed.contains(CLIENT),
+        "trust-client didn't register the client",
+        &format!("{trusted}{listed}"),
+    )?;
+    check(
+        registered_ok && registered.contains("welcome Admin"),
+        "the registered client didn't get in",
+        &registered,
+    )?;
+    check(
+        !changed_ok && changed.contains("changed since it was registered"),
+        "a client binary changed after it was registered got in",
+        &changed,
+    )?;
+    check(
+        again_ok,
+        "registering the changed binary again didn't let it in",
+        &again,
+    )?;
+    check(
+        copy.is_err(),
+        "a binary that isn't a setgid client in root's directories was registered",
+        &format!("{copy:?}"),
+    )?;
+    check(
+        !untrusted_ok,
+        "a client got in after untrust-client",
+        &untrusted,
     )
 }
