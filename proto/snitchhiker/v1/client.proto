@@ -522,6 +522,7 @@ message Notice {
     Proposal proposal = 10;
     Approval approval = 11;
     ApprovalResolved approval_resolved = 12;
+    Stopping stopping = 13;
   }
   // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
   // resubscribes from the last event it saw, or lists prompts or rules again.
@@ -529,6 +530,13 @@ message Notice {
 }
 
 message RulesChanged {}
+
+// The node is stopping (to every subscriber of prompts): its connections end next. Clients tell a planned stop from
+// a node gone silent.
+message Stopping {
+  // Why, for people: the machine shutting down or restarting, or the daemon stopped (an administrator, an upgrade).
+  string reason = 1;
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Prompts

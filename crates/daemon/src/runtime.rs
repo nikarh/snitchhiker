@@ -870,6 +870,24 @@ impl Daemon {
     /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
     /// nothing new gets out until the daemon is back.
     pub fn stop(&self) {
+        // Clients are told before the connections end, so a planned stop isn't taken for a crash.
+        let reason = if std::process::Command::new("systemctl")
+            .arg("is-system-running")
+            .output()
+            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "stopping")
+        {
+            "the machine is shutting down or restarting"
+        } else {
+            "the daemon was stopped (by an administrator, or for an upgrade)"
+        };
+        self.shared.hub.publish(
+            v1::Topic::Prompts,
+            &v1::notice::Body::Stopping(v1::Stopping {
+                reason: reason.to_owned(),
+            }),
+        );
+        // A moment for the notices to leave.
+        thread::sleep(Duration::from_millis(300));
         let _ = std::fs::remove_file(config_marker(&self.shared.config));
         if self.shared.config.fail == Fail::Open {
             if let Err(error) = remove(&self.table.name) {
