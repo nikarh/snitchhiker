@@ -235,3 +235,40 @@ pub fn reject_fails_at_once() -> Result<(), String> {
         &text,
     )
 }
+
+/// The packaged service: systemd reports it active only once the table is in place, and it stops cleanly.
+pub fn service_starts_ready_and_stops() -> Result<(), String> {
+    let _ = std::fs::remove_file(PIDFILE);
+    run("systemctl", &["start", "snitchhikerd"])?;
+    // `systemctl start` of a Type=notify unit returns once the daemon said READY=1.
+    let tables = run("nft", &["list", "tables"]);
+    let status = run(
+        "systemctl",
+        &["show", "-p", "ActiveState,SubState", "snitchhikerd"],
+    );
+    let log = run(
+        "journalctl",
+        &["-u", "snitchhikerd", "--no-pager", "-n", "20"],
+    )
+    .unwrap_or_default();
+    run("systemctl", &["stop", "snitchhikerd"])?;
+    let after = run("systemctl", &["show", "-p", "ActiveState", "snitchhikerd"])?;
+    let _ = run("nft", &["delete", "table", "inet", "snitchhiker"]);
+    let tables = tables?;
+    let status = status?;
+    check(
+        status.contains("ActiveState=active") && status.contains("SubState=running"),
+        "the service isn't running",
+        &format!("{status}\n{log}"),
+    )?;
+    check(
+        tables.contains("snitchhiker"),
+        "the service was reported ready before its table was in place",
+        &format!("{tables}\n{log}"),
+    )?;
+    check(
+        after.contains("ActiveState=inactive"),
+        "the service didn't stop",
+        &after,
+    )
+}

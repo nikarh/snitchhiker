@@ -17,11 +17,20 @@ wait "${boot}"
 e2e/vm.sh node up
 
 dir=$([[ ${profile} == dev ]] && echo debug || echo "${profile}")
-for bin in snitchhikerd snitchhiker-e2e; do
-  e2e/vm.sh node put "target/${dir}/${bin}" "/tmp/${bin}"
-done
-e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhikerd /tmp/snitchhiker-e2e /usr/local/bin/ &&
-  sudo ln -sf snitchhikerd /usr/local/bin/snitchhiker'
+# Snitchhiker is installed from its package, as users get it: the unit, the client group, the configuration.
+mise x nfpm -- scripts/package.sh x86_64 "target/${dir}/snitchhikerd" target/e2e-packages >/dev/null
+case "${SNITCHHIKER_VM_DISTRO:-arch}" in
+  arch)
+    e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
+    e2e/vm.sh node ssh 'sudo pacman -U --noconfirm /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+    ;;
+  debian)
+    e2e/vm.sh node put target/e2e-packages/snitchhiker_amd64.deb /tmp/snitchhiker.deb
+    e2e/vm.sh node ssh 'sudo apt-get install -y /tmp/snitchhiker.deb >/dev/null'
+    ;;
+esac
+e2e/vm.sh node put "target/${dir}/snitchhiker-e2e" /tmp/snitchhiker-e2e
+e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-e2e /usr/local/bin/'
 
 status=0
 e2e/vm.sh node ssh sudo snitchhiker-e2e "${1:-}" || status=$?

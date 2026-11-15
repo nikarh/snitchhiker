@@ -78,6 +78,10 @@ const SCENARIOS: &[Scenario] = &[
     ),
     ("daemon/reject-fails-at-once", daemon::reject_fails_at_once),
     (
+        "daemon/service-starts-ready-and-stops",
+        daemon::service_starts_ready_and_stops,
+    ),
+    (
         "names/host-rules-match-resolved-names",
         names::host_rules_match_resolved_names,
     ),
