@@ -26,6 +26,10 @@ Commands:
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
+  explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+                                  Connections of the last n hours (default 24), allowed and blocked, and their bytes,
+                                  grouped by program (default), host, port or user, busiest first; --where narrows
+                                  them to one program, host, port or user
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
   events [--limit <n>]            The newest connections

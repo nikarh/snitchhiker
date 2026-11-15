@@ -73,4 +73,6 @@ In monitor mode every packet is accepted and the decision only recorded.
 
 Every decision goes to a bounded queue that a writer thread empties into SQLite in batches; a full queue drops entries (counted as `dropped events` in `status`) rather than holding packets. Each entry has the program, user, destination, rule and how it was decided. Bytes sent and received are counted per socket by more eBPF programs and added to the entry as the connection goes on. Entries older than `retention_days` are deleted.
 
+**Rollups.** As events are recorded, the writer also adds them to hourly rollups: one row per hour, program, host, port, protocol, user and action, and one per hour and value of each of these alone, with connection and byte counts. The [Explorer](/reference/cli/#explore) groups these, never the events: a month of a million connections groups by program in about 50 ms, and drills into one program in about 30. Rollups are pruned with the history.
+
 Every query the daemon makes is checked by SQLite's query planner, in the tests, to use an index: the history can grow without the daemon slowing down.

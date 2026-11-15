@@ -62,6 +62,14 @@ sudo snitchhiker rules add deny --host '*.example.net' --tier override
 | `folders add <name> [--parent <id>]` | Add a folder |
 | `folders rm <id>` | Delete a folder, the folders in it and all their rules. More than 20 rules is a [dangerous action](/internals/security/#dangerous-actions-need-more-than-a-session) |
 
+## `explore`
+
+```text
+snitchhiker explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+```
+
+The connections of the last `n` hours (24 by default), grouped by program (the default), host, port or user, busiest first, with how many were allowed and blocked and their bytes. `--where` narrows them to one program, host (empty: no name), port or user: `--by host --where program=/usr/bin/curl` lists where curl connects. The answer comes from hourly rollups, so it takes as long for a month of history as for an hour.
+
 ## `history` and `undo`
 
 ```text

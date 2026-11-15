@@ -66,6 +66,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `UpdateFolder` | `Done` | Its name, parent, enabled and scope; a folder can't go inside itself |
 | `DeleteFolder` | `Done` | With the folders below it and their rules; more than 20 rules needs step-up |
 | `ListChanges` | `ChangePage` | The history of rules and folders, newest first |
+| `Explore` | `ExplorePage` | Connections of a time range grouped by program, host, port or user, optionally of one value of another, busiest first |
 | `Undo` | `Done` | Undoes a change's batch, unless changed again since |
 | `SetRuleEnabled` | `Done` | |
 | `ListAudit` | `AuditPage` | Dangerous actions asked for, newest first: `limit` entries with `id` below `before` (0: from the newest) |
