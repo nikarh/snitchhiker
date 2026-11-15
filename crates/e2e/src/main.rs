@@ -158,6 +158,10 @@ const SCENARIOS: &[Scenario] = &[
         "remote/a-devices-dangerous-request-waits-for-approval",
         remote::a_devices_dangerous_request_waits_for_approval,
     ),
+    (
+        "remote/prompts-escalate-to-devices-and-not-to-muted-ones",
+        remote::prompts_escalate_to_devices_and_not_to_muted_ones,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",

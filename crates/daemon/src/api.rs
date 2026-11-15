@@ -264,6 +264,16 @@ pub(crate) fn serve(
             .name("api-writer".to_owned())
             .spawn(move || write_frames(stream, &frames))?
     };
+    daemon.shared.hub.set_audience(
+        connection,
+        match (&caller.device, caller.role) {
+            (Some((_, key)), _) => crate::hub::Audience::Device { id: key.clone() },
+            (None, v1::Role::Admin | v1::Role::Viewer) => {
+                crate::hub::Audience::Local { uid: caller.uid }
+            }
+            _ => crate::hub::Audience::Other,
+        },
+    );
     let welcome = v1::ServerFrame {
         body: Some(v1::server_frame::Body::Welcome(v1::Welcome {
             minor: MINOR,
@@ -469,7 +479,8 @@ fn handle(
         | Method::ListDevices(_)
         | Method::RemoveDevice(_)
         | Method::ListApprovals(_)
-        | Method::DecideApproval(_)) => devices(daemon, caller, app, method),
+        | Method::DecideApproval(_)
+        | Method::SetDeviceMuted(_)) => devices(daemon, caller, app, method),
         Method::ConfirmSystemFirewall(_) => confirm_system_firewall(daemon),
         Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
@@ -1924,6 +1935,17 @@ fn devices(
             approvals: daemon.approvals.list(),
         }),
         Method::DecideApproval(decide) => decide_approval(daemon, caller, app, decide),
+        Method::SetDeviceMuted(set) => {
+            let muted = daemon.store().mute_device(&set.id, set.muted);
+            match muted {
+                Ok(true) => {
+                    daemon.muted_devices_changed();
+                    v1::response::Result::Done(v1::Done {})
+                }
+                Ok(false) => error(v1::ErrorCode::NotFound, format!("no device {}", set.id)),
+                Err(e) => internal(e),
+            }
+        }
         _ => error(v1::ErrorCode::Unsupported, "not a device request"),
     }
 }

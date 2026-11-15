@@ -1,6 +1,5 @@
 //! The window: a sidebar of pages, and the page shown.
 
-use std::collections::HashSet;
 use std::sync::mpsc;
 
 use gpui::{
@@ -180,20 +179,28 @@ impl App {
         cx.spawn(async move |this, cx| {
             while let Ok(update) = updates.recv().await {
                 let applied = this.update(cx, |app: &mut Self, cx| {
-                    let before: HashSet<u64> = app.model.read(cx).prompts.keys().copied().collect();
+                    // Each prompt, and whether it was to be notified about.
+                    let before: std::collections::HashMap<u64, bool> = app
+                        .model
+                        .read(cx)
+                        .prompts
+                        .iter()
+                        .map(|(id, p)| (*id, p.notify))
+                        .collect();
                     let changed = app.model.update(cx, |model, cx| {
                         let changed = model.apply(update);
                         cx.notify();
                         changed
                     });
-                    // A notification for every prompt that opened, and down with those resolved.
+                    // A notification for every prompt the node's routing says to notify about (when it opens, or when
+                    // it is escalated to this client), and down with those resolved.
                     let prompts = &app.model.read(cx).prompts;
                     for (id, prompt) in prompts {
-                        if !before.contains(id) {
+                        if prompt.notify && before.get(id) != Some(&true) {
                             let _ = notices.try_send(Notice::Show(prompt.clone()));
                         }
                     }
-                    for id in before.iter().filter(|id| !prompts.contains_key(id)) {
+                    for id in before.keys().filter(|id| !prompts.contains_key(id)) {
                         let _ = notices.try_send(Notice::Close(*id));
                     }
                     tray.set(u32::try_from(prompts.len()).unwrap_or(u32::MAX));

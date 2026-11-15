@@ -391,3 +391,95 @@ pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
         &found,
     )
 }
+
+/// The prompts a remote client gets within `wait`, with their notify flags.
+fn prompts_seen(client: &mut snitchhiker_client::Client, wait: Duration) -> Vec<(u64, bool)> {
+    let deadline = std::time::Instant::now() + wait;
+    let mut seen = Vec::new();
+    while let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) {
+        if client
+            .set_read_timeout(Some(left.max(Duration::from_millis(10))))
+            .is_err()
+        {
+            break;
+        }
+        match client.notice() {
+            Ok(notice) => {
+                if let Some(v1::notice::Body::Prompt(prompt)) = notice.body {
+                    seen.push((prompt.id, prompt.notify));
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    seen
+}
+
+/// With escalation, a device gets a prompt quietly, then (no one being at the node) escalated with a notification; a
+/// muted device is never notified.
+pub fn prompts_escalate_to_devices_and_not_to_muted_ones() -> Result<(), String> {
+    let daemon = Running::start(
+        "remote-routing",
+        "mode = \"enforce\"\nno_match = \"ask\"\nprompt_timeout_secs = 20\nremote = true\nprompt_routing = \"escalate\"\nescalate_after_secs = 2\n",
+    )?;
+    // This test's own connections to the node are a program's like any other's.
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "/usr/local/bin/snitchhiker-e2e",
+        "--name",
+        "the test",
+    ])?;
+    let options = Options::default();
+    let (loud, quiet) = (Key::generate(), Key::generate());
+    let first = link(&daemon, "loud")?;
+    pair(&loud, &first, "loud", &options).map_err(|e| e.to_string())?;
+    let second = link(&daemon, "quiet")?;
+    pair(&quiet, &second, "quiet", &options).map_err(|e| e.to_string())?;
+    daemon.cli(&["devices"])?;
+    let mut loud_client =
+        connect(&loud, &first.node, &options, "e2e", "0").map_err(|e| e.to_string())?;
+    let mut quiet_client =
+        connect(&quiet, &first.node, &options, "e2e", "0").map_err(|e| e.to_string())?;
+    for client in [&mut loud_client, &mut quiet_client] {
+        client
+            .subscribe(v1::Topic::Prompts)
+            .map_err(|e| e.to_string())?;
+    }
+    quiet_client
+        .call(v1::request::Method::SetDeviceMuted(v1::SetDeviceMuted {
+            id: quiet.id(),
+            muted: true,
+        }))
+        .map_err(|e| e.to_string())?;
+    // A connection no rule decides: a prompt.
+    let _ = std::process::Command::new("runuser")
+        .args([
+            "-u",
+            "mallory",
+            "--",
+            "curl",
+            "-s",
+            "-m",
+            "1",
+            "http://192.0.2.88:9",
+        ])
+        .output();
+    let loud_seen = prompts_seen(&mut loud_client, Duration::from_secs(4));
+    let quiet_seen = prompts_seen(&mut quiet_client, Duration::from_secs(1));
+    let devices = daemon.cli(&["devices"])?;
+    let found = format!("loud: {loud_seen:?}\nquiet: {quiet_seen:?}\n{devices}");
+    check(
+        loud_seen.first().is_some_and(|(_, notify)| !notify)
+            && loud_seen.iter().any(|(_, notify)| *notify),
+        "the device didn't get the prompt quietly, then escalated",
+        &found,
+    )?;
+    check(
+        !quiet_seen.is_empty() && quiet_seen.iter().all(|(_, notify)| !notify),
+        "the muted device was notified, or didn't get the prompt to list",
+        &found,
+    )
+}

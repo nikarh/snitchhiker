@@ -90,6 +90,10 @@ pub enum Request {
     Devices,
     StartPairing(v1::Role),
     RemoveDevice(String),
+    MuteDevice {
+        id: String,
+        muted: bool,
+    },
     /// Lets a remote device do the dangerous action it asked for, or refuses it.
     DecideApproval {
         id: u64,
@@ -403,6 +407,10 @@ fn method(request: &Request) -> v1::request::Method {
             role: (*role).into(),
         }),
         Request::RemoveDevice(id) => Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }),
+        Request::MuteDevice { id, muted } => Method::SetDeviceMuted(v1::SetDeviceMuted {
+            id: id.clone(),
+            muted: *muted,
+        }),
         Request::DecideApproval { id, approve } => Method::DecideApproval(v1::DecideApproval {
             id: *id,
             approve: *approve,

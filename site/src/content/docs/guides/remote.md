@@ -55,6 +55,17 @@ The app's connections to a remote node are connections like any other program's:
 
 Removing a node from the app's node column (×) only forgets it on this side; unpair it on the node too.
 
+## Who is notified
+
+Every admin client, local or remote, lists every prompt and can answer it. Which of them *notify* you is the node's [`prompt_routing`](/reference/configuration/#prompt_routing):
+
+- `"all"` (default): every client.
+- `"escalate"`: the desktop app on the node first. Your devices are notified only when nobody is at the node (no client there, or your sessions locked or idle), or once a prompt has waited [`escalate_after_secs`](/reference/configuration/#escalate_after_secs): your phone buzzes when your workstation can't ask you.
+
+A device can be **muted** (Devices → Mute, on the node): it still lists prompts, but never notifies of them.
+
+The node's own connections (to its relay, to devices) are never prompted for: the daemon recognises its own process's packets.
+
 ## Dangerous actions from a device
 
 A device can't confirm a dangerous action with a password on the node, as a client there does through polkit. When a device asks for one (a rule for any program to anywhere, pairing another device), the request waits up to two minutes for an approval on the node: a card on the desktop app's **Prompts** page there (approving asks for the administrator's password), or `sudo snitchhiker approvals approve <id>`. Denied, or not answered in time, it is refused. Another remote device can't approve it.

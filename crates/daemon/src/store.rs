@@ -212,6 +212,10 @@ CREATE TABLE devices (
     last_seen_ms INTEGER NOT NULL DEFAULT 0
 );
 ",
+    // Devices not notified of prompts.
+    r"
+ALTER TABLE devices ADD COLUMN muted INTEGER NOT NULL DEFAULT 0;
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -318,11 +322,11 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
     (
         "devices.all",
-        "SELECT id, name, role, paired_ms, last_seen_ms FROM devices ORDER BY rowid",
+        "SELECT id, name, role, paired_ms, last_seen_ms, muted FROM devices ORDER BY rowid",
     ),
     (
         "devices.get",
-        "SELECT id, name, role, paired_ms, last_seen_ms FROM devices WHERE id = ?1",
+        "SELECT id, name, role, paired_ms, last_seen_ms, muted FROM devices WHERE id = ?1",
     ),
     (
         "devices.put",
@@ -330,6 +334,7 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          ON CONFLICT (id) DO UPDATE SET name = excluded.name, role = excluded.role, paired_ms = excluded.paired_ms",
     ),
     ("devices.seen", "UPDATE devices SET last_seen_ms = ?2 WHERE id = ?1"),
+    ("devices.mute", "UPDATE devices SET muted = ?2 WHERE id = ?1"),
     ("devices.delete", "DELETE FROM devices WHERE id = ?1"),
     (
         "proposals.insert",
@@ -1297,6 +1302,7 @@ pub struct Device {
     pub role: i32,
     pub paired_ms: u64,
     pub last_seen_ms: u64,
+    pub muted: bool,
 }
 
 pub struct Store {
@@ -1744,6 +1750,7 @@ impl Store {
                 role: row.get(2)?,
                 paired_ms: id_of(row.get(3)?),
                 last_seen_ms: id_of(row.get(4)?),
+                muted: row.get(5)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -1772,6 +1779,15 @@ impl Store {
                 db_id(device.paired_ms)
             ])?;
         Ok(())
+    }
+
+    /// Mutes or unmutes a device's notifications; whether it is paired.
+    pub fn mute_device(&self, id: &str, muted: bool) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("devices.mute")?)?
+            .execute(params![id, muted])?
+            > 0)
     }
 
     pub fn device_seen(&self, id: &str, now_ms: u64) -> Result<(), Error> {

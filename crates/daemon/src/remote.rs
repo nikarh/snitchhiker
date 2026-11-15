@@ -178,6 +178,7 @@ fn pair(daemon: &Daemon, peer: &str, stream: &UnixStream) {
                 role: pairing.role.into(),
                 paired_ms: now,
                 last_seen_ms: 0,
+                muted: false,
             };
             let stored = daemon.store().put_device(&device);
             match stored {
@@ -280,6 +281,7 @@ pub fn list_devices(daemon: &Daemon) -> v1::response::Result {
                 role: d.role,
                 paired_ms: d.paired_ms,
                 last_seen_ms: d.last_seen_ms,
+                muted: d.muted,
             })
             .collect(),
         fingerprint: snitchhiker_remote::fingerprint(&node_id),

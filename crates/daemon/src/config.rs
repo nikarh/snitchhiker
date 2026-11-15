@@ -95,6 +95,22 @@ pub struct Config {
     pub relays: Vec<String>,
     /// The UDP port of the remote endpoint (0: any free port).
     pub remote_port: u16,
+    /// Which clients are notified of a prompt (all of them can answer it).
+    pub prompt_routing: Routing,
+    /// With `escalate`: how long a prompt waits for the clients on this machine before remote devices are notified.
+    pub escalate_after_secs: u64,
+}
+
+/// Who is notified of prompts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Routing {
+    /// Every client, local and remote.
+    #[default]
+    All,
+    /// The clients on this machine first; remote devices when none listens, when the users' sessions are locked or
+    /// idle, or after `escalate_after_secs`.
+    Escalate,
 }
 
 impl Default for Config {
@@ -120,6 +136,8 @@ impl Default for Config {
             remote: false,
             relays: Vec::new(),
             remote_port: 0,
+            prompt_routing: Routing::All,
+            escalate_after_secs: 20,
         }
     }
 }

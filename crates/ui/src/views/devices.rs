@@ -82,6 +82,70 @@ fn other_nodes(theme: &gpui_component::theme::Theme) -> AnyElement {
         .into_any_element()
 }
 
+/// One paired device: its name, role, fingerprint, whether it is connected, and Mute and Unpair.
+fn device_row(
+    device: &v1::Device,
+    requests: &mpsc::Sender<Request>,
+    theme: &gpui_component::theme::Theme,
+) -> AnyElement {
+    let id = device.id.clone();
+    let requests = requests.clone();
+    h_flex()
+        .gap_3()
+        .py_1()
+        .border_b_1()
+        .border_color(theme.border)
+        .child(div().w_48().child(device.name.clone()))
+        .child(div().w_16().child(if device.role() == v1::Role::Viewer {
+            "viewer"
+        } else {
+            "admin"
+        }))
+        .child(
+            div()
+                .w_32()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(device.fingerprint.clone()),
+        )
+        .child(if device.connected {
+            Tag::success().small().child("connected").into_any_element()
+        } else {
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(ago(device.last_seen_ms))
+                .into_any_element()
+        })
+        .child(div().flex_1())
+        .child({
+            let (id, requests, muted) = (id.clone(), requests.clone(), device.muted);
+            Button::new(SharedString::from(format!("mute-{id}")))
+                .small()
+                .ghost()
+                .label(if muted { "Unmute" } else { "Mute" })
+                .tooltip("Muted devices aren't notified of prompts (they still list them)")
+                .on_click(move |_, _, _| {
+                    let _ = requests.send(Request::MuteDevice {
+                        id: id.clone(),
+                        muted: !muted,
+                    });
+                    let _ = requests.send(Request::Devices);
+                })
+        })
+        .child(
+            Button::new(SharedString::from(format!("unpair-{id}")))
+                .small()
+                .ghost()
+                .label("Unpair")
+                .on_click(move |_, _, _| {
+                    let _ = requests.send(Request::RemoveDevice(id.clone()));
+                    let _ = requests.send(Request::Devices);
+                }),
+        )
+        .into_any_element()
+}
+
 fn ago(ms: u64) -> String {
     if ms == 0 {
         return "never connected".to_owned();
@@ -182,48 +246,11 @@ impl Render for Devices {
                                 .child("No device is paired."),
                         )
                     })
-                    .children(list.devices.iter().map(|device| {
-                        let id = device.id.clone();
-                        let requests = requests.clone();
-                        h_flex()
-                            .gap_3()
-                            .py_1()
-                            .border_b_1()
-                            .border_color(theme.border)
-                            .child(div().w_48().child(device.name.clone()))
-                            .child(div().w_16().child(if device.role() == v1::Role::Viewer {
-                                "viewer"
-                            } else {
-                                "admin"
-                            }))
-                            .child(
-                                div()
-                                    .w_32()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child(device.fingerprint.clone()),
-                            )
-                            .child(if device.connected {
-                                Tag::success().small().child("connected").into_any_element()
-                            } else {
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child(ago(device.last_seen_ms))
-                                    .into_any_element()
-                            })
-                            .child(div().flex_1())
-                            .child(
-                                Button::new(SharedString::from(format!("unpair-{id}")))
-                                    .small()
-                                    .ghost()
-                                    .label("Unpair")
-                                    .on_click(move |_, _, _| {
-                                        let _ = requests.send(Request::RemoveDevice(id.clone()));
-                                        let _ = requests.send(Request::Devices);
-                                    }),
-                            )
-                    }));
+                    .children(
+                        list.devices
+                            .iter()
+                            .map(|device| device_row(device, &requests, &theme)),
+                    );
             }
         }
         if let Some(pairing) = pairing {

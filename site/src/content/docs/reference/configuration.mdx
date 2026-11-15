@@ -125,6 +125,14 @@ The relays the node keeps a connection to, so devices reach it behind NAT: the U
 
 The UDP port of the remote endpoint. Default `0`: any free port (fine with a relay). Set one to open it in a firewall or forward it from a router for direct connections from outside.
 
+### `prompt_routing`
+
+Which clients are notified of a prompt; every admin client lists every prompt and can answer it either way ([Phones and remote nodes](/guides/remote/#who-is-notified)). Default `"all"`: every client, but [muted](/guides/remote/#who-is-notified) devices. `"escalate"`: the clients on this machine first; remote devices when no client here listens, when the users of the clients here are all away (their sessions locked or idle, as logind says), or once the prompt has waited [`escalate_after_secs`](#escalate_after_secs).
+
+### `escalate_after_secs`
+
+With `prompt_routing = "escalate"`: how long a prompt waits for the clients on this machine before remote devices are notified. Default `20`.
+
 ## Agents
 
 ### `agent_programs`

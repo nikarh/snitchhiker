@@ -127,6 +127,7 @@ message Request {
     RemoveDevice remove_device = 57;
     ListApprovals list_approvals = 58;
     DecideApproval decide_approval = 59;
+    SetDeviceMuted set_device_muted = 60;
   }
 }
 
@@ -556,6 +557,9 @@ message Prompt {
   bool exe_writable = 16;
   // What the agent whose process opened the connection says about it (agent_note): untrusted text, shown as such.
   string agent_note = 17;
+  // Whether this client should notify about it (the node's prompt routing); every admin client lists it and can
+  // answer it either way. A prompt sent again with notify set (escalated) is to be notified about then.
+  bool notify = 18;
 }
 
 message Suggestion {
@@ -1233,6 +1237,8 @@ message Device {
   // It is connected now.
   bool connected = 6;
   string fingerprint = 7;
+  // It isn't notified about prompts (it still lists and answers them).
+  bool muted = 8;
 }
 
 message DeviceList {
@@ -1241,6 +1247,11 @@ message DeviceList {
   string node_id = 2;
   string fingerprint = 3;
   bool remote = 4;
+}
+
+message SetDeviceMuted {
+  string id = 1;
+  bool muted = 2;
 }
 
 // Unpairs a device: its connections close at once.

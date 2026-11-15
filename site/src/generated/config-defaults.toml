@@ -19,3 +19,5 @@ agent_programs = []
 remote = false
 relays = []
 remote_port = 0
+prompt_routing = "all"
+escalate_after_secs = 20

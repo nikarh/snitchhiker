@@ -146,6 +146,19 @@ fn notice(id: u64, body: v1::notice::Body, missed: bool) -> v1::ServerFrame {
 pub struct Hub {
     subscriptions: Mutex<Vec<Subscription>>,
     next: AtomicU64,
+    /// Who each connection is, for routing prompts.
+    audiences: Mutex<std::collections::HashMap<u64, Audience>>,
+}
+
+/// Who is on the other end of a connection, as prompt routing sees it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Audience {
+    /// A client on this machine, of a user.
+    Local { uid: u32 },
+    /// A paired device over the network, by its key.
+    Device { id: String },
+    /// Root's command line, or anything else.
+    Other,
 }
 
 impl Hub {
@@ -207,6 +220,69 @@ impl Hub {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|s| s.connection != connection);
+        self.audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&connection);
+    }
+
+    /// Says who `connection` is.
+    pub fn set_audience(&self, connection: u64, audience: Audience) {
+        self.audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(connection, audience);
+    }
+
+    /// Who listens to `topic`.
+    pub fn audiences(&self, topic: v1::Topic) -> Vec<Audience> {
+        let audiences = self
+            .audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.subscriptions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|s| s.topic == topic)
+            .map(|s| {
+                audiences
+                    .get(&s.connection)
+                    .cloned()
+                    .unwrap_or(Audience::Other)
+            })
+            .collect()
+    }
+
+    /// Pushes to each subscriber of `topic` what `make` says for its audience (nothing: skipped).
+    pub fn publish_each(
+        &self,
+        topic: v1::Topic,
+        make: impl Fn(&Audience) -> Option<v1::notice::Body>,
+    ) {
+        let audiences = self
+            .audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut subscriptions = self
+            .subscriptions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        subscriptions.retain_mut(|s| {
+            if s.topic != topic {
+                return true;
+            }
+            let audience = audiences.get(&s.connection).unwrap_or(&Audience::Other);
+            let Some(body) = make(audience) else {
+                return true;
+            };
+            match s.push(&Outgoing::Notice(body)) {
+                Ok(()) => s.missed = false,
+                Err(TrySendError::Full(())) => s.missed = true,
+                Err(TrySendError::Disconnected(())) => return false,
+            }
+            true
+        });
     }
 
     /// Whether anyone listens to `topic` (e.g. whether there is anyone to ask).
