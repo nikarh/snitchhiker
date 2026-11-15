@@ -148,6 +148,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.seq < ?1 ORDER BY e.seq DESC LIMIT ?2",
     ),
+    // Connections no rule decided, since a time: what `learn` turns into rules.
+    (
+        "events.undecided_since",
+        "SELECT x.value, h.value, e.uid, e.protocol, e.address, e.port
+         FROM events e INDEXED BY events_time
+              CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+         WHERE e.time_ms >= ?1 AND e.source != 1",
+    ),
     // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
     (
         "events.bytes",
@@ -192,6 +200,17 @@ pub struct StoredEvent {
     pub rule: Option<RuleId>,
     pub bytes_out: u64,
     pub bytes_in: u64,
+}
+
+/// A connection no rule decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Undecided {
+    pub exe: String,
+    pub host: Option<String>,
+    pub uid: u32,
+    pub protocol: u8,
+    pub address: std::net::IpAddr,
+    pub port: u16,
 }
 
 pub struct Store {
@@ -397,14 +416,7 @@ impl Store {
         let mut statement = self.connection.prepare_cached(sql("events.page")?)?;
         let rows = statement.query_map(params![before, limit], |row| {
             let address: Vec<u8> = row.get(7)?;
-            let address = <[u8; 16]>::try_from(address.as_slice()).map_or(
-                std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
-                |octets| {
-                    let v6 = std::net::Ipv6Addr::from(octets);
-                    v6.to_ipv4_mapped()
-                        .map_or(std::net::IpAddr::V6(v6), std::net::IpAddr::V4)
-                },
-            );
+            let address = address_from(&address);
             Ok(StoredEvent {
                 seq: row.get(0)?,
                 time_ms: u64::try_from(row.get::<_, i64>(1)?).unwrap_or(0),
@@ -421,6 +433,25 @@ impl Store {
                 rule: row.get::<_, Option<i64>>(12)?.map(id_of),
                 bytes_out: id_of(row.get(13)?),
                 bytes_in: id_of(row.get(14)?),
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// Connections no rule decided since `since_ms`: (exe, host, uid, protocol, address, port).
+    pub fn undecided_since(&self, since_ms: u64) -> Result<Vec<Undecided>, Error> {
+        let mut statement = self
+            .connection
+            .prepare_cached(sql("events.undecided_since")?)?;
+        let rows = statement.query_map(params![db_id(since_ms)], |row| {
+            let address: Vec<u8> = row.get(4)?;
+            Ok(Undecided {
+                exe: row.get(0)?,
+                host: row.get(1)?,
+                uid: row.get(2)?,
+                protocol: row.get(3)?,
+                address: address_from(&address),
+                port: row.get(5)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -481,6 +512,18 @@ fn intern(
 /// A column's JSON (the model's types always serialize).
 fn json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_default()
+}
+
+/// An address as stored: 16 bytes, IPv4 mapped into IPv6.
+fn address_from(bytes: &[u8]) -> std::net::IpAddr {
+    <[u8; 16]>::try_from(bytes).map_or(
+        std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+        |octets| {
+            let v6 = std::net::Ipv6Addr::from(octets);
+            v6.to_ipv4_mapped()
+                .map_or(std::net::IpAddr::V6(v6), std::net::IpAddr::V4)
+        },
+    )
 }
 
 fn action_code(action: Action) -> u8 {

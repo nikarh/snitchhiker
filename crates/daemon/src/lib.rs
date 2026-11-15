@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod config;
 pub mod dns;
+pub mod learn;
 pub mod managed;
 pub mod notify;
 pub mod peer;

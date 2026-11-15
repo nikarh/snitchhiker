@@ -182,7 +182,8 @@ fn context_of(pid: u32, host: HostNamespaces) -> ContextKind {
 }
 
 /// The home directory of `uid`, from the password database.
-fn home_of(uid: u32) -> Option<String> {
+#[must_use]
+pub fn home_of(uid: u32) -> Option<String> {
     let passwd = fs::read_to_string("/etc/passwd").ok()?;
     home_in(&passwd, uid)
 }

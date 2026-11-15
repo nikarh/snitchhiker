@@ -33,7 +33,12 @@ Commands:
                                     --any-context     also for containers, VMs and other namespaces
   rules add --json <rule>         Add a rule given as JSON
   rules rm <id>                   Delete a rule
+  rules import <file>             Add the rules of a rule file (TOML), in a folder
+  rules export                    Print the rules as a rule file
   events [--limit <n>]            The newest connections
+  learn [--hours <n>] [--folder <name>]
+                                  Rules for the connections no rule decided in the last n hours (default 24), as a
+                                  rule file to review and import
   version                         Print the version
 
 Options:
@@ -74,39 +79,23 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("version") => out(&format!("snitchhiker {version}\n")),
         Some("rules") => {
             let config = Config::load(Path::new(&config_path))?;
-            let mut store = Store::open(&config.database)?;
-            match args.subcommand()?.as_deref() {
-                None | Some("list" | "ls") => {
-                    let managed =
-                        crate::managed::Managed::load(config.default_rules, &config.rules_dir)
-                            .map_err(|e| Error::Usage(e.to_string()))?;
-                    list_rules(&store, &managed)
-                }
-                Some("add") => {
-                    let rule = rule_from_args(&mut args)?;
-                    reject_rest(args)?;
-                    let id = store.insert_rule(&rule, crate::runtime::now_ms())?;
-                    reload();
-                    out(&format!("added rule {id}\n"))
-                }
-                Some("rm" | "delete") => {
-                    let id: u64 = args.free_from_str()?;
-                    reject_rest(args)?;
-                    if id & crate::managed::MANAGED_ID != 0 {
-                        return Err(Error::Usage(format!(
-                            "rule {id} is a default or managed rule: it is changed in its file (or switched off with \
-                             default_rules = false)"
-                        )));
-                    }
-                    if store.delete_rule(id)? {
-                        reload();
-                        out(&format!("deleted rule {id}\n"))
-                    } else {
-                        Err(Error::Usage(format!("no rule {id}")))
-                    }
-                }
-                Some(other) => Err(Error::Usage(format!("unknown rules command `{other}`"))),
-            }
+            rules_command(args, &config)
+        }
+        Some("learn") => {
+            let hours: u64 = args.opt_value_from_str("--hours")?.unwrap_or(24);
+            let folder: String = args
+                .opt_value_from_str("--folder")?
+                .unwrap_or_else(|| "Learned".to_owned());
+            reject_rest(args)?;
+            let config = Config::load(Path::new(&config_path))?;
+            let store = Store::open(&config.database)?;
+            let since = crate::runtime::now_ms().saturating_sub(hours * 3_600_000);
+            let file = crate::learn::suggest(
+                &store.undecided_since(since)?,
+                &folder,
+                crate::process::home_of,
+            );
+            out(&toml::to_string(&file).map_err(|e| Error::Usage(e.to_string()))?)
         }
         Some("events") => {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
@@ -118,6 +107,102 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some(other) => Err(Error::Usage(format!(
             "unknown command `{other}`; see --help"
         ))),
+    }
+}
+
+/// `snitchhiker rules ...`.
+fn rules_command(mut args: pico_args::Arguments, config: &Config) -> Result<(), Error> {
+    let mut store = Store::open(&config.database)?;
+    match args.subcommand()?.as_deref() {
+        None | Some("list" | "ls") => {
+            let managed = crate::managed::Managed::load(config.default_rules, &config.rules_dir)
+                .map_err(|e| Error::Usage(e.to_string()))?;
+            list_rules(&store, &managed)
+        }
+        Some("add") => {
+            let rule = rule_from_args(&mut args)?;
+            reject_rest(args)?;
+            let id = store.insert_rule(&rule, crate::runtime::now_ms())?;
+            reload();
+            out(&format!("added rule {id}\n"))
+        }
+        Some("rm" | "delete") => {
+            let id: u64 = args.free_from_str()?;
+            reject_rest(args)?;
+            if id & crate::managed::MANAGED_ID != 0 {
+                return Err(Error::Usage(format!(
+                    "rule {id} is a default or managed rule: it is changed in its file (or switched off with \
+                     default_rules = false)"
+                )));
+            }
+            if store.delete_rule(id)? {
+                reload();
+                out(&format!("deleted rule {id}\n"))
+            } else {
+                Err(Error::Usage(format!("no rule {id}")))
+            }
+        }
+        Some("import") => {
+            let path: String = args.free_from_str()?;
+            reject_rest(args)?;
+            let text =
+                std::fs::read_to_string(&path).map_err(|e| Error::Usage(format!("{path}: {e}")))?;
+            let file: snitchhiker_core::spec::RuleFile =
+                toml::from_str(&text).map_err(|e| Error::Usage(format!("{path}: {e}")))?;
+            let name = file.folder.as_ref().map_or_else(
+                || {
+                    Path::new(&path).file_stem().map_or_else(
+                        || "Imported".to_owned(),
+                        |s| s.to_string_lossy().into_owned(),
+                    )
+                },
+                |f| f.name.clone(),
+            );
+            let scope = match &file.folder {
+                Some(folder) => folder
+                    .scope
+                    .to_conditions()
+                    .map_err(|e| Error::Usage(e.to_string()))?,
+                None => Vec::new(),
+            };
+            // Every rule is checked before anything is stored.
+            let rules = file
+                .rule
+                .iter()
+                .map(|spec| spec.to_rule(0, None))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| Error::Usage(e.to_string()))?;
+            let folder = store.insert_folder(&snitchhiker_core::rule::Folder {
+                id: 0,
+                parent: None,
+                name: name.clone(),
+                enabled: true,
+                scope,
+            })?;
+            let now = crate::runtime::now_ms();
+            for mut rule in rules {
+                rule.folder = Some(folder);
+                store.insert_rule(&rule, now)?;
+            }
+            reload();
+            out(&format!(
+                "imported {} rules into folder {name} ({folder})\n",
+                file.rule.len()
+            ))
+        }
+        Some("export") => {
+            reject_rest(args)?;
+            let file = snitchhiker_core::spec::RuleFile {
+                folder: None,
+                rule: store
+                    .rules()?
+                    .iter()
+                    .map(snitchhiker_core::spec::RuleSpec::from_rule)
+                    .collect(),
+            };
+            out(&toml::to_string(&file).map_err(|e| Error::Usage(e.to_string()))?)
+        }
+        Some(other) => Err(Error::Usage(format!("unknown rules command `{other}`"))),
     }
 }
 
