@@ -476,3 +476,58 @@ pub fn learn_then_enforce() -> Result<(), String> {
     )?;
     check(!c, "a destination nobody learned went through", &rules)
 }
+
+/// OpenSnitch's rules, imported: what converts decides connections as it did in OpenSnitch, and what can't be
+/// expressed is reported, not approximated.
+pub fn opensnitch_rules_import_and_apply() -> Result<(), String> {
+    let (_allowed, allowed) = listener()?;
+    let (_other, other) = listener()?;
+    let dir = "/tmp/snitchhiker-opensnitch-rules";
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let rules = [
+        (
+            "allow-python.json",
+            format!(
+                r#"{{"name": "allow-python", "enabled": true, "precedence": false, "action": "allow",
+                    "duration": "always", "operator": {{"type": "list", "operand": "list", "list": [
+                      {{"type": "regexp", "operand": "process.path", "data": "^/usr/bin/python3", "sensitive": true}},
+                      {{"type": "simple", "operand": "dest.port", "data": "{allowed}"}},
+                      {{"type": "network", "operand": "dest.network", "data": "127.0.0.0/8"}}]}}}}"#
+            ),
+        ),
+        (
+            "env.json",
+            r#"{"name": "by-environment", "action": "allow", "duration": "always",
+                "operator": {"type": "simple", "operand": "process.env.HOME", "data": "/root"}}"#
+                .to_owned(),
+        ),
+    ];
+    for (name, json) in &rules {
+        std::fs::write(format!("{dir}/{name}"), json).map_err(|e| e.to_string())?;
+    }
+    let mut daemon = Running::start("opensnitch", "mode = \"enforce\"\nno_match = \"reject\"\n")?;
+    let report = daemon.cli(&["rules", "import-opensnitch", dir])?;
+    thread::sleep(Duration::from_millis(300));
+    let allowed_ok = mallory_connects(allowed)?;
+    let other_ok = mallory_connects(other)?;
+    let listed = daemon.cli(&["rules"])?;
+    daemon.stop()?;
+    let _ = std::fs::remove_dir_all(dir);
+    let found = format!("{report}{listed}allowed: {allowed_ok}, other: {other_ok}");
+    check(
+        report.contains("imported 1 of 2") && report.contains("skipped by-environment"),
+        "the import didn't report what it couldn't convert",
+        &found,
+    )?;
+    check(
+        listed.contains("OpenSnitch/allow-python"),
+        "the imported rule isn't in the OpenSnitch folder",
+        &found,
+    )?;
+    check(
+        allowed_ok && !other_ok,
+        "the imported rule doesn't decide connections as OpenSnitch's did",
+        &found,
+    )
+}

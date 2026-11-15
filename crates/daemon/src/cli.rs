@@ -55,6 +55,10 @@ Commands:
   rules enable <id>, rules disable <id>
   rules import <file>             Add the rules of a rule file (TOML), in a folder
   rules export                    Print the stored rules as a rule file
+  rules import-opensnitch [<dir>] [--dry-run]
+                                  Import OpenSnitch's rules (default /etc/opensnitchd/rules) into a folder
+                                  OpenSnitch, listing those that can't be expressed exactly; --dry-run prints the
+                                  rule file instead
   events [--limit <n>]            The newest connections
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
@@ -175,6 +179,51 @@ fn print_file(result: v1::response::Result) -> Result<(), Error> {
 }
 
 /// `snitchhiker rules ...`.
+/// `rules import-opensnitch`: OpenSnitch's rule files in `dir`, converted and imported (or printed, `dry_run`).
+fn import_opensnitch(dir: &str, dry_run: bool, version: &str) -> Result<(), Error> {
+    let mut files = Vec::new();
+    let entries = std::fs::read_dir(dir).map_err(|e| Error::Usage(format!("{dir}: {e}")))?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            let text = std::fs::read_to_string(&path)
+                .map_err(|e| Error::Usage(format!("{}: {e}", path.display())))?;
+            files.push((path.display().to_string(), text));
+        }
+    }
+    files.sort();
+    let imported = snitchhiker_core::opensnitch::import(&files, "OpenSnitch");
+    let mut report = String::new();
+    for (name, reason) in &imported.skipped {
+        let _ = writeln!(report, "skipped {name}: {reason}");
+    }
+    let toml = toml::to_string(&imported.file)
+        .map_err(|e| Error::Usage(format!("writing the rule file: {e}")))?;
+    if dry_run {
+        // The rule file, and what was skipped as comments: the output stays a valid rule file.
+        let comments = report.lines().fold(String::new(), |mut text, line| {
+            let _ = writeln!(text, "# {line}");
+            text
+        });
+        return out(&format!("{toml}{comments}"));
+    }
+    let mut client = connect(version)?;
+    if !imported.file.rule.is_empty() {
+        client.call(v1::request::Method::ImportRules(v1::ImportRules {
+            toml,
+            folder: "OpenSnitch".to_owned(),
+        }))?;
+    }
+    let _ = writeln!(
+        report,
+        "imported {} of {} rules into the folder OpenSnitch; they apply to the host only \
+         (add context = \"any\" to a rule for containers too)",
+        imported.file.rule.len(),
+        imported.file.rule.len() + imported.skipped.len()
+    );
+    out(&report)
+}
+
 fn rules(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;
     let command = args.subcommand()?;
@@ -216,6 +265,14 @@ fn rules(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 enabled: which == "enable",
             }))?;
             out(&format!("{which}d rule {id}\n"))
+        }
+        Some("import-opensnitch") => {
+            let dry_run = args.contains("--dry-run");
+            let dir: String = args
+                .opt_free_from_str()?
+                .unwrap_or_else(|| "/etc/opensnitchd/rules".to_owned());
+            reject_rest(args)?;
+            import_opensnitch(&dir, dry_run, version)
         }
         Some("import") => {
             let path: String = args.free_from_str()?;

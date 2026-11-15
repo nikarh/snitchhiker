@@ -158,6 +158,10 @@ const SCENARIOS: &[Scenario] = &[
     ("daemon/bytes-are-counted", daemon::bytes_are_counted),
     ("daemon/learn-then-enforce", daemon::learn_then_enforce),
     (
+        "daemon/opensnitch-rules-import-and-apply",
+        daemon::opensnitch_rules_import_and_apply,
+    ),
+    (
         "perf/foreign-sets-dont-slow-us-down",
         perf::foreign_sets_dont_slow_us_down,
     ),
