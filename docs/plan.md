@@ -2256,12 +2256,12 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M8. Analytics, alerts and polish
 
-- [ ] **Explorer**
-  - [ ] Saved pivots, comparisons (this week vs last), top talkers by bytes, "new this period" lists.
-- [ ] **Alerts engine**
-  - [ ] User alert rules (query + threshold + window), deliveries (clients, push, webhook, journal), acknowledge sync.
-- [ ] **Rule hygiene**
-  - [ ] "Binary moved" detection with one-click generalisation, never-hit rules, merge suggestions.
+- [x] **Explorer**
+  - [x] Saved pivots, comparisons (this week vs last), top talkers by bytes, "new this period" lists.
+- [x] **Alerts engine**
+  - [x] User alert rules (query + threshold + window), deliveries (clients, push, webhook, journal), acknowledge sync.
+- [x] **Rule hygiene**
+  - [x] "Binary moved" detection with one-click generalisation, never-hit rules, merge suggestions.
 - [ ] **Agent envelopes and muting** (from M4)
   - [ ] Pre-authorized envelopes (a dangerous action to configure), auto-approval inside them with an audit log, their
         editor; muting proposals of a process tree.

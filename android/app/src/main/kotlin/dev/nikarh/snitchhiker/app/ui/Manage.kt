@@ -15,6 +15,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -27,11 +28,14 @@ import kotlinx.coroutines.launch
 import snitchhiker.v1.Action
 import snitchhiker.v1.AlertRule
 import snitchhiker.v1.ChainPolicy
+import snitchhiker.v1.Conditions
 import snitchhiker.v1.DeleteAlertRule
+import snitchhiker.v1.DeleteRule
 import snitchhiker.v1.GetPolicy
 import snitchhiker.v1.GetSystemFirewall
 import snitchhiker.v1.LintRules
 import snitchhiker.v1.ListAlertRules
+import snitchhiker.v1.ListRules
 import snitchhiker.v1.Mode
 import snitchhiker.v1.NodePolicy
 import snitchhiker.v1.Policy
@@ -39,6 +43,7 @@ import snitchhiker.v1.PutAlertRule
 import snitchhiker.v1.Request
 import snitchhiker.v1.SetPolicy
 import snitchhiker.v1.SetSystemFirewall
+import snitchhiker.v1.UpdateRule
 
 /** Choices in a row that scrolls sideways when it is wider than the screen. */
 @Composable
@@ -272,11 +277,25 @@ fun LintPage(
     session: NodeSession,
     modifier: Modifier,
 ) {
-    val findings = rememberRequest(session, Unit, { Request(lint_rules = LintRules(unused_days = 30)) }) { it.lint_report?.findings }
+    val scope = rememberCoroutineScope()
+    var generation by remember { mutableIntStateOf(0) }
+    val findings =
+        rememberRequest(session, generation, { Request(lint_rules = LintRules(unused_days = 30)) }) { it.lint_report?.findings }
+    val rules = rememberRequest(session, generation, { Request(list_rules = ListRules()) }) { it.rules?.rules }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun act(vararg requests: Request) {
+        scope.launch {
+            error = requests.firstNotNullOfOrNull { run(session, it) }
+            generation++
+        }
+    }
     Page(modifier) {
-        item { Problem(findings.error) }
+        item { Problem(findings.error ?: error) }
         if (findings.value?.isEmpty() == true) item { Muted("Nothing to report.") }
         items(findings.value.orEmpty()) { finding ->
+            val rule = rules.value?.firstOrNull { it.id == finding.rule }
+            val other = finding.other?.let { id -> rules.value?.firstOrNull { it.id == id } }
             Item {
                 Text(
                     finding.kind.name
@@ -285,7 +304,28 @@ fun LintPage(
                         .replace('_', ' '),
                     style = MaterialTheme.typography.titleSmall,
                 )
-                Text(finding.description)
+                rule?.let { Text(it.name) }
+                Muted(finding.description)
+                Row {
+                    if (rule != null && finding.suggestion.isNotEmpty()) {
+                        TextButton(onClick = {
+                            val conditions = (rule.conditions ?: Conditions()).copy(exe = listOf(finding.suggestion))
+                            act(Request(update_rule = UpdateRule(rule = rule.copy(conditions = conditions))))
+                        }) { Text("Use ${finding.suggestion.substringAfterLast('/')}") }
+                    }
+                    val merged = finding.merged
+                    if (rule != null && other != null && merged != null) {
+                        TextButton(onClick = {
+                            act(
+                                Request(update_rule = UpdateRule(rule = other.copy(conditions = merged))),
+                                Request(delete_rule = DeleteRule(id = rule.id)),
+                            )
+                        }) { Text("Merge") }
+                    }
+                    if (rule != null && !rule.locked) {
+                        TextButton(onClick = { act(Request(delete_rule = DeleteRule(id = rule.id))) }) { Text("Delete") }
+                    }
+                }
             }
         }
     }

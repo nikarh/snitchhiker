@@ -40,6 +40,9 @@ pub enum Kind {
     WritableBinary,
     /// Its binary is gone; `suggestion` covers the one that took its place, if there is one.
     MissingBinary,
+    /// It and `other` differ only in one list of destinations (hosts, networks or ports): `merged` is one rule for
+    /// both.
+    Mergeable,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,6 +52,8 @@ pub struct Finding {
     pub other: Option<RuleId>,
     /// A pattern to replace the rule's program with.
     pub suggestion: Option<PatternSource>,
+    /// For a mergeable rule: the other rule's conditions, with both lists.
+    pub merged: Option<Vec<Condition>>,
 }
 
 /// A rule as the lint sees it: with its folders' scopes, and whether it is in effect (it and its folders enabled).
@@ -74,6 +79,7 @@ pub fn lint(
         rule: rule.id,
         other: other.map(|o| o.id),
         suggestion: None,
+        merged: None,
     };
     for (i, a) in rules.iter().enumerate() {
         if a.locked {
@@ -148,7 +154,105 @@ pub fn lint(
             }
         }
     }
+    let reported: std::collections::HashSet<RuleId> = findings.iter().map(|f| f.rule).collect();
+    findings.extend(mergeable(rules, &reported, now_ms));
     findings
+}
+
+/// Pairs of rules that differ only in one list of destinations: the newer one could go, with its list added to the
+/// older's. Both in effect, changeable, in the same folder, with the same action, tier, expiry and logging, and
+/// neither `reported` with another problem (whose fix comes first).
+fn mergeable(
+    rules: &[Linted<'_>],
+    reported: &std::collections::HashSet<RuleId>,
+    now_ms: u64,
+) -> Vec<Finding> {
+    let mut found = Vec::new();
+    let candidates: Vec<&Rule> = rules
+        .iter()
+        .filter(|l| {
+            l.effective
+                && !l.locked
+                && !reported.contains(&l.rule.id)
+                && !matches!(l.rule.expiry, Expiry::At(at) if at <= now_ms)
+        })
+        .map(|l| l.rule)
+        .collect();
+    let mut merged_away = std::collections::HashSet::new();
+    for (i, older) in candidates.iter().enumerate() {
+        if merged_away.contains(&older.id) {
+            continue;
+        }
+        for newer in candidates.iter().skip(i + 1) {
+            if merged_away.contains(&newer.id)
+                || (
+                    older.folder,
+                    older.action,
+                    older.tier,
+                    older.expiry,
+                    older.log,
+                ) != (
+                    newer.folder,
+                    newer.action,
+                    newer.tier,
+                    newer.expiry,
+                    newer.log,
+                )
+            {
+                continue;
+            }
+            if let Some(merged) = merge(&older.conditions, &newer.conditions) {
+                merged_away.insert(newer.id);
+                found.push(Finding {
+                    kind: Kind::Mergeable,
+                    rule: newer.id,
+                    other: Some(older.id),
+                    suggestion: None,
+                    merged: Some(merged),
+                });
+            }
+        }
+    }
+    found
+}
+
+/// `a` with `b`'s values of the one condition they differ in, if they differ only in one host, network or port
+/// list (and both have it).
+fn merge(a: &[Condition], b: &[Condition]) -> Option<Vec<Condition>> {
+    if a.len() != b.len() {
+        return None;
+    }
+    let differing: Vec<&Condition> = a.iter().filter(|c| !b.contains(c)).collect();
+    let [mine] = differing.as_slice() else {
+        return None;
+    };
+    let theirs = b.iter().find(|c| !a.contains(c))?;
+    let union = match (mine, theirs) {
+        (Condition::Host(x), Condition::Host(y)) => Condition::Host(
+            x.iter()
+                .chain(y.iter().filter(|h| !x.contains(h)))
+                .cloned()
+                .collect(),
+        ),
+        (Condition::Net(x), Condition::Net(y)) => Condition::Net(
+            x.iter()
+                .chain(y.iter().filter(|n| !x.contains(n)))
+                .cloned()
+                .collect(),
+        ),
+        (Condition::Port(x), Condition::Port(y)) => Condition::Port(
+            x.iter()
+                .chain(y.iter().filter(|p| !x.contains(p)))
+                .copied()
+                .collect(),
+        ),
+        _ => return None,
+    };
+    Some(
+        a.iter()
+            .map(|c| if c == *mine { union.clone() } else { c.clone() })
+            .collect(),
+    )
 }
 
 /// A rule's programs given as exact paths (not under `{home}`: whose home it is depends on the connection).
@@ -280,6 +384,7 @@ impl Kind {
             Self::NeverHit => "decided no connection in the days looked at",
             Self::WritableBinary => "allows a binary that a user other than root can replace",
             Self::MissingBinary => "its binary is gone",
+            Self::Mergeable => "it can be merged with another",
         }
     }
 }
@@ -396,6 +501,58 @@ mod tests {
                 (Kind::Shadowed, 6, Some(5)),
             ]
         );
+    }
+
+    #[test]
+    fn rules_differing_only_in_destinations_can_merge() {
+        let curl = "/usr/bin/curl";
+        let facts = Facts {
+            files: vec![curl],
+            ..Facts::default()
+        };
+        let mut denied = rule(4, Action::Deny, vec![exe(curl), host("c.org")]);
+        denied.folder = Some(9);
+        let rules = [
+            rule(1, Action::Allow, vec![exe(curl), host("a.org")]),
+            rule(2, Action::Allow, vec![exe(curl), host("b.org")]),
+            // Another program too: two differences.
+            rule(3, Action::Allow, vec![exe("/usr/bin/wget"), host("d.org")]),
+            denied,
+        ];
+        let linted: Vec<Linted<'_>> = rules
+            .iter()
+            .map(|r| Linted {
+                rule: r,
+                conditions: r.conditions.iter().collect(),
+                effective: true,
+                locked: false,
+            })
+            .collect();
+        let found: Vec<Finding> = lint(&linted, &facts, 10 * 86_400_000, 0)
+            .into_iter()
+            .filter(|f| f.kind == Kind::Mergeable)
+            .collect();
+        assert_eq!(found.len(), 1);
+        let finding = &found[0];
+        assert_eq!((finding.rule, finding.other), (2, Some(1)));
+        assert_eq!(
+            finding.merged.as_deref(),
+            Some(
+                &[
+                    exe(curl),
+                    Condition::Host(vec![
+                        HostPattern::try_from("a.org".to_owned()).unwrap(),
+                        HostPattern::try_from("b.org".to_owned()).unwrap(),
+                    ]),
+                ][..]
+            )
+        );
+        let ports = |p: u16| vec![exe(curl), Condition::Port(vec![(p, p)])];
+        assert_eq!(
+            merge(&ports(80), &ports(443)),
+            Some(vec![exe(curl), Condition::Port(vec![(80, 80), (443, 443)])])
+        );
+        assert_eq!(merge(&ports(80), &[exe(curl), host("a.org")]), None);
     }
 
     #[test]

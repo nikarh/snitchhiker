@@ -124,6 +124,7 @@ A rule's *Edit* (or a double-click on it) opens the editor: name, action, tier, 
 - **unused rules**: they decided no connection in the days asked about and weren't changed in them;
 - **replaceable binaries**: an allow rule on a program that a user other than root can change or replace;
 - **binaries that are gone**: when an update moved a program to a new versioned path (`…/versions/2.0.40/claude`), the report offers the pattern that covers every version (`…/versions/*/claude`).
+- **rules that could be one**: two rules in the same folder, with the same action, tier, expiry and logging, that differ only in their list of hosts, networks or ports. Merging adds the newer rule's list to the older rule and deletes the newer one.
 
 A rule is called redundant only when the other rule certainly covers it, judged on the conditions as written (an exact path inside a glob, a network inside a network, a port inside a range): two different globs are never compared.
 

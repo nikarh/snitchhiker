@@ -1030,6 +1030,8 @@ enum LintKind {
   LINT_KIND_WRITABLE_BINARY = 6;
   // Its binary is gone; `suggestion` covers the one that took its place, if one did.
   LINT_KIND_MISSING_BINARY = 7;
+  // It and `other` differ only in one list of destinations (hosts, networks or ports): one rule would do.
+  LINT_KIND_MERGEABLE = 8;
 }
 
 message LintFinding {
@@ -1040,6 +1042,9 @@ message LintFinding {
   string suggestion = 4;
   // What is wrong, for people.
   string description = 5;
+  // For LINT_KIND_MERGEABLE: `other`'s conditions with both rules' lists; merging is updating `other` to these and
+  // deleting `rule`.
+  Conditions merged = 6;
 }
 
 message LintReport {

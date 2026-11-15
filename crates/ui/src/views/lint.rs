@@ -36,6 +36,7 @@ fn kind_label(kind: v1::LintKind) -> (&'static str, bool) {
         v1::LintKind::NeverHit => ("unused", false),
         v1::LintKind::WritableBinary => ("replaceable binary", true),
         v1::LintKind::MissingBinary => ("binary gone", true),
+        v1::LintKind::Mergeable => ("mergeable", false),
         v1::LintKind::Unspecified => ("?", false),
     }
 }
@@ -70,6 +71,36 @@ impl Render for Lint {
 }
 
 impl Lint {
+    /// Merging: the other rule takes both lists, and this one goes.
+    fn merge_button(
+        &self,
+        index: usize,
+        finding: &v1::LintFinding,
+        rule: &v1::Rule,
+        list: &v1::RuleList,
+    ) -> Option<Button> {
+        let merged = finding.merged.clone()?;
+        let other = finding
+            .other
+            .and_then(|id| list.rules.iter().find(|r| r.id == id))
+            .cloned()?;
+        let requests = self.requests.clone();
+        let gone = rule.id;
+        Some(
+            Button::new(SharedString::from(format!("lint-merge-{index}")))
+                .small()
+                .label("Merge")
+                .on_click(move |_, _, _| {
+                    let _ = requests.send(Request::UpdateRule(v1::Rule {
+                        conditions: Some(merged.clone()),
+                        ..other.clone()
+                    }));
+                    let _ = requests.send(Request::DeleteRule { id: gone });
+                    let _ = requests.send(Request::Lint { days: UNUSED_DAYS });
+                }),
+        )
+    }
+
     fn finding(
         &self,
         index: usize,
@@ -102,6 +133,9 @@ impl Lint {
                             let _ = requests.send(Request::Lint { days: UNUSED_DAYS });
                         }),
                 );
+            }
+            if let Some(merge) = self.merge_button(index, finding, &rule, list) {
+                actions = actions.child(merge);
             }
             let (model, requests) = (self.model.clone(), self.requests.clone());
             let editing = rule.clone();

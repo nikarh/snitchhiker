@@ -161,6 +161,10 @@ pub fn report(
                 ),
                 (Kind::Shadowed, Some(other)) => format!("{} always beats it", name(other)),
                 (Kind::NeverHit, _) => format!("decided no connection in {unused_days} days"),
+                (Kind::Mergeable, Some(other)) => format!(
+                    "{} differs from it only in its destinations: one rule would do",
+                    name(other)
+                ),
                 (kind, _) => kind.describe().to_owned(),
             };
             v1::LintFinding {
@@ -171,6 +175,11 @@ pub fn report(
                     .suggestion
                     .map_or_else(String::new, |s| s.to_string()),
                 description,
+                merged: finding.merged.map(|conditions| {
+                    snitchhiker_proto::convert::conditions(
+                        &snitchhiker_core::spec::Conditions::from_conditions(&conditions),
+                    )
+                }),
             }
         })
         .collect()
@@ -185,6 +194,7 @@ fn kind(kind: Kind) -> v1::LintKind {
         Kind::NeverHit => v1::LintKind::NeverHit,
         Kind::WritableBinary => v1::LintKind::WritableBinary,
         Kind::MissingBinary => v1::LintKind::MissingBinary,
+        Kind::Mergeable => v1::LintKind::Mergeable,
     }
 }
 
