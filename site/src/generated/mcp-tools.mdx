@@ -1,0 +1,78 @@
+{/* Generated from tools() in crates/daemon/src/mcp.rs by crates/daemon/tests/docs.rs. */}
+
+### `get_status`
+
+Whether the firewall is enforcing, and what happens to connections no rule decides. Call it when network commands fail in ways that could be the firewall.
+
+No arguments.
+
+### `check_connection`
+
+How a connection would be decided now (allow, deny, reject, or ask a person), and by which rule. Changes nothing.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `exe` | string | yes | The program's full path. |
+| `host` | string | yes | A host name or an address. |
+| `port` | integer | yes | The destination port. |
+| `protocol` | string | no | tcp by default. |
+
+### `recent_blocked`
+
+The connections of this session's own processes (the agent and the commands it ran) that the firewall refused or is asking a person about, over the last hour: program, host, port, count. Nothing of other processes. Call it first when a network command fails.
+
+No arguments.
+
+### `propose_rules`
+
+Propose rules that allow connections, for a person to approve. Propose only what recent_blocked shows was refused and the task needs, as narrow as possible: the exact program, exact host names, the port. Good: `{exe: /usr/bin/cargo, hosts: [index.crates.io, static.crates.io], ports: [443]}`. Bad: any program, any host, `*.com`, a `/8` network, the LAN or `169.254.169.254`: those are refused or marked, and marked rules need the person's password. Approved rules apply to this session's processes only, and end with it, unless the person chooses longer. The justification is shown to the person as your words: one or two plain sentences on why the task needs it.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `justification` | string | yes | Why the task needs these connections. |
+| `rules` | list of rules (below) | yes |  |
+
+Each rule:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `context` | string | Where the program runs; host by default. |
+| `exe` | string | The program's full path, as recent_blocked shows it (e.g. /usr/bin/cargo). The node uses the program it saw refused, whatever is written here. |
+| `hosts` | array | Exact host names (crates.io), `*.` and a name for its subdomains (*.githubusercontent.com), addresses or networks. Never empty: a rule for anywhere is refused or marked. |
+| `ports` | array | Ports or ranges (443, 8000-8080). |
+| `protocol` | string |  |
+
+
+### `get_proposal`
+
+A proposal's state: pending, approved (with the rules the person kept, possibly narrowed), denied (with their reason), withdrawn or expired.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `id` | integer | yes | The proposal's id, as propose_rules returned it. |
+
+### `wait_for_proposal`
+
+Waits until a person answers a proposal (or timeout_secs pass, 300 by default), then returns it as get_proposal does.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `id` | integer | yes | The proposal's id, as propose_rules returned it. |
+| `timeout_secs` | integer | no | How long to wait at most; 300 by default. |
+
+### `withdraw_proposal`
+
+Withdraws a pending proposal (it is no longer needed).
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `id` | integer | yes | The proposal's id, as propose_rules returned it. |
+
+### `annotate_pending`
+
+Adds a short note to a prompt that one of this session's processes caused and a person is being asked about now (its id is in recent_blocked), saying what the connection is for. Shown to them as your words.
+
+| Argument | Type | Required | Meaning |
+| --- | --- | --- | --- |
+| `note` | string | yes | What the connection is for. |
+| `prompt` | integer | yes | The prompt's id, from recent_blocked. |

@@ -47,7 +47,7 @@ A client must not send requests before it has the `Welcome`.
 | `ROLE_ROOT` | everything |
 | `ROLE_ADMIN` | everything a client app needs: read, answer prompts, change rules |
 | `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `ListAudit`, `Subscribe`, `Unsubscribe` |
-| `ROLE_AGENT` | (reserved for the MCP server) |
+| `ROLE_AGENT` | the agent socket's, for [agents](/guides/agents/): `GetStatus`, `CheckConnection`, `RecentBlocked`, `ProposeRules`, and `GetProposal`, `WithdrawProposal` and `AnnotatePending` for its own proposals and prompts. It changes nothing |
 
 A request the role doesn't allow gets an `ERROR_CODE_FORBIDDEN` error. Rules that can't be changed through the protocol (the System folder, root's `rules.d` files) are listed with `locked` set, and changing one gets `ERROR_CODE_LOCKED`.
 
@@ -78,6 +78,14 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `ListEvents` | `EventPage` | History, newest first: `limit` entries with `seq` below `before` (0: from the newest) |
 | `ListPrompts` | `PromptList` | Prompts waiting for an answer |
 | `AnswerPrompt` | `Done` | Decides a prompt, with the rule made from a suggestion or from the client's conditions. The rule's id comes in the `PromptResolved` notice |
+| `CheckConnection` | `CheckedConnection` | How a connection would be decided by today's rules (agent) |
+| `RecentBlocked` | `BlockedList` | The connections of the agent's own processes refused or asked about in the last hour (agent) |
+| `ProposeRules` | `Proposal` | Rules for a person to approve, shaped by the node (agent) |
+| `GetProposal` | `Proposal` | A proposal; with `wait_secs`, answered once it is no longer pending (or the time is up) |
+| `WithdrawProposal` | `Proposal` | (agent) |
+| `AnnotatePending` | `Done` | A note on a prompt the agent's own process opened (agent) |
+| `ListProposals` | `ProposalList` | Proposals, newest first |
+| `DecideProposal` | `Proposal` | Approves (with the rules as edited, for a duration) or denies, with a reason the agent is told; a marked rule needs step-up |
 | `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
 | `Unsubscribe` | `Done` | |
 
@@ -94,6 +102,8 @@ Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 | `TOPIC_PROMPTS` | `Prompt` as each opens, `PromptResolved` as each is answered (by anyone) or times out |
 | `TOPIC_EVENTS` | `ConnectionEvent` for every connection as it is recorded, with its `seq` |
 | `TOPIC_RULES` | `RulesChanged`: list the rules again |
+| `TOPIC_ALERTS` | `Alert` as each is raised, `AlertsChanged` when alerts are acknowledged |
+| `TOPIC_PROPOSALS` | `Proposal` as each is made and whenever its state changes; subscribing sends those waiting first |
 
 A subscription to `TOPIC_PROMPTS` is also what makes a node ask: with no subscriber, `no_client` decides instead of a prompt.
 

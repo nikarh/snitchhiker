@@ -713,7 +713,7 @@ Today they can only trip a prompt that says "node → 104.16.x.x:443" with no co
 **Transport.**
 
 - `snitchhiker mcp` speaks MCP over stdio. It is part of the CLI binary, so there is nothing extra to install:
-  `claude mcp add snitchhiker -- snitchhiker mcp`. Built on `rmcp`, the official Rust MCP SDK.
+  `claude mcp add snitchhiker -- snitchhiker mcp`. Written by hand on `serde_json` (decision 0009).
 - The MCP process runs as the user, unprivileged. It connects to `/run/snitchhiker/agent.sock`, which any local
   process may open. That is safe only because the socket's API is the powerless **Propose** tier
   ([§4.3](#43-step-up-authorization-for-dangerous-actions)).
@@ -1476,7 +1476,7 @@ projects.
 | --- | --- |
 | Protocol messages | The `.proto` files and their comments: every message, field, method and subscription topic, with types, the version that introduced it, and examples |
 | Protocol vectors | `proto/vectors/`: every example rendered as hex with its decoded meaning |
-| MCP tools | The tool definitions registered with `rmcp`: names, descriptions, input and output JSON schemas, example calls |
+| MCP tools | The tool definitions of `snitchhiker mcp`: names, descriptions, input JSON schemas, example calls |
 | Command line | The CLI's argument definitions: every subcommand and option, with defaults |
 | Configuration | The documented `daemon.toml` and relay config structs: every key, type, default and the `x_file` alternatives for secrets; `dist/daemon.toml` is generated from the same source |
 | Rule matchers and query keys | The `core` crate's matcher and query-key tables |
@@ -2098,28 +2098,33 @@ tables removed by other tools, queue overflows, lost history, dangerous actions)
 
 Early because the user's own coding agents benefit immediately. It needs the prompt broker (M2) and a review UI (M3).
 
-- [ ] **Agent socket and Propose tier**
-  - [ ] `agent.sock`, the tier's API, caller provenance by pidfd (ancestry, cwd, session), agent allow-list.
-  - [ ] Process-tree scoping for `recent_blocked` and `annotate_pending`.
-- [ ] **`process.session` matcher**
-  - [ ] Pidfd-held ancestor matching; rules removed when the process exits; survives daemon restart only as
-        "expired".
+- [x] **Agent socket and Propose tier** ([decision 0008](decisions/0008-agent-proposals.md))
+  - [x] `agent.sock`, the tier's API, caller provenance by pidfd (ancestry, cwd, session), agent allow-list
+        (`agent_programs`).
+  - [x] Process-tree scoping for `recent_blocked` and `annotate_pending` (the lineage of connections not allowed,
+        kept in memory for an hour).
+- [x] **`process.session` matcher**
+  - [x] Pidfd-held ancestor matching (pid and start time); rules removed when the process exits (the daemon waits on
+        pidfds); after a daemon restart, rules of agents gone are removed at start.
 - [ ] **Proposal engine**
-  - [ ] Validation and shaping: grounding in observed events, over-breadth checks (Public Suffix List, ranges,
-        sensitive aliases), defaults (session scope, expiry, folder), dedupe, merge, rate limits.
-  - [ ] Proposal lifecycle and storage; approval with edits; reasons returned to the agent.
-  - [ ] Envelopes (dangerous tier to configure), auto-approval with audit log.
-- [ ] **`snitchhiker mcp`**
-  - [ ] stdio MCP server with `rmcp`: `get_status`, `check_connection`, `recent_blocked`, `propose_rules`,
-        `get_proposal`, `wait_for_proposal`, `withdraw_proposal`, `annotate_pending`.
-  - [ ] Tool descriptions written so agents propose narrow rules (examples of good and bad proposals).
-  - [ ] Docs: registering with Claude Code and other MCP clients.
+  - [x] Validation and shaping: grounding in observed events (the program the kernel saw), over-breadth checks
+        (Public Suffix List, ranges, sensitive aliases), defaults (session scope, folder), dedupe, rate limits.
+  - [x] Proposal lifecycle and storage; approval with edits; reasons returned to the agent; expiry with the agent.
+  - [ ] Envelopes (dangerous tier to configure), auto-approval with audit log (moved to M8: off by default, and
+        decision 0008 leaves it for later).
+- [x] **`snitchhiker mcp`**
+  - [x] stdio MCP server (by hand, decision 0009): `get_status`, `check_connection`, `recent_blocked`,
+        `propose_rules`, `get_proposal`, `wait_for_proposal`, `withdraw_proposal`, `annotate_pending`.
+  - [x] Tool descriptions written so agents propose narrow rules (examples of good and bad proposals).
+  - [x] Docs: registering with Claude Code and other MCP clients.
 - [ ] **Desktop review UI**
-  - [ ] Proposal prompts with provenance, untrusted-text styling, diff, risk badges, evidence, edit and approve.
-  - [ ] Agents folder view; proposal history; envelopes editor; mute per process tree.
-- [ ] **Docs:** the generated MCP tools reference; the "Agents and MCP" guide with registration for Claude Code and
+  - [x] Proposal prompts with provenance, untrusted-text styling, risk badges, evidence, edit and approve; agents'
+        notes on prompts; notifications.
+  - [x] Proposal history. [ ] Mute per process tree; envelopes editor (with envelopes, M8).
+- [x] **Docs:** the generated MCP tools reference; the "Agents and MCP" guide with registration for Claude Code and
       other clients, and examples of good and rejected proposals.
-- [ ] **Tests:** the MCP and Propose-tier tests in [§12](#12-testing).
+- [x] **Tests:** an agent in the VM sees only its own refused connections, proposes, is approved (command line and
+      desktop app), connects, and its rules go when it exits.
 - **DoD:** Claude Code, blocked while running `cargo build` in a project, calls `recent_blocked`, proposes
   session-scoped allows for `crates.io` and `static.crates.io` for `cargo`, the user approves in the desktop app, and the
   build succeeds. A proposal for `node → *` is flagged and cannot be approved without step-up.
@@ -2230,6 +2235,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [ ] User alert rules (query + threshold + window), deliveries (clients, push, webhook, journal), acknowledge sync.
 - [ ] **Rule hygiene**
   - [ ] "Binary moved" detection with one-click generalisation, never-hit rules, merge suggestions.
+- [ ] **Agent envelopes and muting** (from M4)
+  - [ ] Pre-authorized envelopes (a dangerous action to configure), auto-approval inside them with an audit log, their
+        editor; muting proposals of a process tree.
 - [ ] **Blocklists from URLs**
   - [ ] Refresh schedule, integrity (size limits, format checks), stats per list.
 - [ ] **Performance pass**
@@ -2373,7 +2381,7 @@ policy is drop.
 | Mobile bindings | uniffi, cargo-ndk | 0.32.2 / 4.1.2 | Mozilla-proven; async → suspend. |
 | Desktop UI | gpui-ce, or gpui-pre + gpui-component | 0.3.0 / 0.9.1 | Decided in M0. |
 | Terminal QR | qrcode (Dense1x2 renderer) | 0.14.1 | `fast_qr` is an alternative. |
-| MCP server | rmcp (official Rust MCP SDK) | latest at M4 | stdio transport inside the CLI binary. |
+| MCP server | none: JSON-RPC on `serde_json` (decision 0009) | n/a | stdio transport inside the CLI binary. |
 | Container metadata | Docker Engine API (portcullis's client), Podman on-disk state, systemd-machined (zbus) | n/a | CRI later. |
 | Android QR | CameraX + ML Kit barcode (bundled) / ZXing core (foss) | 1.7 / 17.3.0 / 3.5.4 | |
 | Android push | FCM / UnifiedPush connector | n/a / 3.3.5 | |

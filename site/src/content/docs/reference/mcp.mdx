@@ -1,0 +1,12 @@
+---
+title: MCP tools
+description: The tools of the MCP server (snitchhiker mcp) agents use to see what they were refused and propose rules.
+sidebar:
+  order: 5
+---
+
+import Tools from '../../../generated/mcp-tools.mdx';
+
+`snitchhiker mcp` is an MCP server on stdin and stdout (JSON-RPC 2.0, one message a line), speaking MCP 2024-11-05 to 2025-11-25. It answers `initialize`, `ping`, `tools/list` and `tools/call`; each tool is one request of the [agent role](/reference/protocol/#roles) on the node's agent socket. Results are JSON, as the tool call's text; a request the node refuses comes back as a tool error with the node's reason. How agents use them, and what the node does with a proposal: [Agents and MCP](/guides/agents/).
+
+<Tools />

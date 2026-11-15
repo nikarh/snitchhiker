@@ -4,7 +4,8 @@
 
 #![allow(
     clippy::unwrap_used,
-    reason = "a test's helpers: failing loudly is the point"
+    clippy::indexing_slicing,
+    reason = "a test's helpers: failing loudly is the point (JSON indexing gives null, never panics)"
 )]
 
 use std::fmt::Write as _;
@@ -49,12 +50,81 @@ fn block_columns() -> String {
     text
 }
 
+/// The MCP server's tools: what agents are told, and what they send.
+fn mcp_tools() -> String {
+    let mut text = String::from(
+        "{/* Generated from tools() in crates/daemon/src/mcp.rs by crates/daemon/tests/docs.rs. */}\n",
+    );
+    for tool in snitchhiker_daemon::mcp::tools().as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        let _ = write!(
+            text,
+            "\n### `{name}`\n\n{}\n\n",
+            tool["description"].as_str().unwrap()
+        );
+        let schema = &tool["inputSchema"];
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .map_or_else(Vec::new, |r| r.iter().filter_map(|v| v.as_str()).collect());
+        let properties = schema["properties"].as_object().unwrap();
+        if properties.is_empty() {
+            text.push_str("No arguments.\n");
+            continue;
+        }
+        text.push_str("| Argument | Type | Required | Meaning |\n| --- | --- | --- | --- |\n");
+        // Sorted: map order depends on serde_json's features, which the workspace's other crates change.
+        let mut properties: Vec<_> = properties.iter().collect();
+        properties.sort_by_key(|(key, _)| key.as_str());
+        for (key, property) in properties {
+            let kind = match property["type"].as_str().unwrap_or("") {
+                "array" if property["items"]["type"] == "object" => {
+                    "list of rules (below)".to_owned()
+                }
+                "array" => format!(
+                    "list of {}s",
+                    property["items"]["type"].as_str().unwrap_or("value")
+                ),
+                other => other.to_owned(),
+            };
+            let _ = writeln!(
+                text,
+                "| `{key}` | {kind} | {} | {} |",
+                if required.contains(&key.as_str()) {
+                    "yes"
+                } else {
+                    "no"
+                },
+                property["description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .replace('|', "\\|")
+            );
+            if let Some(rule) = property["items"]["properties"].as_object() {
+                text.push_str("\nEach rule:\n\n| Field | Type | Meaning |\n| --- | --- | --- |\n");
+                let mut rule: Vec<_> = rule.iter().collect();
+                rule.sort_by_key(|(field, _)| field.as_str());
+                for (field, p) in rule {
+                    let _ = writeln!(
+                        text,
+                        "| `{field}` | {} | {} |",
+                        p["type"].as_str().unwrap_or(""),
+                        p["description"].as_str().unwrap_or("").replace('|', "\\|")
+                    );
+                }
+                text.push('\n');
+            }
+        }
+    }
+    text
+}
+
 fn generated() -> Vec<(&'static str, String)> {
     vec![
         ("cli-help.txt", HELP.to_owned()),
         ("daemon-help.txt", DAEMON_HELP.to_owned()),
         ("aliases.mdx", aliases()),
         ("block-columns.mdx", block_columns()),
+        ("mcp-tools.mdx", mcp_tools()),
         (
             "config-defaults.toml",
             format!(
