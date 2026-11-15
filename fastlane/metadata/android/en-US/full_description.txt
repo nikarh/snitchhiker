@@ -1,0 +1,20 @@
+<p>Snitchhiker is an interactive application firewall for Linux: it asks before a program connects somewhere no rule
+covers, and keeps the answer as a rule. This app is its remote control, for your workstations and your servers alike.</p>
+
+<p>Pair the app with a machine running Snitchhiker by scanning its QR code, opening its link or typing its code. The
+phone connects to it directly, or through your own relay when the machine is behind NAT or a firewall. Connections are
+end-to-end encrypted, with keys only your devices and machines hold.</p>
+
+<ul>
+<li>Prompts as notifications, answered with Allow or Deny from the notification, or several at once in the app</li>
+<li>Woken through UnifiedPush (with ntfy, for example, and your own server) when a prompt waits, and told when a machine goes offline and why</li>
+<li>Rules by folder: search, edit, enable, move and delete them, one by one or together; import and export rules files</li>
+<li>The connection history, live events, the Explorer (who connected where, how much), open connections</li>
+<li>Explaining why a connection was allowed or blocked; checking the rules for mistakes; undoing changes</li>
+<li>The system firewall, alerts and alert rules, the machine's settings</li>
+<li>Rules proposed by AI agents, reviewed and approved or denied</li>
+<li>Several machines side by side, each with its own devices and roles</li>
+<li>An optional app lock, with your fingerprint or screen lock</li>
+</ul>
+
+<p>The app needs a machine running Snitchhiker: see the documentation for installing it.</p>

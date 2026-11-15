@@ -2146,10 +2146,10 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] Many-to-many: several devices per node, several nodes per client, local and remote nodes side by side.
 - [x] **`client` crate: iroh transport**
   - [x] Connections to remote nodes (reconnecting with backoff, as local ones), LAN discovery (mDNS).
-- [ ] **Relay**
+- [x] **Relay**
   - [x] `snitchhiker-relay`: embedded iroh-relay, ACME or reverse-proxy mode, allow-list, metrics; package and unit.
-  - [ ] Presence heartbeats, offline detection and the registration store (moved to M6, with the push channels they
-        feed); the container image (M9, with the release images).
+  - [x] Presence, offline detection and the registration store: done in M6 with the push channels they feed. [ ] The
+        container image (M9, with the release images).
 - [x] **Step-up from another device**
   - [x] A remote device's dangerous action waits for an approval on the node (its app, with polkit, or root).
 - [x] **Docs:** relay installation and deployment, "Phones and remote nodes" guide (pairing, roles, revocation),
@@ -2163,36 +2163,50 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M6. Android app
 
-- [ ] **`mobile` crate**
-  - [ ] UniFFI surface over `client`: async functions, Flows for subscriptions, error mapping.
-  - [ ] Key storage hooks (Keystore-wrapped).
-  - [ ] cargo-ndk build in Gradle.
-- [ ] **App foundation**
-  - [ ] Compose + Material 3 theme (custom, dark-first), navigation, DI, app lock.
-  - [ ] Phone layout rules from [§9.4](#94-android-app).
-  - [ ] detekt or ktlint, Android Lint, CI job.
-- [ ] **Pairing**
-  - [ ] Add a node by typing a code, opening a link, or scanning (CameraX + ML Kit / ZXing); a node card with
-        fingerprint confirmation.
-- [ ] **Screens** (parity with the desktop, per [§9.1](#91-feature-parity-matrix))
-  - [ ] Nodes, Prompts (batch answer), Live, Events, Explorer, Connections, Rules (tree, search, multi-select, edit,
-        lint, history), Firewall, Alerts, Devices, Settings.
-- [ ] **Notifications**
-  - [ ] Channels; prompt notifications with actions answered in a worker; cancellation when answered elsewhere.
-- [ ] **Push**
-  - [ ] FCM (play), UnifiedPush (foss), registration flow through the daemon to the relay, wake-up → connect → fetch.
-  - [ ] Relay push gateway: FCM HTTP v1 and UnifiedPush POST; offline/online and firewall-disabled notifications.
-- [ ] **Live mode**
-  - [ ] Optional `specialUse` foreground service with persistent connections.
-- [ ] **End to end:** the `android` topology: emulator pairs by code, receives a prompt after a push wake-up, and
-      answers from the notification.
-- [ ] **Docs:** Android install page (Play, F-Droid, APK verification); Roborazzi screenshots of every screen at phone
-      and tablet sizes, dark and light, through the same text check.
-- [ ] **Release**
-  - [ ] Signing in the `release` environment; APKs on GitHub releases; F-Droid metadata (foss flavour).
-- [ ] **Relay presence and push (from M5)**
-  - [ ] Signed heartbeats from nodes, offline detection, the registration store of devices' push tokens, push to
-        FCM and UnifiedPush; graceful-stop notices.
+- [x] **`mobile` crate**
+  - [x] The Rust core over JNI rather than UniFFI ([decision 0011](decisions/0011-android-core-over-jni.md): UniFFI is
+        MPL): blocking calls on the app's IO threads, notices pulled by the app, errors as exceptions.
+  - [x] Key storage hooks (Keystore-wrapped).
+  - [x] cargo-ndk build (`mise run android:core`) feeding the Gradle build.
+- [x] **App foundation**
+  - [x] Compose + Material 3 theme (custom, dark-first), navigation, app lock (the platform's BiometricPrompt, device
+        credential allowed; notifications only open a locked app). No DI framework: the app object holds the sessions.
+  - [x] Phone layout rules from [§9.4](#94-android-app).
+  - [x] ktlint (Spotless), Android Lint (warnings as errors), CI job; both flavours checked.
+- [x] **Pairing**
+  - [x] Add a node by typing a code, opening a link, or scanning (CameraX + ZXing, in both flavours: no ML Kit);
+        fingerprints shown.
+  - [x] Pair another device from the phone (code, QR code, link to share).
+- [x] **Screens** (parity with the desktop, per [§9.1](#91-feature-parity-matrix))
+  - [x] Nodes, Prompts (batch answer, approvals), Live, Events (explain), Explorer (stacked drill-down, CSV),
+        Connections (close, CSV), Rules (folders, search, multi-select bulk enable/disable/move/delete, edit, lint,
+        history and undo, import and export through the share sheet), Firewall, Alerts and alert rules, Devices (mute,
+        unpair, pair), Settings, Proposals (edit, approve, deny).
+  - [ ] Containers & VMs view (M7).
+- [x] **Notifications**
+  - [x] Channels; prompt notifications with Allow/Deny answered in a receiver; cancellation when answered elsewhere;
+        alerts, once each; offline and back online.
+- [x] **Push** ([decision 0012](decisions/0012-push-gateway.md))
+  - [x] FCM (play, with the Firebase project given at build time), UnifiedPush (foss; play without a project),
+        registration through the daemon to the gateway (`SetPushTarget`), wake-up → connect → fetch.
+  - [x] Relay push gateway: FCM HTTP v1 and UnifiedPush POST (RFC 8291 encryption); offline/online with the node's
+        stop reason; alerts (a firewall turned off, a crash, the table removed) wake devices too.
+- [x] **Live mode**
+  - [x] Optional `specialUse` foreground service with persistent connections.
+- [x] **End to end:** the `android` topology (`e2e/android.sh`): the emulator pairs by link through the relay, answers
+      a prompt from the notification in live mode, opens a locked app from a notification, is woken by UnifiedPush
+      (ntfy) for a prompt with the app not running and answers it, and is told by push that the node went offline
+      (with its reason) and is back. Pairing by code is covered by the VM scenarios (LAN), which the emulator's network
+      can't reach.
+- [ ] **Docs:** [x] Android install page (APKs, F-Droid build, APK verification, wake-ups, lock). [ ] Roborazzi
+      screenshots of every screen at phone and tablet sizes, dark and light, through the same text check.
+- [x] **Release**
+  - [x] Signing in the `release` environment (an EC key kept by the user); both APKs on GitHub releases with the
+        signed checksums; F-Droid metadata (fastlane, foss flavour). The F-Droid submission needs the public source
+        (M9).
+- [x] **Relay presence and push (from M5)**
+  - [x] Presence as the node's open stream to the gateway (no heartbeats to count), offline detection, the
+        registration store of devices' push targets, push to FCM and UnifiedPush; graceful-stop notices.
 - **DoD:**
   - the phone gets a notification within seconds of an unknown connection on a headless AWS node, and Allow from the
     notification creates the suggested rule;
