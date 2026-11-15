@@ -100,6 +100,8 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     info!(version = VERSION, "starting");
     let daemon = Daemon::start(config)?;
     write_pidfile();
+    // The table is in place: from now on no new connection gets out undecided.
+    snitchhiker_daemon::notify::notify("READY=1");
     // SIGHUP reloads; SIGTERM or SIGINT end the loop.
     while signals.wait()? == Signal::SIGHUP {
         match daemon.reload_rules() {
@@ -107,6 +109,7 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
             Err(error) => error!(%error, "reloading the rules; keeping the previous ones"),
         }
     }
+    snitchhiker_daemon::notify::notify("STOPPING=1");
     let _ = std::fs::remove_file(cli::PIDFILE);
     daemon.stop();
     Ok(())

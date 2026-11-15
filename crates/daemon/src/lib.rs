@@ -4,6 +4,7 @@
 pub mod cli;
 pub mod config;
 pub mod dns;
+pub mod notify;
 pub mod peer;
 pub mod process;
 pub mod runtime;
