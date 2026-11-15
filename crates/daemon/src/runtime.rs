@@ -21,7 +21,7 @@ use snitchhiker_netfilter::nftables::{Table, encode_get_table, encode_install, e
 use snitchhiker_netfilter::packet;
 use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::hub::Outgoing;
 use snitchhiker_core::rule::{Expiry, FolderId, Rule, RuleId, Tier};
@@ -108,6 +108,8 @@ pub struct Shared {
     pub agents: crate::agents::Watch,
     /// Who is notified of prompts.
     pub router: crate::router::Router,
+    /// The containers connections come from.
+    pub contexts: crate::contexts::Contexts,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -147,13 +149,7 @@ impl Daemon {
         agents.extend(waiting_agents(&store)?);
         // The programs first: from the moment the table is in place, every new flow's owner must be known.
         let attribution = Attribution::load()?;
-        let table = Table {
-            queue: config.queue,
-            queues: config.queues,
-            bypass: config.fail == Fail::Open,
-            dns_queue: config.dns_queue(),
-            ..Table::default()
-        };
+        let table = table_of(&config);
         install(&table)?;
         info!(queues = config.queues, mode = ?config.mode, "table installed");
 
@@ -192,6 +188,7 @@ impl Daemon {
                 config.prompt_routing,
                 Duration::from_secs(config.escalate_after_secs),
             ),
+            contexts: crate::contexts::Contexts::default(),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -582,6 +579,9 @@ impl Daemon {
                 _ => ContextKind::Host,
             },
             now_ms: now_ms(),
+            container: None,
+            vm: None,
+            netns: None,
         };
         let matches = rules.explain(&facts);
         // Names and whether a match depends on what the history doesn't keep.
@@ -945,6 +945,31 @@ fn compile(config: &Config, store: &Store) -> Result<(RuleSet, HashSet<ProcessRe
     Ok((RuleSet::compile(&folders, &rules)?, agents))
 }
 
+/// The daemon's table, as its configuration has it.
+fn table_of(config: &Config) -> Table {
+    Table {
+        queue: config.queue,
+        queues: config.queues,
+        bypass: config.fail == Fail::Open,
+        dns_queue: config.dns_queue(),
+        forward_from: config
+            .forward_from
+            .iter()
+            .map(|name| match name.strip_suffix('*') {
+                Some(prefix) => snitchhiker_netfilter::nftables::Interface {
+                    name: prefix.to_owned(),
+                    prefix: true,
+                },
+                None => snitchhiker_netfilter::nftables::Interface {
+                    name: name.clone(),
+                    prefix: false,
+                },
+            })
+            .collect(),
+        ..Table::default()
+    }
+}
+
 fn install(table: &Table) -> std::io::Result<()> {
     let mut socket = Socket::open()?;
     let mut writer = Writer::new();
@@ -999,6 +1024,7 @@ fn dns_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
 
 fn decide_loop(shared: &Shared, mut queue: Queue, offset: usize) -> Result<(), Error> {
     let mut processes = ProcessCache::new(shared.host);
+    let mut senders = crate::forward::Senders::default();
     let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
     let mut rejected: Vec<SocketId> = Vec::with_capacity(8);
     let mut sockdiag: Option<SockDiag> = None;
@@ -1006,7 +1032,7 @@ fn decide_loop(shared: &Shared, mut queue: Queue, offset: usize) -> Result<(), E
         verdicts.clear();
         rejected.clear();
         for packet in queue.receive()? {
-            let (verdict, reject) = decide(shared, &mut processes, &packet, offset);
+            let (verdict, reject) = decide(shared, &mut processes, &mut senders, &packet, offset);
             // No verdict: the packet waits for a prompt's answer.
             if let Some(verdict) = verdict {
                 verdicts.push((packet.id, verdict));
@@ -1091,9 +1117,50 @@ pub fn policy_action(policy: Policy, no_client: Action) -> Action {
 
 /// The verdict for one packet (none: it is held for a prompt), recording what happened, and the socket to close for a
 /// rejected connection.
+/// The netfilter hook of forwarded packets.
+const NF_INET_FORWARD: u8 = 2;
+
+/// The owner of a forwarded packet's flow, as its sender's namespace recorded it (see [`crate::forward`]).
+fn forwarded_owner(
+    shared: &Shared,
+    senders: &mut crate::forward::Senders,
+    queued: &Packet<'_>,
+    key: &FlowKey,
+) -> Option<snitchhiker_ebpf::FlowOwner> {
+    let (Some(bridge), Some(mac)) = (queued.in_interface, queued.source_mac) else {
+        debug!(in_interface = ?queued.in_interface, mac = ?queued.source_mac, "a forwarded packet without its sender's link");
+        return None;
+    };
+    for fresh in [false, true] {
+        let sender = senders.sender(bridge, mac, fresh);
+        debug!(bridge, ?mac, ?sender, fresh, "a forwarded packet's sender");
+        if let Some(crate::forward::Sender::Netns(netns)) = sender
+            && let Some(owner) = shared.attribution.owner(&FlowKey { netns, ..*key })
+        {
+            return Some(owner);
+        }
+    }
+    None
+}
+
+/// Who opened a queued packet's flow: on this host, or, for a forwarded packet, in its sender's namespace.
+fn owner_of(
+    shared: &Shared,
+    senders: &mut crate::forward::Senders,
+    queued: &Packet<'_>,
+    key: &FlowKey,
+) -> Option<snitchhiker_ebpf::FlowOwner> {
+    if queued.hook == NF_INET_FORWARD {
+        forwarded_owner(shared, senders, queued, key)
+    } else {
+        shared.attribution.owner(key)
+    }
+}
+
 fn decide(
     shared: &Shared,
     processes: &mut ProcessCache,
+    senders: &mut crate::forward::Senders,
     queued: &Packet<'_>,
     queue: usize,
 ) -> (Option<Verdict>, Option<SocketId>) {
@@ -1109,7 +1176,7 @@ fn decide(
         destination: headers.destination,
         destination_port: headers.destination_port,
     };
-    let owner = shared.attribution.owner(&key);
+    let owner = owner_of(shared, senders, queued, &key);
     // The daemon's own traffic (its remote endpoint: the relay, devices) is never decided, as marked packets aren't
     // queued: its sockets come from a library that can't mark them, but the kernel names their process.
     if owner.is_some_and(|o| o.pid == std::process::id()) {
@@ -1128,6 +1195,10 @@ fn decide(
         .unwrap_or_else(PoisonError::into_inner)
         .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
+    let context = process.as_ref().map_or(ContextKind::Host, |p| p.context);
+    let container = owner
+        .filter(|_| context == ContextKind::Container)
+        .and_then(|o| shared.contexts.container(o.pid, o.cgroup));
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: empty,
@@ -1140,13 +1211,16 @@ fn decide(
         address: headers.destination,
         port: headers.destination_port,
         protocol: headers.protocol,
-        context: process.as_ref().map_or(ContextKind::Host, |p| p.context),
+        context,
         now_ms: now,
+        container: container.as_deref(),
+        vm: None,
+        netns: None,
     };
     let exe = process
         .as_ref()
         .map_or_else(|| Arc::clone(&shared.unknown), |p| Arc::clone(&p.exe));
-    let mut event = undecided_event(&facts, exe, pid, owner.map(|o| o.cookie));
+    let event = undecided_event(&facts, exe, pid, owner.map(|o| o.cookie));
     let rules = shared.rules.load();
     let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
         (decision.action, Source::Rule, Some(decision.rule))
@@ -1168,6 +1242,17 @@ fn decide(
         let action = policy_action(policy.no_match, policy.no_client);
         (action, Source::Policy, None)
     };
+    conclude(shared, &facts, event, &headers, (action, source, rule))
+}
+
+/// A decided connection: its verdict by the mode, the history's record, and the socket to close for a rejection.
+fn conclude(
+    shared: &Shared,
+    facts: &Facts<'_>,
+    mut event: Event,
+    headers: &packet::Headers,
+    (action, source, rule): (Action, Source, Option<RuleId>),
+) -> (Option<Verdict>, Option<SocketId>) {
     let (verdict, source) = match shared.policy.load().mode {
         Mode::Monitor => (Verdict::Accept, Source::Monitor),
         Mode::Enforce => (
@@ -1180,7 +1265,7 @@ fn decide(
         ),
     };
     if action != Action::Allow {
-        remember(shared, &facts, &event, None);
+        remember(shared, facts, &event, None);
     }
     event.action = action;
     event.source = source;

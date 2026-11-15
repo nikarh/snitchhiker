@@ -9,6 +9,7 @@ use std::time::Instant;
 
 mod agents;
 mod attribution;
+mod containers;
 mod daemon;
 mod escape;
 mod local_auth;
@@ -143,38 +144,6 @@ const SCENARIOS: &[Scenario] = &[
         "agents/a-broad-proposal-needs-step-up",
         agents::a_broad_proposal_needs_step_up,
     ),
-    (
-        "remote/a-paired-device-connects-and-is-unpaired",
-        remote::a_paired_device_connects_and_is_unpaired,
-    ),
-    (
-        "remote/a-device-pairs-by-code-on-the-lan",
-        remote::a_device_pairs_by_code_on_the_lan,
-    ),
-    (
-        "remote/another-major-version-is-refused",
-        remote::another_major_version_is_refused,
-    ),
-    (
-        "remote/a-device-connects-through-the-relay",
-        remote::a_device_connects_through_the_relay,
-    ),
-    (
-        "remote/a-device-behind-nat-reaches-a-firewalled-node",
-        remote::a_device_behind_nat_reaches_a_firewalled_node,
-    ),
-    (
-        "remote/a-devices-dangerous-request-waits-for-approval",
-        remote::a_devices_dangerous_request_waits_for_approval,
-    ),
-    (
-        "remote/prompts-escalate-to-devices-and-not-to-muted-ones",
-        remote::prompts_escalate_to_devices_and_not_to_muted_ones,
-    ),
-    (
-        "remote/devices-are-woken-and-told-when-the-node-goes",
-        push::devices_are_woken_and_told_when_the_node_goes,
-    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",
@@ -279,6 +248,46 @@ const SCENARIOS: &[Scenario] = &[
     (
         "names/unsolicited-answers-teach-nothing",
         names::unsolicited_answers_teach_nothing,
+    ),
+    (
+        "containers/a-bridged-containers-traffic-is-decided-by-its-program",
+        containers::a_bridged_containers_traffic_is_decided_by_its_program,
+    ),
+    (
+        "containers/rules-name-containers-by-name-image-and-compose-service",
+        containers::rules_name_containers_by_name_image_and_compose_service,
+    ),
+    (
+        "remote/a-paired-device-connects-and-is-unpaired",
+        remote::a_paired_device_connects_and_is_unpaired,
+    ),
+    (
+        "remote/a-device-pairs-by-code-on-the-lan",
+        remote::a_device_pairs_by_code_on_the_lan,
+    ),
+    (
+        "remote/another-major-version-is-refused",
+        remote::another_major_version_is_refused,
+    ),
+    (
+        "remote/a-device-connects-through-the-relay",
+        remote::a_device_connects_through_the_relay,
+    ),
+    (
+        "remote/a-device-behind-nat-reaches-a-firewalled-node",
+        remote::a_device_behind_nat_reaches_a_firewalled_node,
+    ),
+    (
+        "remote/a-devices-dangerous-request-waits-for-approval",
+        remote::a_devices_dangerous_request_waits_for_approval,
+    ),
+    (
+        "remote/prompts-escalate-to-devices-and-not-to-muted-ones",
+        remote::prompts_escalate_to_devices_and_not_to_muted_ones,
+    ),
+    (
+        "remote/devices-are-woken-and-told-when-the-node-goes",
+        push::devices_are_woken_and_told_when_the_node_goes,
     ),
 ];
 

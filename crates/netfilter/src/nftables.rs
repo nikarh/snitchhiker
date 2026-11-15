@@ -127,6 +127,9 @@ pub struct Table {
     /// A queue that DNS answers (UDP from port 53) are copied to, to learn the names of addresses; `None` for none.
     /// It only observes: it always passes packets while nobody is bound to it.
     pub dns_queue: Option<u16>,
+    /// Interfaces whose forwarded new flows are queued too: the bridges of containers and VMs, whose traffic never
+    /// passes the `output` hook. None: forwarded traffic isn't looked at.
+    pub forward_from: Vec<Interface>,
 }
 
 impl Default for Table {
@@ -138,6 +141,7 @@ impl Default for Table {
             bypass: false,
             own_mark: 0x5_17c_000,
             dns_queue: None,
+            forward_from: Vec::new(),
         }
     }
 }
@@ -194,6 +198,36 @@ pub fn encode_install(writer: &mut Writer, table: &Table, sequence: u32) -> Batc
         rule.cmp(NFT_CMP_NEQ, &0_u32.to_ne_bytes());
         rule.queue(table);
     });
+    if !table.forward_from.is_empty() {
+        // Before NAT (postrouting) changes the source: the tuple is the one the sender's namespace recorded.
+        batch.base_chain(
+            &table.name,
+            "forward",
+            "filter",
+            NF_INET_FORWARD,
+            NF_IP_PRI_MANGLE,
+        );
+        for interface in &table.forward_from {
+            batch.rule(&table.name, "forward", |rule| {
+                rule.interface(NFT_META_IIFNAME, interface);
+                rule.meta(NFT_META_L4PROTO);
+                rule.cmp(NFT_CMP_EQ, &[IPPROTO_TCP]);
+                rule.payload(NFT_PAYLOAD_TRANSPORT_HEADER, TCP_FLAGS_OFFSET, 1);
+                rule.bitwise(1, &[TCP_FIN_SYN_RST_ACK]);
+                rule.cmp(NFT_CMP_EQ, &[TCP_SYN]);
+                rule.queue(table);
+            });
+            batch.rule(&table.name, "forward", |rule| {
+                rule.interface(NFT_META_IIFNAME, interface);
+                rule.meta(NFT_META_L4PROTO);
+                rule.cmp(NFT_CMP_NEQ, &[IPPROTO_TCP]);
+                rule.ct(NFT_CT_STATE);
+                rule.bitwise(4, &(CT_STATE_NEW | CT_STATE_RELATED).to_ne_bytes());
+                rule.cmp(NFT_CMP_NEQ, &0_u32.to_ne_bytes());
+                rule.queue(table);
+            });
+        }
+    }
     if let Some(dns_queue) = table.dns_queue {
         batch.base_chain(
             &table.name,

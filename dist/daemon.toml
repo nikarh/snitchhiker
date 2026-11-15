@@ -26,6 +26,10 @@ fail = "closed"
 # Learn the names of addresses from the DNS answers processes receive, so rules can name hosts.
 #learn_dns = true
 
+# Bridges whose forwarded traffic is decided too: containers on bridge networks, VMs on taps. Names, or prefixes ending
+# in `*`. Empty: forwarded traffic is left alone (a router's, for one).
+#forward_from = ["docker0", "br-*", "podman*", "cni-*", "virbr*", "lxdbr*", "incusbr*"]
+
 # Client binaries allowed on the client socket by path alone. Packages register their client with
 # `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
 #trusted_clients = []

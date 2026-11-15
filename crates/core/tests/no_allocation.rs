@@ -80,6 +80,9 @@ mod tests {
             protocol: 6,
             context: ContextKind::Host,
             now_ms: 0,
+            container: None,
+            vm: None,
+            netns: None,
         });
         // Warm up anything lazily initialised (the regex engines' caches).
         for f in &facts {

@@ -236,6 +236,9 @@ impl RuleEditor {
                 protocol: row.protocol,
                 context,
                 now_ms: row.time_ms,
+                container: None,
+                vm: None,
+                netns: None,
             };
             if set.decide(&facts).is_some() {
                 matched += 1;

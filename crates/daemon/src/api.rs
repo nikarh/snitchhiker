@@ -2130,6 +2130,9 @@ fn check_connection(
         protocol,
         context: snitchhiker_core::rule::ContextKind::Host,
         now_ms: now_ms(),
+        container: None,
+        vm: None,
+        netns: None,
     };
     let rules = daemon.shared.rules.load();
     if let Some(decision) = rules.decide(&facts) {

@@ -101,10 +101,14 @@ download() { # url file
 packages() {
   case "${DISTRO}" in
     # The desktop app's tests: a headless Wayland compositor, screenshots, a virtual keyboard (wtype), software Vulkan (no GPU in the VM), fonts.
+    # The container tests: Docker, Podman (rootful and rootless, with pasta and slirp4netns), and a static busybox their
+    # images are made from (nothing is pulled from a registry).
     arch) printf '%s\n' bpf conntrack-tools curl iproute2 jq nftables polkit python socat sqlite strace \
-      sway grim mako wtype vulkan-swrast ttf-dejavu libxkbcommon-x11 ;;
+      sway grim mako wtype vulkan-swrast ttf-dejavu libxkbcommon-x11 \
+      docker podman passt slirp4netns busybox ;;
     debian) printf '%s\n' bpftool conntrack curl iproute2 jq nftables polkitd python3 socat sqlite3 strace \
-      sway grim mako-notifier wtype mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 ;;
+      sway grim mako-notifier wtype mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 \
+      docker.io podman passt slirp4netns uidmap busybox-static ;;
   esac
 }
 
@@ -126,6 +130,8 @@ package_upgrade: true
 packages:
 $(packages | sed 's/^/  - /')
 runcmd:
+  # Rootless containers for the test user: its subordinate ids.
+  - grep -q '^mallory:' /etc/subuid || usermod --add-subuids 200000-265535 --add-subgids 200000-265535 mallory
   - touch /var/lib/snitchhiker-e2e-ready
 EOF
 }

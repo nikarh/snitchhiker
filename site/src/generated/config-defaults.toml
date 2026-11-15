@@ -11,6 +11,7 @@ fail = "closed"
 queues = 4
 queue = 0
 learn_dns = true
+forward_from = ["docker0", "br-*", "podman*", "cni-*", "virbr*", "lxdbr*", "incusbr*"]
 database = "/var/lib/snitchhiker/state.db"
 default_rules = true
 rules_dir = "/etc/snitchhiker/rules.d"

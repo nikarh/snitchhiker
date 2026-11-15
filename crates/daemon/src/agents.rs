@@ -413,6 +413,9 @@ pub fn decide_again(rules: &snitchhiker_core::engine::RuleSet, b: &Blocked, now_
         protocol: b.protocol,
         context: b.context,
         now_ms,
+        container: None,
+        vm: None,
+        netns: None,
     };
     rules
         .decide(&facts)

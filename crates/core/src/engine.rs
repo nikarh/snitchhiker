@@ -40,6 +40,11 @@ pub struct Facts<'a> {
     pub port: u16,
     pub protocol: u8,
     pub context: ContextKind,
+    /// The container's identity, for a container's connection (when it could be read).
+    pub container: Option<&'a crate::context::Container>,
+    pub vm: Option<&'a crate::context::Vm>,
+    /// The network namespace's name, for one with a name.
+    pub netns: Option<&'a str>,
     /// Unix time in milliseconds, for expiring rules.
     pub now_ms: u64,
 }
@@ -82,6 +87,17 @@ enum Compiled {
     Protocol(Vec<u8>),
     Context(ContextKind),
     Session(Vec<ProcessRef>),
+    ContainerName(Vec<Pattern>),
+    ContainerImage(Vec<Pattern>),
+    ContainerCompose(Vec<Pattern>),
+    ContainerLabel(Vec<(String, Pattern)>),
+    ContainerRuntime(Vec<String>),
+    ContainerOwner(Vec<u32>),
+    ContainerId(Vec<String>),
+    VmName(Vec<Pattern>),
+    VmUuid(Vec<String>),
+    VmHypervisor(Vec<String>),
+    NetnsName(Vec<Pattern>),
     Not(Box<Compiled>),
 }
 
@@ -160,7 +176,12 @@ impl RuleSet {
                 .flat_map(|scope| scope.iter())
                 .chain(&rule.conditions)
             {
-                has_context |= matches!(condition, Condition::Context(_));
+                if let Some(implied) = crate::rule::implied_context(condition) {
+                    if !matches!(condition, Condition::Context(_)) {
+                        conditions.push(Compiled::Context(implied));
+                    }
+                    has_context = true;
+                }
                 conditions.push(compile_condition(condition).map_err(|error| {
                     CompileError::Pattern {
                         rule: rule.id,
@@ -308,6 +329,42 @@ fn condition_matches(condition: &Compiled, facts: &Facts<'_>) -> bool {
         Compiled::Context(ContextKind::Any) => true,
         Compiled::Context(kind) => *kind == facts.context,
         Compiled::Session(roots) => facts.lineage.iter().any(|p| roots.contains(p)),
+        Compiled::ContainerName(patterns) => {
+            facts.container.is_some_and(|c| any(patterns, &c.name))
+        }
+        Compiled::ContainerImage(patterns) => {
+            facts.container.is_some_and(|c| any(patterns, &c.image))
+        }
+        Compiled::ContainerCompose(patterns) => facts
+            .container
+            .and_then(|c| c.compose.as_deref())
+            .is_some_and(|compose| any(patterns, compose)),
+        Compiled::ContainerLabel(labels) => facts.container.is_some_and(|c| {
+            labels.iter().any(|(key, value)| {
+                c.labels
+                    .iter()
+                    .any(|(k, v)| k == key && value.matches(v, None))
+            })
+        }),
+        Compiled::ContainerRuntime(runtimes) => facts
+            .container
+            .is_some_and(|c| runtimes.iter().any(|r| r == &c.runtime)),
+        Compiled::ContainerOwner(uids) => facts
+            .container
+            .and_then(|c| c.owner)
+            .is_some_and(|owner| uids.contains(&owner)),
+        // Ids as `docker ps` shortens them match too.
+        Compiled::ContainerId(ids) => facts.container.is_some_and(|c| {
+            !c.id.is_empty() && ids.iter().any(|id| c.id.starts_with(id.as_str()))
+        }),
+        Compiled::VmName(patterns) => facts.vm.is_some_and(|vm| any(patterns, &vm.name)),
+        Compiled::VmUuid(uuids) => facts
+            .vm
+            .is_some_and(|vm| uuids.iter().any(|u| u.eq_ignore_ascii_case(&vm.uuid))),
+        Compiled::VmHypervisor(names) => facts
+            .vm
+            .is_some_and(|vm| names.iter().any(|n| n == &vm.hypervisor)),
+        Compiled::NetnsName(patterns) => facts.netns.is_some_and(|name| any(patterns, name)),
         Compiled::Not(inner) => !condition_matches(inner, facts),
     }
 }
@@ -360,6 +417,22 @@ fn compile_condition(condition: &Condition) -> Result<Compiled, PatternError> {
         Condition::Protocol(protocols) => Compiled::Protocol(protocols.clone()),
         Condition::Context(kind) => Compiled::Context(*kind),
         Condition::Session(roots) => Compiled::Session(roots.clone()),
+        Condition::ContainerName(p) => Compiled::ContainerName(patterns(p)?),
+        Condition::ContainerImage(p) => Compiled::ContainerImage(patterns(p)?),
+        Condition::ContainerCompose(p) => Compiled::ContainerCompose(patterns(p)?),
+        Condition::ContainerLabel(labels) => Compiled::ContainerLabel(
+            labels
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), Pattern::compile(value)?)))
+                .collect::<Result<_, PatternError>>()?,
+        ),
+        Condition::ContainerRuntime(runtimes) => Compiled::ContainerRuntime(runtimes.clone()),
+        Condition::ContainerOwner(uids) => Compiled::ContainerOwner(uids.clone()),
+        Condition::ContainerId(ids) => Compiled::ContainerId(ids.clone()),
+        Condition::VmName(p) => Compiled::VmName(patterns(p)?),
+        Condition::VmUuid(uuids) => Compiled::VmUuid(uuids.clone()),
+        Condition::VmHypervisor(names) => Compiled::VmHypervisor(names.clone()),
+        Condition::NetnsName(p) => Compiled::NetnsName(patterns(p)?),
         Condition::Not(inner) => Compiled::Not(Box::new(compile_condition(inner)?)),
     })
 }
@@ -388,6 +461,17 @@ fn specificity(condition: &Compiled) -> u32 {
             .unwrap_or(0),
         Compiled::Port(_) | Compiled::Uid(_) => 5,
         Compiled::Protocol(_) => 1,
+        // Who in the container ranks as a program does; the container itself, between the program and nothing.
+        Compiled::ContainerName(p)
+        | Compiled::ContainerImage(p)
+        | Compiled::ContainerCompose(p)
+        | Compiled::VmName(p)
+        | Compiled::NetnsName(p) => p.iter().map(Pattern::specificity).min().unwrap_or(0) * 5,
+        Compiled::ContainerId(_) | Compiled::VmUuid(_) => 50,
+        Compiled::ContainerLabel(_) => 20,
+        Compiled::ContainerRuntime(_) | Compiled::ContainerOwner(_) | Compiled::VmHypervisor(_) => {
+            2
+        }
         Compiled::Context(_) | Compiled::Session(_) | Compiled::Not(_) => 0,
     }
 }
@@ -461,6 +545,9 @@ mod tests {
             protocol: 6,
             context: ContextKind::Host,
             now_ms: 1_000,
+            container: None,
+            vm: None,
+            netns: None,
         }
     }
 
@@ -704,5 +791,94 @@ mod tests {
         assert_eq!(set.explain(&facts("/usr/bin/curl", &[], 443)).len(), 2);
         assert_eq!(set.explain(&facts("/usr/bin/curl", &[], 5000)).len(), 2);
         assert_eq!(set.explain(&facts("/usr/bin/wget", &[], 80)).len(), 0);
+    }
+
+    /// The test facts, in `container` (on the host for none).
+    fn in_container(container: Option<&crate::context::Container>, port: u16) -> Facts<'_> {
+        Facts {
+            context: if container.is_some() {
+                ContextKind::Container
+            } else {
+                ContextKind::Host
+            },
+            container,
+            ..facts("/usr/local/bin/node", &[], port)
+        }
+    }
+
+    #[test]
+    fn container_conditions_hold_for_that_container_only() {
+        let web = crate::context::Container {
+            runtime: "docker".to_owned(),
+            id: "0133794d05ab40d47d94868c4fb19a4d610f6c97e3ee0c5ee5fcf8aa21c03ea9".to_owned(),
+            name: "shop-web-1".to_owned(),
+            image: "docker.io/library/node:22".to_owned(),
+            compose: Some("shop/web".to_owned()),
+            labels: vec![("tier".to_owned(), "front".to_owned())],
+            owner: None,
+        };
+        let other = crate::context::Container {
+            name: "db".to_owned(),
+            compose: Some("shop/db".to_owned()),
+            ..web.clone()
+        };
+        let set = RuleSet::compile(
+            &[],
+            &[
+                rule(
+                    1,
+                    Action::Allow,
+                    vec![
+                        Condition::ContainerCompose(vec![PatternSource::Exact(
+                            "shop/web".to_owned(),
+                        )]),
+                        Condition::Exe(vec![PatternSource::Exact(
+                            "/usr/local/bin/node".to_owned(),
+                        )]),
+                    ],
+                ),
+                rule(
+                    2,
+                    Action::Allow,
+                    vec![
+                        Condition::ContainerImage(vec![PatternSource::Glob(
+                            "docker.io/library/node:*".to_owned(),
+                        )]),
+                        Condition::ContainerLabel(vec![(
+                            "tier".to_owned(),
+                            PatternSource::Exact("front".to_owned()),
+                        )]),
+                        Condition::ContainerId(vec!["0133794d05ab".to_owned()]),
+                        Condition::Port(vec![(8443, 8443)]),
+                    ],
+                ),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            set.decide(&in_container(Some(&web), 443)).map(|d| d.rule),
+            Some(1)
+        );
+        assert_eq!(
+            set.decide(&in_container(Some(&other), 443)),
+            None,
+            "another service"
+        );
+        // On the host, the same program: a container condition holds for containers only.
+        assert_eq!(set.decide(&in_container(None, 443)), None);
+        assert_eq!(
+            set.decide(&in_container(Some(&web), 8443)).map(|d| d.rule),
+            Some(2)
+        );
+        let unlabelled = crate::context::Container {
+            labels: Vec::new(),
+            ..web.clone()
+        };
+        // Without the label, only the service's rule is left.
+        assert_eq!(
+            set.decide(&in_container(Some(&unlabelled), 8443))
+                .map(|d| d.rule),
+            Some(1)
+        );
     }
 }

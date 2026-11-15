@@ -273,6 +273,34 @@ message Conditions {
   // Processes (`pid@start`: the pid and its start time in clock ticks since boot) the rule is limited to, with
   // everything they start: an agent's session.
   repeated string session = 11;
+  // A container's identity: the rule then holds for containers only.
+  ContainerConditions container = 12;
+  // A VM's: for VMs only.
+  VmConditions vm = 13;
+  // Names of network namespaces (`ip netns`).
+  repeated string netns = 14;
+}
+
+// Patterns as rules write them (exact, `glob:`, `re:`); a list means any of its items.
+message ContainerConditions {
+  repeated string name = 1;
+  // Image references (`docker.io/library/node:*`).
+  repeated string image = 2;
+  // Compose services: `project/service`.
+  repeated string compose = 3;
+  // Labels: `key=value`, the value a pattern.
+  repeated string label = 4;
+  repeated string runtime = 5;
+  // The user a rootless container runs as.
+  repeated uint32 owner = 6;
+  // Ids or their prefixes: they change each time a container is recreated.
+  repeated string id = 7;
+}
+
+message VmConditions {
+  repeated string name = 1;
+  repeated string uuid = 2;
+  repeated string hypervisor = 3;
 }
 
 message Rule {

@@ -46,6 +46,7 @@ All conditions of a rule must hold. A condition with several values holds when a
 | `port` | the destination port is in the range | `443`, `8000-8999` |
 | `protocol` | the IP protocol is | `tcp`, `udp`, `icmp`, `icmpv6`, `47` |
 | `context` | the process runs in that kind of namespace | `host`, `container`, `netns`, `any` |
+| `container.name`, `container.image`, `container.compose`, `container.label` | the container it runs in is that one | `web-1`, `glob:docker.io/library/node:*`, `shop/web`, `tier=front` |
 | `app` | a stable identity of the program matches | reserved: not yet filled in, so it never matches today |
 
 A rule must have at least one condition: a rule matching every connection is refused. Use the [`no_match` policy](/reference/configuration/#no_match) for that.
@@ -75,6 +76,16 @@ A `net` value is an address, a CIDR range, or an alias:
 ### Context
 
 A rule without a `context` condition applies to processes on the host only. Allowing `/usr/bin/curl` then doesn't allow every `curl` in every container. `context = "container"` (a process in another process or user namespace), `"netns"` (the host's, but another network namespace) or `"any"` widens it.
+
+### Containers
+
+A container's connections are decided like a host program's, with its program as the container sees it (`exe` is the path inside the container), and with the container's identity: which runtime runs it, its name, the image it was created from, its labels, and its Compose project and service. Containers on bridge networks (Docker's default, Podman's) are covered as well as those sharing the host's network: their traffic is forwarded from the bridge, and Snitchhiker finds the process in the container that opened each connection ([`forward_from`](/reference/configuration/#forward_from)).
+
+Rules name containers by `container.name`, `container.image`, `container.compose` and `container.label`; any of them limits the rule to containers. The Compose service and the image are the stable choices: a container's name can change when it's recreated, and its id always does (`container.id` exists for one-offs). On the command line:
+
+```bash
+sudo snitchhiker rules add allow --compose shop/web --exe /usr/local/bin/node --host api.example.com --port 443
+```
 
 ## Folders
 

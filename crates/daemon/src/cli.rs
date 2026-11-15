@@ -51,6 +51,9 @@ Commands:
                                     --uid <n>         a user id
                                     --protocol <tcp|udp|n>
                                     --any-context     also for containers, VMs and other namespaces
+                                    --container <name>, --image <reference>, --compose <project/service>
+                                                      in that container only (patterns: glob:..., re:...)
+                                    --vm <name>       in that VM only
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
   rules move <id> <folder>        Move a rule to a folder (0: the top level)
@@ -1220,6 +1223,16 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
         context: args
             .contains("--any-context")
             .then_some(snitchhiker_core::rule::ContextKind::Any),
+        container: snitchhiker_core::spec::ContainerSpec {
+            name: args.values_from_str("--container")?,
+            image: args.values_from_str("--image")?,
+            compose: args.values_from_str("--compose")?,
+            ..Default::default()
+        },
+        vm: snitchhiker_core::spec::VmSpec {
+            name: args.values_from_str("--vm")?,
+            ..Default::default()
+        },
         ..Conditions::default()
     };
     Ok(RuleSpec {

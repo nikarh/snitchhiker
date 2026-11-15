@@ -95,6 +95,10 @@ Rule files root keeps, read at start and on reload, shown to clients as locked (
 
 Learn the names of addresses from the DNS answers processes receive, so `host` conditions work ([How it works](/internals/how-it-works/#names)). Default `true`. Without it, rules can only name addresses and networks.
 
+### `forward_from`
+
+Bridges whose forwarded traffic is decided too. Containers on bridge networks and VMs on taps don't send through the host's own sockets: their packets are forwarded from the bridge, and Snitchhiker finds the program in the container that sent each one. Names, or prefixes ending in `*`. Default: `["docker0", "br-*", "podman*", "cni-*", "virbr*", "lxdbr*", "incusbr*"]` (Docker, Podman, CNI, libvirt, LXD and Incus). Empty: forwarded traffic is left alone, as on a router whose LAN clients aren't yours to ask about.
+
 ## Clients
 
 ### `client_group`

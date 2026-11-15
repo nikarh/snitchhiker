@@ -82,6 +82,10 @@ pub struct Config {
     /// Learn the names of addresses from the DNS answers processes receive (on the queue after the deciding ones),
     /// so rules can name hosts.
     pub learn_dns: bool,
+    /// Bridges whose forwarded traffic is decided too: containers on bridge networks and VMs on taps send through
+    /// them, never through the host's own sockets. Names, or prefixes ending in `*`. Empty: forwarded traffic is left
+    /// alone (a router's, for one).
+    pub forward_from: Vec<String>,
     pub database: PathBuf,
     /// The built-in System folder (loopback and the like).
     pub default_rules: bool,
@@ -142,6 +146,11 @@ impl Default for Config {
             queues: 4,
             queue: 0,
             learn_dns: true,
+            forward_from: [
+                "docker0", "br-*", "podman*", "cni-*", "virbr*", "lxdbr*", "incusbr*",
+            ]
+            .map(str::to_owned)
+            .to_vec(),
             database: PathBuf::from("/var/lib/snitchhiker/state.db"),
             default_rules: true,
             rules_dir: PathBuf::from("/etc/snitchhiker/rules.d"),

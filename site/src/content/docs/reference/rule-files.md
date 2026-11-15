@@ -60,6 +60,28 @@ Every condition is a list; it holds when any of its values does, and a rule hold
 | `net` | addresses, CIDR ranges, aliases (`loopback`, `lan`, `multicast`, `imds`, `cgnat`) |
 | `port` | `"443"` or `"8000-8999"`, as strings |
 | `protocol` | `"tcp"`, `"udp"`, `"icmp"`, `"icmpv6"` or a protocol number as a string |
-| `context` | one value, not a list: `"host"`, `"container"`, `"netns"`, `"any"`. Without it, `host` |
+| `context` | one value, not a list: `"host"`, `"container"`, `"vm"`, `"netns"`, `"any"`. Without it, `host` |
+| `container.name` | patterns over the container's name |
+| `container.image` | patterns over the image reference it was created from (`glob:docker.io/library/node:*`) |
+| `container.compose` | patterns over the Compose `project/service` |
+| `container.label` | `key=value`, the value a pattern |
+| `container.runtime` | `docker`, `podman`, `containerd`, `cri-o`, `nspawn`, `lxc` |
+| `container.owner` | user ids a rootless container runs as |
+| `container.id` | ids or their prefixes |
+| `vm.name` | patterns over the VM's name |
+| `vm.uuid`, `vm.hypervisor` | UUIDs; `qemu`, ... |
+| `netns` | patterns over the names of network namespaces (`ip netns`) |
+
+A `container.*`, `vm.*` or `netns` key limits the rule to that kind of context, as `context` would:
+
+```toml
+[[rule]]
+name = "The shop's web service reaches its API"
+action = "allow"
+container.compose = ["shop/web"]
+exe = ["/usr/local/bin/node"]
+host = ["api.example.com"]
+port = ["443"]
+```
 
 Unknown keys are errors, so a typo doesn't silently widen a rule. An import is checked as a whole before anything is stored.

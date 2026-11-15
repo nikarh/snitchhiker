@@ -31,7 +31,9 @@ const NFQNL_COPY_PACKET: u8 = 2;
 const NFQA_PACKET_HDR: u16 = 1;
 const NFQA_VERDICT_HDR: u16 = 2;
 const NFQA_MARK: u16 = 3;
+const NFQA_IFINDEX_INDEV: u16 = 5;
 const NFQA_IFINDEX_OUTDEV: u16 = 6;
+const NFQA_HWADDR: u16 = 9;
 const NFQA_PAYLOAD: u16 = 10;
 const NFQA_UID: u16 = 16;
 const NFQA_GID: u16 = 17;
@@ -63,7 +65,13 @@ pub struct Packet<'a> {
     /// Ether type: 0x0800 IPv4, 0x86dd IPv6.
     pub protocol: u16,
     pub mark: u32,
+    /// The netfilter hook it was queued at (`NF_INET_LOCAL_OUT`, `NF_INET_FORWARD`, ...).
+    pub hook: u8,
+    pub in_interface: Option<u32>,
     pub out_interface: Option<u32>,
+    /// The link-layer source address, for a packet that came in on an interface that has one (a forwarded packet's
+    /// sender on a bridge).
+    pub source_mac: Option<[u8; 6]>,
     /// The owner of the sending socket, when the kernel knows it (`NFQA_CFG_F_UID_GID`).
     pub uid: Option<u32>,
     pub gid: Option<u32>,
@@ -217,7 +225,10 @@ pub fn parse(buffer: &[u8]) -> impl Iterator<Item = Packet<'_>> {
                 id: 0,
                 protocol: 0,
                 mark: 0,
+                hook: 0,
+                in_interface: None,
                 out_interface: None,
+                source_mac: None,
                 uid: None,
                 gid: None,
                 payload: &[],
@@ -229,10 +240,19 @@ pub fn parse(buffer: &[u8]) -> impl Iterator<Item = Packet<'_>> {
                     NFQA_PACKET_HDR => {
                         packet.id = be_u32(value)?;
                         packet.protocol = u16::from_be_bytes(value.get(4..6)?.try_into().ok()?);
+                        packet.hook = *value.get(6)?;
                         has_header = true;
                     }
                     NFQA_MARK => packet.mark = be_u32(value)?,
+                    NFQA_IFINDEX_INDEV => packet.in_interface = be_u32(value),
                     NFQA_IFINDEX_OUTDEV => packet.out_interface = be_u32(value),
+                    // `struct nfqnl_msg_packet_hw`: address length (big-endian u16), padding, the address.
+                    NFQA_HWADDR => {
+                        if value.get(0..2) == Some(&[0, 6][..]) {
+                            packet.source_mac =
+                                value.get(4..10).and_then(|mac| mac.try_into().ok());
+                        }
+                    }
                     NFQA_UID => packet.uid = be_u32(value),
                     NFQA_GID => packet.gid = be_u32(value),
                     NFQA_PAYLOAD => packet.payload = value,
@@ -295,9 +315,11 @@ mod tests {
             AF_UNSPEC,
             0,
         );
-        writer.attribute(NFQA_PACKET_HDR, &[0, 0, 0, 7, 0x08, 0x00, 3, 0]);
+        writer.attribute(NFQA_PACKET_HDR, &[0, 0, 0, 7, 0x08, 0x00, 2, 0]);
         writer.u32_be(NFQA_UID, 1001);
+        writer.u32_be(NFQA_IFINDEX_INDEV, 5);
         writer.u32_be(NFQA_IFINDEX_OUTDEV, 2);
+        writer.attribute(NFQA_HWADDR, &[0, 6, 0, 0, 2, 0x42, 0xac, 0x11, 0, 2, 0, 0]);
         writer.attribute(NFQA_PAYLOAD, &[0x45, 0, 0, 20]);
         writer.finish(message);
         let packets: Vec<_> = parse(writer.bytes()).collect();
@@ -307,7 +329,10 @@ mod tests {
                 id: 7,
                 protocol: 0x0800,
                 mark: 0,
+                hook: 2,
+                in_interface: Some(5),
                 out_interface: Some(2),
+                source_mac: Some([2, 0x42, 0xac, 0x11, 0, 2]),
                 uid: Some(1001),
                 gid: None,
                 payload: &[0x45, 0, 0, 20],

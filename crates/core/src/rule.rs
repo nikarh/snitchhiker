@@ -83,6 +83,25 @@ pub enum Condition {
     Context(ContextKind),
     /// A process or anything it started (an agent's session, decision 0008).
     Session(Vec<ProcessRef>),
+    /// A container's name.
+    ContainerName(Vec<PatternSource>),
+    /// The image reference a container was created from (`docker.io/library/node:*`).
+    ContainerImage(Vec<PatternSource>),
+    /// A container's Compose project and service, `project/service`.
+    ContainerCompose(Vec<PatternSource>),
+    /// A container's labels: the key, and a pattern for the value.
+    ContainerLabel(Vec<(String, PatternSource)>),
+    ContainerRuntime(Vec<String>),
+    /// The user a rootless container runs as.
+    ContainerOwner(Vec<u32>),
+    /// Container ids, or their prefixes. They change each time a container is recreated: names, Compose services
+    /// and images are the stable choices.
+    ContainerId(Vec<String>),
+    VmName(Vec<PatternSource>),
+    VmUuid(Vec<String>),
+    VmHypervisor(Vec<String>),
+    /// The name of a network namespace (`ip netns`).
+    NetnsName(Vec<PatternSource>),
     /// The opposite of the inner condition.
     Not(Box<Condition>),
 }
@@ -113,6 +132,26 @@ impl std::str::FromStr for ProcessRef {
     }
 }
 
+/// The context a condition implies: one on a container's identity holds only for containers.
+#[must_use]
+pub fn implied_context(condition: &Condition) -> Option<ContextKind> {
+    match condition {
+        Condition::Context(kind) => Some(*kind),
+        Condition::ContainerName(_)
+        | Condition::ContainerImage(_)
+        | Condition::ContainerCompose(_)
+        | Condition::ContainerLabel(_)
+        | Condition::ContainerRuntime(_)
+        | Condition::ContainerOwner(_)
+        | Condition::ContainerId(_) => Some(ContextKind::Container),
+        Condition::VmName(_) | Condition::VmUuid(_) | Condition::VmHypervisor(_) => {
+            Some(ContextKind::Vm)
+        }
+        Condition::NetnsName(_) => Some(ContextKind::Netns),
+        _ => None,
+    }
+}
+
 /// Whether a rule with these conditions (its own, and its folders' scopes) allows every program to reach anywhere: an
 /// allow rule that names no program and no destination. Asking for one is a dangerous action.
 pub fn allows_everything<'a>(
@@ -129,6 +168,14 @@ pub fn allows_everything<'a>(
                     | Condition::Parent(_)
                     | Condition::Host(_)
                     | Condition::Net(_)
+                    | Condition::ContainerName(_)
+                    | Condition::ContainerImage(_)
+                    | Condition::ContainerCompose(_)
+                    | Condition::ContainerLabel(_)
+                    | Condition::ContainerId(_)
+                    | Condition::VmName(_)
+                    | Condition::VmUuid(_)
+                    | Condition::NetnsName(_)
             )
         })
 }

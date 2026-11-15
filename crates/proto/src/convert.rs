@@ -86,6 +86,21 @@ pub fn conditions(spec: &Conditions) -> v1::Conditions {
             .map_or(v1::Context::Unspecified, context)
             .into(),
         session: spec.session.clone(),
+        container: (!spec.container.is_empty()).then(|| v1::ContainerConditions {
+            name: spec.container.name.clone(),
+            image: spec.container.image.clone(),
+            compose: spec.container.compose.clone(),
+            label: spec.container.label.clone(),
+            runtime: spec.container.runtime.clone(),
+            owner: spec.container.owner.clone(),
+            id: spec.container.id.clone(),
+        }),
+        vm: (!spec.vm.is_empty()).then(|| v1::VmConditions {
+            name: spec.vm.name.clone(),
+            uuid: spec.vm.uuid.clone(),
+            hypervisor: spec.vm.hypervisor.clone(),
+        }),
+        netns: spec.netns.clone(),
     }
 }
 
@@ -103,6 +118,26 @@ pub fn conditions_from(wire: &v1::Conditions) -> Conditions {
         protocol: wire.protocol.clone(),
         context: context_from(wire.context()),
         session: wire.session.clone(),
+        container: wire.container.as_ref().map_or_default(|c| {
+            snitchhiker_core::spec::ContainerSpec {
+                name: c.name.clone(),
+                image: c.image.clone(),
+                compose: c.compose.clone(),
+                label: c.label.clone(),
+                runtime: c.runtime.clone(),
+                owner: c.owner.clone(),
+                id: c.id.clone(),
+            }
+        }),
+        vm: wire
+            .vm
+            .as_ref()
+            .map_or_default(|vm| snitchhiker_core::spec::VmSpec {
+                name: vm.name.clone(),
+                uuid: vm.uuid.clone(),
+                hypervisor: vm.hypervisor.clone(),
+            }),
+        netns: wire.netns.clone(),
     }
 }
 

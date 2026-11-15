@@ -48,6 +48,65 @@ pub struct Conditions {
     /// Processes (`pid@start`) whose session the rule is limited to: they and what they start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub session: Vec<String>,
+    /// `container.name = ["web"]` and the like: the rule holds only for containers.
+    #[serde(default, skip_serializing_if = "ContainerSpec::is_empty")]
+    pub container: ContainerSpec,
+    #[serde(default, skip_serializing_if = "VmSpec::is_empty")]
+    pub vm: VmSpec,
+    /// Names of network namespaces (`ip netns`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub netns: Vec<String>,
+}
+
+/// A container's identity, as keys of `container`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ContainerSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name: Vec<String>,
+    /// Image references (`docker.io/library/node:*`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub image: Vec<String>,
+    /// Compose services: `project/service`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compose: Vec<String>,
+    /// Labels: `key=value`, the value a pattern.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime: Vec<String>,
+    /// The user a rootless container runs as.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner: Vec<u32>,
+    /// Ids or their prefixes (they change when a container is recreated).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub id: Vec<String>,
+}
+
+impl ContainerSpec {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// A VM's identity, as keys of `vm`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmSpec {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub name: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub uuid: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hypervisor: Vec<String>,
+}
+
+impl VmSpec {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,6 +154,8 @@ pub enum SpecError {
     Protocol(String),
     #[error("invalid session `{0}`: pid@start")]
     Session(String),
+    #[error("invalid label `{0}`: key=value")]
+    Label(String),
     #[error("rule `{0}` has no conditions: it would match every connection")]
     NoConditions(String),
 }
@@ -207,7 +268,58 @@ impl Conditions {
                 .collect::<Result<_, _>>()?;
             conditions.push(Condition::Session(roots));
         }
+        self.identity_conditions(&mut conditions)?;
         Ok(conditions)
+    }
+
+    /// The conditions on a container's, a VM's or a namespace's identity.
+    fn identity_conditions(&self, conditions: &mut Vec<Condition>) -> Result<(), SpecError> {
+        let patterns = |texts: &[String]| texts.iter().map(|t| pattern(t)).collect::<Vec<_>>();
+        let c = &self.container;
+        if !c.name.is_empty() {
+            conditions.push(Condition::ContainerName(patterns(&c.name)));
+        }
+        if !c.image.is_empty() {
+            conditions.push(Condition::ContainerImage(patterns(&c.image)));
+        }
+        if !c.compose.is_empty() {
+            conditions.push(Condition::ContainerCompose(patterns(&c.compose)));
+        }
+        if !c.label.is_empty() {
+            let labels = c
+                .label
+                .iter()
+                .map(|l| {
+                    let (key, value) = l
+                        .split_once('=')
+                        .ok_or_else(|| SpecError::Label(l.clone()))?;
+                    Ok((key.to_owned(), pattern(value)))
+                })
+                .collect::<Result<_, SpecError>>()?;
+            conditions.push(Condition::ContainerLabel(labels));
+        }
+        if !c.runtime.is_empty() {
+            conditions.push(Condition::ContainerRuntime(c.runtime.clone()));
+        }
+        if !c.owner.is_empty() {
+            conditions.push(Condition::ContainerOwner(c.owner.clone()));
+        }
+        if !c.id.is_empty() {
+            conditions.push(Condition::ContainerId(c.id.clone()));
+        }
+        if !self.vm.name.is_empty() {
+            conditions.push(Condition::VmName(patterns(&self.vm.name)));
+        }
+        if !self.vm.uuid.is_empty() {
+            conditions.push(Condition::VmUuid(self.vm.uuid.clone()));
+        }
+        if !self.vm.hypervisor.is_empty() {
+            conditions.push(Condition::VmHypervisor(self.vm.hypervisor.clone()));
+        }
+        if !self.netns.is_empty() {
+            conditions.push(Condition::NetnsName(patterns(&self.netns)));
+        }
+        Ok(())
     }
 
     /// The written form of model conditions (negations can't be written in this form and are left out).
@@ -241,6 +353,27 @@ impl Conditions {
                 Condition::Session(roots) => {
                     spec.session.extend(roots.iter().map(ToString::to_string));
                 }
+                Condition::ContainerName(p) => {
+                    spec.container.name.extend(p.iter().map(pattern_text));
+                }
+                Condition::ContainerImage(p) => {
+                    spec.container.image.extend(p.iter().map(pattern_text));
+                }
+                Condition::ContainerCompose(p) => {
+                    spec.container.compose.extend(p.iter().map(pattern_text));
+                }
+                Condition::ContainerLabel(labels) => spec.container.label.extend(
+                    labels
+                        .iter()
+                        .map(|(k, v)| format!("{k}={}", pattern_text(v))),
+                ),
+                Condition::ContainerRuntime(r) => spec.container.runtime.extend(r.iter().cloned()),
+                Condition::ContainerOwner(u) => spec.container.owner.extend(u),
+                Condition::ContainerId(i) => spec.container.id.extend(i.iter().cloned()),
+                Condition::VmName(p) => spec.vm.name.extend(p.iter().map(pattern_text)),
+                Condition::VmUuid(u) => spec.vm.uuid.extend(u.iter().cloned()),
+                Condition::VmHypervisor(h) => spec.vm.hypervisor.extend(h.iter().cloned()),
+                Condition::NetnsName(p) => spec.netns.extend(p.iter().map(pattern_text)),
                 Condition::Not(_) => {}
             }
         }
@@ -305,6 +438,21 @@ action = "deny"
 tier = "override"
 net = ["imds"]
 context = "any"
+
+[[rule]]
+name = "The shop's web service"
+action = "allow"
+exe = ["/usr/local/bin/node"]
+host = ["api.example.com"]
+container.compose = ["shop/web"]
+container.image = ["glob:docker.io/library/node:*"]
+container.label = ["tier=front"]
+
+[[rule]]
+name = "The test VM"
+action = "allow"
+vm.name = ["glob:test-*"]
+host = ["example.com"]
 "#;
 
     #[test]
@@ -321,6 +469,24 @@ context = "any"
         let imds = file.rule[1].to_rule(2, None).unwrap();
         assert_eq!(imds.tier, Tier::Override);
         assert_eq!(imds.conditions[1], Condition::Context(ContextKind::Any));
+        let web = file.rule[2].to_rule(3, None).unwrap();
+        assert!(
+            web.conditions
+                .contains(&Condition::ContainerCompose(vec![PatternSource::Exact(
+                    "shop/web".to_owned()
+                )]))
+        );
+        assert!(web.conditions.contains(&Condition::ContainerLabel(vec![(
+            "tier".to_owned(),
+            PatternSource::Exact("front".to_owned())
+        )])));
+        let vm = file.rule[3].to_rule(4, None).unwrap();
+        assert!(
+            vm.conditions
+                .contains(&Condition::VmName(vec![PatternSource::Glob(
+                    "test-*".to_owned()
+                )]))
+        );
     }
 
     #[test]
