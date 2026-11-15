@@ -67,6 +67,39 @@ impl Running {
         run("snitchhiker", &all)
     }
 
+    /// Stops the daemon and starts it again with `settings` instead, keeping its database.
+    pub fn restart(&mut self, settings: &str) -> Result<(), String> {
+        self.stop()?;
+        let dir = Path::new(&self.config)
+            .parent()
+            .ok_or("no config directory")?
+            .display()
+            .to_string();
+        std::fs::write(
+            &self.config,
+            format!(
+                "database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\nqueues = 2\ndefault_rules = false\n{settings}"
+            ),
+        )
+        .map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file(PIDFILE);
+        let child = Command::new("snitchhikerd")
+            .args(["--config", &self.config])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|e| format!("starting snitchhikerd: {e}"))?;
+        self.child = Some(child);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !Path::new(PIDFILE).exists() {
+            if Instant::now() > deadline {
+                return Err("the daemon didn't start again".to_owned());
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        Ok(())
+    }
+
     /// Stops the daemon with SIGTERM and waits for it.
     pub fn stop(&mut self) -> Result<(), String> {
         if let Some(mut child) = self.child.take() {
@@ -381,4 +414,44 @@ pub fn bytes_are_counted() -> Result<(), String> {
         "the connection's bytes weren't counted",
         line,
     )
+}
+
+/// Monitor a while, learn rules from what was seen, import them, enforce: what was seen still works, the rest doesn't.
+pub fn learn_then_enforce() -> Result<(), String> {
+    let (_a, port_a) = listener()?;
+    let (_b, port_b) = listener()?;
+    let (_c, port_c) = listener()?;
+    let mut daemon = Running::start("learn", "mode = \"monitor\"\nno_match = \"deny\"\n")?;
+    check(
+        mallory_connects(port_a)?,
+        "monitor mode blocked a connection",
+        "",
+    )?;
+    check(
+        mallory_connects(port_b)?,
+        "monitor mode blocked a connection",
+        "",
+    )?;
+    thread::sleep(Duration::from_millis(500));
+    let learned = daemon.cli(&["learn", "--hours", "1", "--folder", "Seen while monitoring"])?;
+    check(
+        learned.contains(&format!("\"{port_a}\"")) && learned.contains(&format!("\"{port_b}\"")),
+        "learn didn't suggest rules for what was seen",
+        &learned,
+    )?;
+    let file = format!("{DIR}/learned.toml");
+    std::fs::write(&file, &learned).map_err(|e| e.to_string())?;
+    let imported = daemon.cli(&["rules", "import", &file])?;
+    daemon.restart("mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let a = mallory_connects(port_a)?;
+    let b = mallory_connects(port_b)?;
+    let c = mallory_connects(port_c)?;
+    let rules = daemon.cli(&["rules"])?;
+    daemon.stop()?;
+    check(
+        a && b,
+        "a learned destination was blocked",
+        &format!("{imported}\n{rules}"),
+    )?;
+    check(!c, "a destination nobody learned went through", &rules)
 }

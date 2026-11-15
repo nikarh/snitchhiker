@@ -91,6 +91,7 @@ const SCENARIOS: &[Scenario] = &[
         daemon::managed_rules_apply_and_are_locked,
     ),
     ("daemon/bytes-are-counted", daemon::bytes_are_counted),
+    ("daemon/learn-then-enforce", daemon::learn_then_enforce),
     ("escape/tcp-fast-open", escape::tcp_fast_open),
     ("escape/udp-sendto", escape::udp_sendto),
     ("escape/ipv6-and-mapped-ipv4", escape::ipv6_and_mapped_ipv4),
