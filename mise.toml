@@ -8,6 +8,47 @@ node = "26.13.1"
 git-cliff = "2.14.2"
 cargo-deny = "0.20.2"
 nfpm = "2.49.0"
+# The Android app (android/): the JDK, Gradle, the SDK's command-line tools and cargo-ndk for the Rust core.
+java = "temurin-21.0.12+8.0.LTS"
+gradle = "9.8.1"
+"http:android-cmdline-tools" = { version = "16111833", url = "https://dl.google.com/android/repository/commandlinetools-linux-{{version}}_latest.zip", bin_path = "cmdline-tools/bin" }
+"cargo:cargo-ndk" = "4.1.2"
+
+[env]
+ANDROID_HOME = "{{config_root}}/.android-sdk"
+ANDROID_SDK_ROOT = "{{config_root}}/.android-sdk"
+
+[tasks."android:sdk"]
+description = "Install the pinned Android SDK packages and the NDK into .android-sdk"
+run = """
+yes | sdkmanager --sdk_root="$ANDROID_HOME" --licenses > /dev/null
+sdkmanager --sdk_root="$ANDROID_HOME" "platforms;android-37.2" "build-tools;37.0.0" "platform-tools" "ndk;30.0.16248370"
+"""
+
+[tasks."android:emulator-sdk"]
+description = "Install the Android emulator and a system image without Google services (for scripts/android-emulator.sh)"
+run = 'yes | sdkmanager --sdk_root="$ANDROID_HOME" "emulator" "system-images;android-35;default;x86_64"'
+
+[tasks."android:core"]
+description = "The Rust core of the Android app, for the emulator and phones (cargo-ndk), into android/app/src/main/jniLibs"
+run = """
+rustup target add aarch64-linux-android x86_64-linux-android >/dev/null
+cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --locked --release -p snitchhiker-mobile
+# cargo-ndk copies every library the build made: only the core is loaded.
+find android/app/src/main/jniLibs -name 'lib*.so' ! -name libsnitchhiker_mobile.so -delete
+"""
+
+[tasks."android:check"]
+description = "The Android app's checks: ktlint (spotless), Android Lint, the JVM tests, and a debug build"
+depends = ["android:core"]
+dir = "android"
+run = "./gradlew spotlessCheck :core:test :app:lintDebug :app:assembleDebug"
+
+[tasks."android:build"]
+description = "The Android app's release APK (signed with ANDROID_KEYSTORE when set, the debug key otherwise)"
+depends = ["android:core"]
+dir = "android"
+run = "./gradlew :app:assembleRelease"
 
 [tasks.fmt]
 description = "Format the Rust code"

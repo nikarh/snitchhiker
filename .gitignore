@@ -1,3 +1,11 @@
 /target
 /dev
 /out
+/.android-sdk
+/android/.gradle
+/android/build
+/android/app/build
+/android/local.properties
+/android/app/src/main/jniLibs
+/android/core/build
+/android/.kotlin

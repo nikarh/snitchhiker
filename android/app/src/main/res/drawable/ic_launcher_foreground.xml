@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A shield with an eye: the firewall that watches. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@color/launcher_foreground"
+        android:pathData="M54,28 L76,36 L76,54 C76,68 66,78 54,82 C42,78 32,68 32,54 L32,36 Z" />
+    <path
+        android:fillColor="@color/launcher_background"
+        android:pathData="M40,56 C44,49 49,46 54,46 C59,46 64,49 68,56 C64,63 59,66 54,66 C49,66 44,63 40,56 Z" />
+    <path
+        android:fillColor="@color/launcher_foreground"
+        android:pathData="M54,50 A6,6 0 1,1 53.99,50 Z" />
+</vector>

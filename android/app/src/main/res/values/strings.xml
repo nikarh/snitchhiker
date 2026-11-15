@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Snitchhiker</string>
+    <string name="channel_prompts">Prompts</string>
+    <string name="channel_prompts_description">Connections waiting for an answer</string>
+    <string name="channel_alerts">Alerts and node status</string>
+    <string name="channel_alerts_description">Alerts, and nodes going offline</string>
+    <string name="channel_live">Live mode</string>
+    <string name="channel_live_description">Shown while the app stays connected to the nodes in the background</string>
+</resources>

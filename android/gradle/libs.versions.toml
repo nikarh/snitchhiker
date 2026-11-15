@@ -1,0 +1,44 @@
+[versions]
+activity             = "1.13.0"
+agp                  = "9.5.0"
+camerax              = "1.6.2"
+compose-bom          = "2026.09.00"
+core-ktx             = "1.19.1"
+coroutines           = "1.11.0"
+icons                = "1.7.8"
+junit                = "4.13.2"
+kotlin               = "2.4.21"
+ktlint               = "1.8.0"
+lifecycle            = "2.11.0"
+spotless             = "8.10.4"
+wire                 = "7.1.2"
+zxing                = "3.5.4"
+
+[libraries]
+activity-compose            = { module = "androidx.activity:activity-compose", version.ref = "activity" }
+camera-camera2              = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
+camera-lifecycle            = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
+camera-view                 = { module = "androidx.camera:camera-view", version.ref = "camerax" }
+compose-bom                 = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
+compose-icons               = { module = "androidx.compose.material:material-icons-extended", version.ref = "icons" }
+compose-material3           = { module = "androidx.compose.material3:material3" }
+compose-ui                  = { module = "androidx.compose.ui:ui" }
+compose-ui-tooling          = { module = "androidx.compose.ui:ui-tooling" }
+compose-ui-tooling-preview  = { module = "androidx.compose.ui:ui-tooling-preview" }
+core-ktx                    = { module = "androidx.core:core-ktx", version.ref = "core-ktx" }
+coroutines-android          = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "coroutines" }
+coroutines-core             = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
+coroutines-test             = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+junit                       = { module = "junit:junit", version.ref = "junit" }
+lifecycle-runtime-compose   = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }
+lifecycle-viewmodel-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+wire-runtime                = { module = "com.squareup.wire:wire-runtime", version.ref = "wire" }
+zxing-core                  = { module = "com.google.zxing:core", version.ref = "zxing" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-lint        = { id = "com.android.lint", version.ref = "agp" }
+kotlin-compose      = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-jvm          = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+spotless            = { id = "com.diffplug.spotless", version.ref = "spotless" }
+wire                = { id = "com.squareup.wire", version.ref = "wire" }
