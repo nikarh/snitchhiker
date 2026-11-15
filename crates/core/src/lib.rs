@@ -7,3 +7,4 @@ pub mod generalize;
 pub mod pattern;
 pub mod rule;
 pub mod spec;
+pub mod suggest;
