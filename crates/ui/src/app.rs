@@ -53,6 +53,8 @@ pub struct App {
     explorer: Entity<Explorer>,
     connections: Entity<TableState<ConnectionsTable>>,
     status: Entity<Status>,
+    /// What weakens the session's protection, shown above every page.
+    warnings: Vec<crate::session::Warning>,
     settings: Entity<Settings>,
     alerts: Entity<Alerts>,
     system: Entity<SystemPage>,
@@ -123,6 +125,7 @@ impl App {
             connections,
             status,
             settings,
+            warnings: crate::session::check(),
             alerts,
             system,
             requests: own_requests,
@@ -261,6 +264,40 @@ impl App {
     }
 }
 
+impl App {
+    /// The page shown.
+    fn page(&self) -> AnyElement {
+        match self.page {
+            Page::Prompts => self.prompts.clone().into_any_element(),
+            Page::Events => self.events_page.clone().into_any_element(),
+            Page::Rules => self.rules_page.clone().into_any_element(),
+            Page::History => self.history.clone().into_any_element(),
+            Page::Explorer => self.explorer.clone().into_any_element(),
+            Page::Connections => {
+                let requests = self.requests.clone();
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex().p_2().child(
+                            Button::new("refresh-connections")
+                                .small()
+                                .label("Refresh")
+                                .on_click(move |_, _, _| {
+                                    let _ = requests.send(Request::Connections);
+                                }),
+                        ),
+                    )
+                    .child(DataTable::new(&self.connections))
+                    .into_any_element()
+            }
+            Page::Status => self.status.clone().into_any_element(),
+            Page::Settings => self.settings.clone().into_any_element(),
+            Page::Alerts => self.alerts.clone().into_any_element(),
+            Page::Firewall => self.system.clone().into_any_element(),
+        }
+    }
+}
+
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let waiting = self.model.read(cx).prompts.len();
@@ -323,39 +360,26 @@ impl Render for App {
                         )),
                 ),
             );
-        let page: AnyElement = match self.page {
-            Page::Prompts => self.prompts.clone().into_any_element(),
-            Page::Events => self.events_page.clone().into_any_element(),
-            Page::Rules => self.rules_page.clone().into_any_element(),
-            Page::History => self.history.clone().into_any_element(),
-            Page::Explorer => self.explorer.clone().into_any_element(),
-            Page::Connections => {
-                let requests = self.requests.clone();
-                v_flex()
-                    .size_full()
-                    .child(
-                        h_flex().p_2().child(
-                            Button::new("refresh-connections")
-                                .small()
-                                .label("Refresh")
-                                .on_click(move |_, _, _| {
-                                    let _ = requests.send(Request::Connections);
-                                }),
-                        ),
-                    )
-                    .child(DataTable::new(&self.connections))
-                    .into_any_element()
-            }
-            Page::Status => self.status.clone().into_any_element(),
-            Page::Settings => self.settings.clone().into_any_element(),
-            Page::Alerts => self.alerts.clone().into_any_element(),
-            Page::Firewall => self.system.clone().into_any_element(),
-        };
+        let page = self.page();
         h_flex()
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(sidebar)
-            .child(v_flex().flex_1().h_full().overflow_hidden().child(page))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .h_full()
+                    .overflow_hidden()
+                    .children(self.warnings.iter().map(|warning| {
+                        div()
+                            .px_4()
+                            .py_2()
+                            .bg(cx.theme().warning)
+                            .text_color(cx.theme().warning_foreground)
+                            .child(warning.text())
+                    }))
+                    .child(page),
+            )
     }
 }

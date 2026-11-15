@@ -56,6 +56,16 @@ For these the daemon asks polkit whether the client's process may do it (action 
 
 Every dangerous request is recorded in the audit trail, with the client, its user and process, what it asked for and the outcome, whether it went ahead or not: `sudo snitchhiker audit`.
 
+## The desktop session
+
+Code running as you controls your display: no app can fully defend its window against it. The desktop app says when the session makes that easier, with a banner above every page:
+
+- **X11.** Any X11 client can read another's window and send it clicks and keys, so a program of yours could answer a prompt. A Wayland session is safer.
+- **A display server that isn't a known compositor.** The app checks the process at the other end of its Wayland socket: it must be yours, and its executable a known compositor (sway, KWin, GNOME Shell, Hyprland, and others). A proxy put between the app and the compositor is reported. A compositor that holds capabilities from its executable (sway, for `cap_sys_nice`) can't be inspected, even by you; such a process can't be a proxy of yours, since only root gives a file capabilities, so its name is trusted.
+- **The `input` group.** Its members can write to input devices: type and click anywhere.
+
+Prompt buttons arm only after a moment and only in the focused window, so a click or key meant for another window can't answer a prompt that just appeared. Dangerous actions need step-up whatever the session.
+
 ## Facts a process can't fake
 
 A rule matches on what the kernel says about a connection, not on what the process says about itself:

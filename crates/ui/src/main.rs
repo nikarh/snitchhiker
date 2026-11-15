@@ -6,6 +6,7 @@ mod backend;
 mod env;
 mod model;
 mod notify;
+mod session;
 mod tray;
 mod views;
 
@@ -24,6 +25,18 @@ fn main() -> ExitCode {
             format!("snitchhiker-ui: re-executing with a clean environment: {error}\n").as_bytes(),
         );
         return ExitCode::FAILURE;
+    }
+    // What the banners would say, for scripts and tests: one line each.
+    if std::env::args().nth(1).as_deref() == Some("--session-warnings") {
+        let text = session::check()
+            .iter()
+            .fold(String::new(), |mut text, warning| {
+                text.push_str(&warning.text());
+                text.push('\n');
+                text
+            });
+        let _ = std::io::Write::write_all(&mut std::io::stdout(), text.as_bytes());
+        return ExitCode::SUCCESS;
     }
     let socket = PathBuf::from(snitchhiker_client::CLIENT_SOCKET);
     // The components' icons.

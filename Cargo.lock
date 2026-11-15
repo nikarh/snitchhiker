@@ -6576,6 +6576,7 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-linux",
  "gpui-pre-platform",
+ "nix",
  "snitchhiker-client",
  "snitchhiker-core",
  "snitchhiker-proto",
