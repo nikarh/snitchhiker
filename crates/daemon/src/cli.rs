@@ -65,6 +65,12 @@ Commands:
                                   Import OpenSnitch's rules (default /etc/opensnitchd/rules) into a folder
                                   OpenSnitch, listing those that can't be expressed exactly; --dry-run prints the
                                   rule file instead
+  policy                          The policy in effect, and which settings clients changed
+  policy set <setting>=<value>... Change settings while the daemon runs (they take precedence over daemon.toml):
+                                    mode=enforce|monitor  no_match=ask|allow|deny|reject
+                                    no_client=allow|deny|reject  on_timeout=allow|deny|reject
+                                    prompt_timeout_secs=<5-3600>  retention_days=<1-3650>
+  policy reset [<setting>...]     Return settings (all by default) to daemon.toml's
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
@@ -153,6 +159,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             }
         }
         Some("rules") => rules(args, version),
+        Some("policy") => policy(args, version),
         Some("folders") => folders(args, version),
         Some("explore") => explore(args, version),
         Some("history") => history(args, version),
@@ -289,6 +296,117 @@ fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
         ids,
         edit: Some(edit),
     })
+}
+
+/// `policy`, `policy set`, `policy reset`.
+fn policy(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let rest: Vec<String> = args
+        .finish()
+        .into_iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let method = match command.as_deref() {
+        None | Some("show") if rest.is_empty() => Method::GetPolicy(v1::GetPolicy {}),
+        Some("set") if !rest.is_empty() => Method::SetPolicy(policy_set(&rest)?),
+        Some("reset") => Method::SetPolicy(v1::SetPolicy {
+            reset: if rest.is_empty() {
+                crate::policy::SETTINGS
+                    .iter()
+                    .map(|s| (*s).to_owned())
+                    .collect()
+            } else {
+                rest
+            },
+            ..v1::SetPolicy::default()
+        }),
+        _ => {
+            return Err(Error::Usage(
+                "policy [show | set <setting>=<value>... | reset [<setting>...]]".to_owned(),
+            ));
+        }
+    };
+    match connect(version)?.call(method)? {
+        v1::response::Result::Policy(policy) => out(&format_policy(&policy)),
+        _ => Err(unexpected()),
+    }
+}
+
+fn policy_set(pairs: &[String]) -> Result<v1::SetPolicy, Error> {
+    let action = |value: &str| match value {
+        "allow" => Ok(v1::Action::Allow.into()),
+        "deny" => Ok(v1::Action::Deny.into()),
+        "reject" => Ok(v1::Action::Reject.into()),
+        other => Err(Error::Usage(format!("unknown action `{other}`"))),
+    };
+    let number = |value: &str| {
+        value
+            .parse::<u32>()
+            .map_err(|_| Error::Usage(format!("`{value}` isn't a number")))
+    };
+    let mut set = v1::SetPolicy::default();
+    for pair in pairs {
+        let (key, value) = pair
+            .split_once('=')
+            .ok_or_else(|| Error::Usage(format!("`{pair}`: expected <setting>=<value>")))?;
+        match key {
+            "mode" => {
+                set.mode = Some(match value {
+                    "enforce" => v1::Mode::Enforce.into(),
+                    "monitor" => v1::Mode::Monitor.into(),
+                    other => return Err(Error::Usage(format!("unknown mode `{other}`"))),
+                });
+            }
+            "no_match" => {
+                set.no_match = Some(match value {
+                    "ask" => v1::Policy::Ask.into(),
+                    "allow" => v1::Policy::Allow.into(),
+                    "deny" => v1::Policy::Deny.into(),
+                    "reject" => v1::Policy::Reject.into(),
+                    other => return Err(Error::Usage(format!("unknown policy `{other}`"))),
+                });
+            }
+            "no_client" => set.no_client = Some(action(value)?),
+            "on_timeout" => set.on_timeout = Some(action(value)?),
+            "prompt_timeout_secs" => set.prompt_timeout_secs = Some(number(value)?),
+            "retention_days" => set.retention_days = Some(number(value)?),
+            other => return Err(Error::Usage(format!("unknown setting `{other}`"))),
+        }
+    }
+    Ok(set)
+}
+
+fn format_policy(policy: &v1::NodePolicy) -> String {
+    let name = |text: &str, prefix: &str| text.trim_start_matches(prefix).to_lowercase();
+    let mark = |setting: &str| {
+        if policy.changed.iter().any(|c| c == setting) {
+            "  (changed by a client)"
+        } else {
+            ""
+        }
+    };
+    let mut text = String::new();
+    for (setting, value) in [
+        ("mode", name(policy.mode().as_str_name(), "MODE_")),
+        ("no_match", name(policy.no_match().as_str_name(), "POLICY_")),
+        (
+            "no_client",
+            name(policy.no_client().as_str_name(), "ACTION_"),
+        ),
+        (
+            "prompt_timeout_secs",
+            policy.prompt_timeout_secs.to_string(),
+        ),
+        (
+            "on_timeout",
+            name(policy.on_timeout().as_str_name(), "ACTION_"),
+        ),
+        ("retention_days", policy.retention_days.to_string()),
+    ] {
+        let _ = writeln!(text, "{setting:<20} {value}{}", mark(setting));
+    }
+    text
 }
 
 fn print_file(result: v1::response::Result) -> Result<(), Error> {

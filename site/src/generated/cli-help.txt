@@ -28,6 +28,12 @@ Commands:
                                   Import OpenSnitch's rules (default /etc/opensnitchd/rules) into a folder
                                   OpenSnitch, listing those that can't be expressed exactly; --dry-run prints the
                                   rule file instead
+  policy                          The policy in effect, and which settings clients changed
+  policy set <setting>=<value>... Change settings while the daemon runs (they take precedence over daemon.toml):
+                                    mode=enforce|monitor  no_match=ask|allow|deny|reject
+                                    no_client=allow|deny|reject  on_timeout=allow|deny|reject
+                                    prompt_timeout_secs=<5-3600>  retention_days=<1-3650>
+  policy reset [<setting>...]     Return settings (all by default) to daemon.toml's
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it

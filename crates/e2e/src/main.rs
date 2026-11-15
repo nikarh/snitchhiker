@@ -163,6 +163,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::changes_are_recorded_and_undone,
     ),
     (
+        "daemon/policy-changes-apply-at-once-and-undo",
+        daemon::policy_changes_apply_at_once_and_undo,
+    ),
+    (
         "daemon/rules-are-edited-in-bulk-and-linted",
         daemon::rules_are_edited_in_bulk_and_linted,
     ),

@@ -64,7 +64,8 @@ pub struct Broker {
     state: Mutex<State>,
     wake: Condvar,
     writers: Vec<Mutex<VerdictWriter>>,
-    timeout: Duration,
+    /// How long a prompt waits, in ms (the policy changes it while the daemon runs).
+    timeout_ms: AtomicU64,
     next: AtomicU64,
 }
 
@@ -85,9 +86,17 @@ impl Broker {
             state: Mutex::new(State::default()),
             wake: Condvar::new(),
             writers: writers.into_iter().map(Mutex::new).collect(),
-            timeout,
+            timeout_ms: AtomicU64::new(u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
             next: AtomicU64::new(0),
         }
+    }
+
+    /// How long prompts opened from now on wait.
+    pub fn set_timeout(&self, timeout: Duration) {
+        self.timeout_ms.store(
+            u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -119,7 +128,7 @@ impl Broker {
             suggestions,
             event,
         } = open();
-        let timeout_ms = u64::try_from(self.timeout.as_millis()).unwrap_or(u64::MAX);
+        let timeout_ms = self.timeout_ms.load(Ordering::Relaxed);
         prompt.id = id;
         prompt.created_ms = now_ms;
         prompt.expires_ms = now_ms.saturating_add(timeout_ms);
@@ -133,7 +142,7 @@ impl Broker {
                 event,
                 key,
                 packets: vec![packet],
-                expires: Instant::now() + self.timeout,
+                expires: Instant::now() + Duration::from_millis(timeout_ms),
             },
         );
         drop(state);

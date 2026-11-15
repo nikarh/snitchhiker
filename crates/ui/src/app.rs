@@ -22,6 +22,7 @@ use crate::views::explorer::Explorer;
 use crate::views::history::History;
 use crate::views::prompts::Prompts;
 use crate::views::rules::{RulesPage, RulesTable};
+use crate::views::settings::Settings;
 use crate::views::status::Status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub enum Page {
     Rules,
     History,
     Status,
+    Settings,
 }
 
 pub struct App {
@@ -47,6 +49,7 @@ pub struct App {
     explorer: Entity<Explorer>,
     connections: Entity<TableState<ConnectionsTable>>,
     status: Entity<Status>,
+    settings: Entity<Settings>,
     requests: mpsc::Sender<Request>,
 }
 
@@ -71,6 +74,7 @@ impl App {
             TableState::new(RulesTable::new(model.clone(), requests.clone()), window, cx)
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
+        let settings = cx.new(|cx| Settings::new(model.clone(), requests.clone(), cx));
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
         let connections = cx.new(|cx| {
@@ -104,6 +108,7 @@ impl App {
             explorer,
             connections,
             status,
+            settings,
             requests: own_requests,
         }
     }
@@ -139,6 +144,7 @@ impl App {
                             let _ = requests.send(Request::Rules);
                             let _ = requests.send(Request::Status);
                             let _ = requests.send(Request::Changes);
+                            let _ = requests.send(Request::Policy);
                         }
                         Changed::Events => {
                             app.events.update(cx, TableState::refresh);
@@ -209,6 +215,9 @@ impl App {
                 if page == Page::Connections {
                     let _ = app.requests.send(Request::Connections);
                 }
+                if page == Page::Settings {
+                    app.settings.read(cx).refresh();
+                }
                 cx.notify();
             }))
     }
@@ -249,7 +258,13 @@ impl Render for App {
                         ))
                         .child(self.item(Page::Rules, "Rules".into(), IconName::BookOpen, cx))
                         .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
-                        .child(self.item(Page::Status, "Status".into(), IconName::Info, cx)),
+                        .child(self.item(Page::Status, "Status".into(), IconName::Info, cx))
+                        .child(self.item(
+                            Page::Settings,
+                            "Settings".into(),
+                            IconName::Settings,
+                            cx,
+                        )),
                 ),
             );
         let page: AnyElement = match self.page {
@@ -276,6 +291,7 @@ impl Render for App {
                     .into_any_element()
             }
             Page::Status => self.status.clone().into_any_element(),
+            Page::Settings => self.settings.clone().into_any_element(),
         };
         h_flex()
             .size_full()

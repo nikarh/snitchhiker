@@ -9,6 +9,8 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use snitchhiker_core::query::{self, EventFilter, SqlValue};
+
+use crate::policy::Overrides;
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
 use snitchhiker_proto::columns::EventRow;
 
@@ -143,6 +145,13 @@ INSERT INTO rollups_by SELECT 4, hour, uid, action, sum(count), sum(bytes_out), 
 ALTER TABLE rules ADD COLUMN last_hit_ms INTEGER;
 UPDATE rules SET last_hit_ms = (SELECT max(time_ms) FROM events WHERE events.rule = rules.id);
 ",
+    // The settings clients changed (one row: the policy module's overrides as JSON).
+    r"
+CREATE TABLE policy (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    overrides TEXT NOT NULL
+);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -216,6 +225,12 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
+    ("policy.get", "SELECT overrides FROM policy WHERE id = 1"),
+    (
+        "policy.put",
+        "INSERT INTO policy (id, overrides) VALUES (1, ?1)
+         ON CONFLICT (id) DO UPDATE SET overrides = excluded.overrides",
+    ),
     (
         "rules.hit",
         "UPDATE rules SET last_hit_ms = max(coalesce(last_hit_ms, 0), ?2) WHERE id = ?1",
@@ -449,6 +464,7 @@ pub enum UndoError {
 
 const RULE: &str = "rule";
 const FOLDER: &str = "folder";
+const POLICY: &str = "policy";
 
 /// What changed between two versions of a rule, for people.
 fn describe_rule(before: Option<&Rule>, after: Option<&Rule>) -> String {
@@ -855,6 +871,7 @@ impl Store {
         for change in &changes {
             let now = match change.kind.as_str() {
                 RULE => self.rule(change.target)?.map(|r| json(&r)),
+                POLICY => Some(json(&self.policy()?)),
                 _ => self.folder(change.target)?.map(|f| json(&f)),
             };
             if now != change.after {
@@ -881,6 +898,16 @@ impl Store {
             what: "a recorded change",
             error: e.to_string(),
         };
+        if change.kind == POLICY {
+            let before: Overrides = change
+                .before
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .map_err(corrupt)?
+                .unwrap_or_default();
+            return self.put_policy(&before, "undid: the policy", batch);
+        }
         if change.kind == RULE {
             let before: Option<Rule> = change
                 .before
@@ -1371,6 +1398,36 @@ impl Store {
         let mut statement = self.connection.prepare_cached(sql("events.page")?)?;
         let rows = statement.query_map(params![before, limit], stored_event)?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The settings clients changed.
+    pub fn policy(&self) -> Result<Overrides, Error> {
+        let text: Option<String> = self
+            .connection
+            .prepare_cached(sql("policy.get")?)?
+            .query_row([], |row| row.get(0))
+            .optional()?;
+        text.map_or(Ok(Overrides::default()), |text| {
+            serde_json::from_str(&text).map_err(|e| Error::Corrupt {
+                what: "the policy",
+                error: e.to_string(),
+            })
+        })
+    }
+
+    /// Keeps `overrides` as the settings clients changed, recording the change (`what`) in `batch`.
+    pub fn put_policy(
+        &self,
+        overrides: &Overrides,
+        what: &str,
+        batch: &Batch,
+    ) -> Result<(), Error> {
+        let before = json(&self.policy()?);
+        let after = json(overrides);
+        self.connection
+            .prepare_cached(sql("policy.put")?)?
+            .execute(params![after])?;
+        self.record_change(batch, POLICY, 0, Some(&before), Some(&after), what)
     }
 
     /// For each rule: when it was last changed, and when it last decided a connection.

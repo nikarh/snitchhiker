@@ -195,6 +195,8 @@ pub struct Model {
     pub explanation: Option<v1::Explanation>,
     /// The last lint report.
     pub lint: Option<v1::LintReport>,
+    pub policy: Option<v1::NodePolicy>,
+    pub trusted: Vec<v1::TrustedClient>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -281,6 +283,14 @@ impl Model {
             Update::Connections(connections) => {
                 self.connections = connections;
                 Changed::Connections
+            }
+            Update::Policy(policy) => {
+                self.policy = Some(policy);
+                Changed::Status
+            }
+            Update::TrustedClients(clients) => {
+                self.trusted = clients;
+                Changed::Status
             }
             Update::Lint(report) => {
                 self.lint = Some(report);

@@ -9,4 +9,5 @@ pub mod history;
 pub mod lint;
 pub mod prompts;
 pub mod rules;
+pub mod settings;
 pub mod status;

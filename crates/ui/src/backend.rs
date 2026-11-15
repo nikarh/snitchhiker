@@ -54,6 +54,9 @@ pub enum Request {
     DeleteFolder {
         id: u64,
     },
+    Policy,
+    SetPolicy(v1::SetPolicy),
+    TrustedClients,
     /// The lint report, with rules unused for `days`.
     Lint {
         days: u32,
@@ -90,6 +93,8 @@ pub enum Update {
     /// Why an event is decided as it is.
     Explanation(Box<v1::Explanation>),
     Lint(v1::LintReport),
+    Policy(v1::NodePolicy),
+    TrustedClients(Vec<v1::TrustedClient>),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -241,6 +246,11 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         Request::DeleteFolder { id } => {
             client.call(Method::DeleteFolder(v1::DeleteFolder { id: *id }))?
         }
+        Request::Policy => client.call(Method::GetPolicy(v1::GetPolicy {}))?,
+        Request::SetPolicy(set) => client.call(Method::SetPolicy(set.clone()))?,
+        Request::TrustedClients => {
+            client.call(Method::ListTrustedClients(v1::ListTrustedClients {}))?
+        }
         Request::Lint { days } => {
             client.call(Method::LintRules(v1::LintRules { unused_days: *days }))?
         }
@@ -253,6 +263,8 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Connections(list) => Some(Update::Connections(list.connections)),
         R::Explanation(explanation) => Some(Update::Explanation(explanation)),
         R::LintReport(report) => Some(Update::Lint(report)),
+        R::Policy(policy) => Some(Update::Policy(policy)),
+        R::TrustedClients(list) => Some(Update::TrustedClients(list.clients)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

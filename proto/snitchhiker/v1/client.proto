@@ -103,6 +103,9 @@ message Request {
     Explain explain = 33;
     LintRules lint_rules = 34;
     EditRules edit_rules = 35;
+    GetPolicy get_policy = 36;
+    SetPolicy set_policy = 37;
+    ListTrustedClients list_trusted_clients = 38;
   }
 }
 
@@ -126,6 +129,8 @@ message Response {
     ConnectionList connections = 28;
     Explanation explanation = 29;
     LintReport lint_report = 30;
+    NodePolicy policy = 31;
+    TrustedClients trusted_clients = 32;
   }
 }
 
@@ -664,6 +669,58 @@ message KillConnection {
   uint32 local_port = 3;
   bytes remote = 4;
   uint32 remote_port = 5;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The node's policy: the settings of daemon.toml that clients may change while the daemon runs. What a client changed
+// takes precedence over the file until it is reset, and is recorded in the history (and undone) like rule changes.
+
+message GetPolicy {}
+
+message NodePolicy {
+  Mode mode = 1;
+  // What happens to a connection no rule decides.
+  Policy no_match = 2;
+  // With no_match ask: what happens when no client is listening for prompts.
+  Action no_client = 3;
+  // With no_match ask: how long a prompt waits for an answer, and what happens then.
+  uint32 prompt_timeout_secs = 4;
+  Action on_timeout = 5;
+  // How long connection history is kept.
+  uint32 retention_days = 6;
+  // The settings clients changed (mode, no_match, no_client, prompt_timeout_secs, on_timeout, retention_days).
+  repeated string changed = 7;
+}
+
+// Sets the settings given and returns the ones named in `reset` to daemon.toml's; answers with the new policy. A change
+// that lets blocked connections through (monitor mode, no_match allow, no_client or on_timeout allow) is a dangerous
+// action.
+message SetPolicy {
+  optional Mode mode = 1;
+  optional Policy no_match = 2;
+  optional Action no_client = 3;
+  // 5 to 3600.
+  optional uint32 prompt_timeout_secs = 4;
+  optional Action on_timeout = 5;
+  // 1 to 3650.
+  optional uint32 retention_days = 6;
+  repeated string reset = 7;
+}
+
+// The client binaries allowed on the client socket: those the packages registered (pinned to their digest), and those
+// daemon.toml allows by path.
+message ListTrustedClients {}
+
+message TrustedClient {
+  string path = 1;
+  // Lowercase hex; empty for clients allowed by path alone.
+  string sha256 = 2;
+  // The file there now has that digest (or, by path alone, exists): it can connect.
+  bool current = 3;
+}
+
+message TrustedClients {
+  repeated TrustedClient clients = 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

@@ -18,7 +18,7 @@ use nix::sys::socket::{getsockopt, sockopt};
 use snitchhiker_proto::{MAJOR, MINOR, convert, frame, v1};
 use tracing::{debug, info, warn};
 
-use crate::config::{Config, Mode, Policy, StepUp};
+use crate::config::{Config, StepUp};
 use crate::hub::{OUTBOUND, Outbox, Outgoing};
 use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
@@ -328,6 +328,8 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListConnections(_)
             | Method::Explain(_)
             | Method::LintRules(_)
+            | Method::GetPolicy(_)
+            | Method::ListTrustedClients(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -375,6 +377,15 @@ fn handle(
         },
         Method::KillConnection(kill) => kill_connection(daemon, &kill),
         Method::LintRules(lint) => lint_rules(daemon, lint),
+        Method::GetPolicy(_) => match daemon.store().policy() {
+            Ok(overrides) => R::Policy(crate::policy::wire(
+                &daemon.shared.policy.load(),
+                &overrides,
+            )),
+            Err(e) => internal(e),
+        },
+        Method::SetPolicy(set) => set_policy(daemon, caller, app, &set),
+        Method::ListTrustedClients(_) => trusted_clients(&daemon.shared.config),
         Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
             Ok(Some(explanation)) => R::Explanation(Box::new(explanation)),
@@ -659,6 +670,92 @@ fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::r
 
 /// Deleting more rules than this at once is a dangerous action.
 const DANGEROUS_DELETE: usize = 20;
+
+fn trusted_clients(config: &Config) -> v1::response::Result {
+    let registered = match crate::trust::load(&crate::trust::registry_path(config)) {
+        Ok(registered) => registered,
+        Err(e) => return internal(e),
+    };
+    let digest_now = |path: &std::path::Path| {
+        std::fs::File::open(path)
+            .and_then(|mut file| crate::peer::sha256(&mut file))
+            .ok()
+            .map(|digest| {
+                digest.iter().fold(String::new(), |mut hex, b| {
+                    use std::fmt::Write as _;
+                    let _ = write!(hex, "{b:02x}");
+                    hex
+                })
+            })
+    };
+    let mut clients: Vec<v1::TrustedClient> = registered
+        .iter()
+        .map(|entry| v1::TrustedClient {
+            path: entry.path.display().to_string(),
+            sha256: entry.sha256.clone(),
+            current: digest_now(&entry.path).is_some_and(|now| now == entry.sha256),
+        })
+        .collect();
+    clients.extend(config.trusted_clients.iter().map(|path| v1::TrustedClient {
+        path: path.display().to_string(),
+        sha256: String::new(),
+        current: path.exists(),
+    }));
+    v1::response::Result::TrustedClients(v1::TrustedClients { clients })
+}
+
+fn set_policy(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    set: &v1::SetPolicy,
+) -> v1::response::Result {
+    let before_overrides = match daemon.store().policy() {
+        Ok(overrides) => overrides,
+        Err(e) => return internal(e),
+    };
+    let overrides = match before_overrides.apply(set) {
+        Ok(overrides) => overrides,
+        Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
+    };
+    let config = &daemon.shared.config;
+    let before = crate::policy::Effective::of(config, &before_overrides);
+    let after = crate::policy::Effective::of(config, &overrides);
+    if before.loosened_by(&after)
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!(
+                "change the policy so that blocked connections get through ({})",
+                crate::policy::describe(&before, &after)
+            ),
+        )
+    {
+        return refused;
+    }
+    let what = crate::policy::describe(&before, &after);
+    let stored = {
+        let mut store = daemon.store();
+        store
+            .batch(app, now_ms())
+            .and_then(|batch| store.atomically(|store| store.put_policy(&overrides, &what, &batch)))
+    };
+    if let Err(e) = stored {
+        return internal(e);
+    }
+    match daemon.reload_policy() {
+        Ok(effective) => {
+            // Clients showing the status see the new mode and policy.
+            daemon.shared.hub.publish(
+                v1::Topic::Rules,
+                &v1::notice::Body::RulesChanged(v1::RulesChanged {}),
+            );
+            v1::response::Result::Policy(crate::policy::wire(&effective, &overrides))
+        }
+        Err(e) => internal(e),
+    }
+}
 
 fn lint_rules(daemon: &Daemon, lint: v1::LintRules) -> v1::response::Result {
     let managed = match crate::managed::Managed::load(
@@ -1036,6 +1133,10 @@ fn rule_file(file: &snitchhiker_core::spec::RuleFile) -> v1::response::Result {
 }
 
 fn reload(daemon: &Daemon) -> v1::response::Result {
+    // An undo may have put a policy back as well as rules.
+    if let Err(e) = daemon.reload_policy() {
+        return internal(e);
+    }
     match daemon.reload_rules() {
         Ok(_) => v1::response::Result::Done(v1::Done {}),
         Err(e) => internal(e),
@@ -1044,20 +1145,11 @@ fn reload(daemon: &Daemon) -> v1::response::Result {
 
 fn status(daemon: &Daemon) -> v1::Status {
     let config: &Config = &daemon.shared.config;
+    let policy = daemon.shared.policy.load();
     v1::Status {
         daemon_version: daemon.version().to_owned(),
-        mode: match config.mode {
-            Mode::Enforce => v1::Mode::Enforce,
-            Mode::Monitor => v1::Mode::Monitor,
-        }
-        .into(),
-        no_match: match config.no_match {
-            Policy::Allow => v1::Policy::Allow,
-            Policy::Deny => v1::Policy::Deny,
-            Policy::Reject => v1::Policy::Reject,
-            Policy::Ask => v1::Policy::Ask,
-        }
-        .into(),
+        mode: crate::policy::mode(policy.mode).into(),
+        no_match: crate::policy::policy(policy.no_match).into(),
         fail_open: config.fail == crate::config::Fail::Open,
         decided: daemon.shared.decided.load(Ordering::Relaxed),
         dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),

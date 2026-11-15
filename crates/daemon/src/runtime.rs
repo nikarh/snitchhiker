@@ -31,6 +31,7 @@ use snitchhiker_proto::{convert, v1};
 use crate::config::{Config, Fail, Mode, Policy};
 use crate::dns::{Names, parse_answer};
 use crate::hub::Hub;
+use crate::policy::Effective;
 use crate::process::{HostNamespaces, ProcessCache};
 use crate::prompts::{Broker, Held, Hold, NewPrompt, Pending, PromptKey};
 use crate::store::{Event, Source, Store};
@@ -97,6 +98,8 @@ pub struct Shared {
     pub decided: AtomicU64,
     pub hub: Arc<Hub>,
     pub broker: Broker,
+    /// The policy in effect: daemon.toml's, with what clients changed.
+    pub policy: ArcSwap<Effective>,
 }
 
 /// The daemon, running. Shared by the signal handler and the API's threads.
@@ -140,7 +143,14 @@ impl Daemon {
             writers.push(queue.verdict_writer()?);
             queues.push(queue);
         }
-        let broker = Broker::new(writers, Duration::from_secs(config.prompt_timeout_secs));
+        let policy = Effective::of(
+            &config,
+            &store
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .policy()?,
+        );
+        let broker = Broker::new(writers, Duration::from_secs(policy.prompt_timeout_secs));
         let shared = Arc::new(Shared {
             rules: ArcSwap::from_pointee(rules),
             attribution,
@@ -153,6 +163,7 @@ impl Daemon {
             decided: AtomicU64::new(0),
             hub: Arc::new(Hub::default()),
             broker,
+            policy: ArcSwap::from_pointee(policy),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -180,10 +191,9 @@ impl Daemon {
         {
             let store = Arc::clone(&store);
             let shared = Arc::clone(&shared);
-            let retention = Duration::from_secs(u64::from(shared.config.retention_days) * 86_400);
             thread::Builder::new()
                 .name("writer".to_owned())
-                .spawn(move || write_loop(&shared, &store, &receiver, retention))?;
+                .spawn(move || write_loop(&shared, &store, &receiver))?;
         }
         let daemon = Arc::new(Self {
             shared,
@@ -197,7 +207,7 @@ impl Daemon {
                 .spawn(move || {
                     loop {
                         for pending in daemon.shared.broker.wait_expired() {
-                            let action = daemon.shared.config.on_timeout;
+                            let action = daemon.shared.policy.load().on_timeout;
                             daemon.resolve(&pending, action, Source::Timeout, None, "", true);
                         }
                     }
@@ -494,6 +504,21 @@ impl Daemon {
     }
 
     /// Reads the rules again and swaps them in.
+    /// Applies the policy as the store has it (after a client changed it, or an undo).
+    pub fn reload_policy(&self) -> Result<Effective, Error> {
+        let overrides = self
+            .store
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .policy()?;
+        let effective = Effective::of(&self.shared.config, &overrides);
+        self.shared
+            .broker
+            .set_timeout(Duration::from_secs(effective.prompt_timeout_secs));
+        self.shared.policy.store(Arc::new(effective));
+        Ok(effective)
+    }
+
     pub fn reload_rules(&self) -> Result<usize, Error> {
         let rules = {
             let store = self.store.lock().unwrap_or_else(PoisonError::into_inner);
@@ -661,8 +686,9 @@ fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u6
 /// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
 /// listens for prompts.
 fn asks(shared: &Shared) -> bool {
-    shared.config.no_match == Policy::Ask
-        && shared.config.mode == Mode::Enforce
+    let policy = shared.policy.load();
+    policy.no_match == Policy::Ask
+        && policy.mode == Mode::Enforce
         && shared.hub.has_subscribers(v1::Topic::Prompts)
 }
 
@@ -744,10 +770,11 @@ fn decide(
             );
             return (None, None);
         }
-        let action = policy_action(shared.config.no_match, shared.config.no_client);
+        let policy = shared.policy.load();
+        let action = policy_action(policy.no_match, policy.no_client);
         (action, Source::Policy, None)
     };
-    let (verdict, source) = match shared.config.mode {
+    let (verdict, source) = match shared.policy.load().mode {
         Mode::Monitor => (Verdict::Accept, Source::Monitor),
         Mode::Enforce => (
             if action == Action::Allow {
@@ -908,12 +935,7 @@ fn event_row(event: &Event, recorded: &crate::store::Recorded) -> EventRow {
     }
 }
 
-fn write_loop(
-    shared: &Shared,
-    store: &Mutex<Store>,
-    events: &Receiver<Event>,
-    retention: Duration,
-) {
+fn write_loop(shared: &Shared, store: &Mutex<Store>, events: &Receiver<Event>) {
     let mut batch = Vec::with_capacity(BATCH);
     let mut recorded = Vec::with_capacity(BATCH);
     let mut last_prune = Instant::now();
@@ -961,8 +983,8 @@ fn write_loop(
         }
         if last_prune.elapsed() >= PRUNE_EVERY {
             last_prune = Instant::now();
-            let cutoff =
-                now_ms().saturating_sub(u64::try_from(retention.as_millis()).unwrap_or(u64::MAX));
+            let retention_ms = u64::from(shared.policy.load().retention_days) * 86_400_000;
+            let cutoff = now_ms().saturating_sub(retention_ms);
             while let Ok(pruned) = store.prune(cutoff, PRUNE_CHUNK) {
                 if pruned < PRUNE_CHUNK as usize {
                     break;

@@ -756,3 +756,51 @@ pub fn rules_are_edited_in_bulk_and_linted() -> Result<(), String> {
         &found,
     )
 }
+
+/// The policy changes while the daemon runs: `no_match = allow` lets a connection no rule decides through at once, the
+/// change is in the history and an undo puts the file's policy back.
+pub fn policy_changes_apply_at_once_and_undo() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let mut daemon = Running::start("policy", "mode = \"enforce\"\nno_match = \"reject\"\n")?;
+    let before = mallory_connects(port)?;
+    let set = daemon.cli(&["policy", "set", "no_match=allow", "retention_days=7"])?;
+    thread::sleep(Duration::from_millis(200));
+    let allowed = mallory_connects(port)?;
+    let status = daemon.cli(&["status"])?;
+    let history = daemon.cli(&["history"])?;
+    let last = history
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .ok_or("no history")?
+        .to_owned();
+    daemon.cli(&["undo", &last])?;
+    thread::sleep(Duration::from_millis(200));
+    let undone = mallory_connects(port)?;
+    let shown = daemon.cli(&["policy"])?;
+    let invalid = daemon
+        .cli(&["policy", "set", "prompt_timeout_secs=1"])
+        .is_err();
+    daemon.stop()?;
+    let found = format!(
+        "{set}{status}{history}{shown}before {before}, allowed {allowed}, undone {undone}, invalid refused {invalid}"
+    );
+    check(
+        set.contains("no_match             allow  (changed by a client)")
+            && set.contains("retention_days       7  (changed by a client)")
+            && status.to_lowercase().contains("allow"),
+        "the policy set isn't the one in effect",
+        &found,
+    )?;
+    check(
+        history.contains("policy: no_match reject → allow, retention_days 30 → 7"),
+        "the history doesn't record the policy change",
+        &found,
+    )?;
+    check(
+        !before && allowed && !undone && !shown.contains("changed by a client"),
+        "the policy didn't apply at once, or the undo didn't put the file's back",
+        &found,
+    )?;
+    check(invalid, "an out-of-range timeout was accepted", &found)
+}

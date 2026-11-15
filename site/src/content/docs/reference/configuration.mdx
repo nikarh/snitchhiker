@@ -10,7 +10,13 @@ import defaults from '../../../generated/config-defaults.toml?raw';
 import packaged from '../../../../../dist/daemon.toml?raw';
 
 
-The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `snitchhikerd --config <path>`). Only root can change it: clients can see the mode and the policy, not change them. After a change, `sudo systemctl restart snitchhikerd`.
+The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `snitchhikerd --config <path>`). Only root can change it. After a change, `sudo systemctl restart snitchhikerd`.
+
+## The policy, changed while the daemon runs
+
+Six settings are the node's **policy**: [`mode`](#mode), [`no_match`](#no_match), [`no_client`](#no_client), [`prompt_timeout_secs`](#prompt_timeout_secs), [`on_timeout`](#on_timeout) and [`retention_days`](#retention_days). Clients can change them while the daemon runs (the desktop app's Settings page, `snitchhiker policy set no_match=ask`). A setting changed that way takes effect at once and takes precedence over the file's until it is reset to it (`snitchhiker policy reset no_match`, or *Use daemon.toml's* in the app). Changes are recorded in the [history](/guides/rules/#history-and-undo) with who made them, and undone like rule changes.
+
+A change that lets blocked connections through (to `monitor`, `no_match = "allow"`, or `allow` for `no_client` or `on_timeout`) is a [dangerous action](#step_up). `snitchhiker policy` shows the policy in effect and which settings a client changed.
 
 Every key is optional; an empty or missing file means the defaults. Unknown keys are errors, so a typo doesn't go unnoticed. The packaged file sets `mode = "monitor"` and documents the rest.
 

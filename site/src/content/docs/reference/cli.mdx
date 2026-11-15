@@ -22,6 +22,14 @@ snitchhiker <command> [options]
 
 The daemon's version, mode and policy, and its counters: rules in effect, connections decided since it started, history entries dropped because the database couldn't keep up, prompts waiting, and connected clients (this command's own connection included).
 
+## `policy`
+
+| Command | |
+| --- | --- |
+| `policy` | The [policy](/reference/configuration/#the-policy-changed-while-the-daemon-runs) in effect, marking the settings a client changed |
+| `policy set <setting>=<value>...` | Change settings while the daemon runs: `mode=enforce\|monitor`, `no_match=ask\|allow\|deny\|reject`, `no_client=…`, `on_timeout=…` (`allow`, `deny`, `reject`), `prompt_timeout_secs=<5–3600>`, `retention_days=<1–3650>` |
+| `policy reset [<setting>...]` | Return settings (all, without names) to `daemon.toml`'s |
+
 ## `rules`
 
 | Command | |
