@@ -1,5 +1,6 @@
 package dev.nikarh.snitchhiker.app.ui
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -28,6 +29,8 @@ fun EventsPage(
 ) {
     var typed by remember { mutableStateOf("") }
     var query by remember { mutableStateOf("") }
+    var explained by remember { mutableStateOf<Long?>(null) }
+    explained?.let { seq -> Explain(session, seq) { explained = null } }
     val events =
         rememberRequest(session, query, { Request(list_events = ListEvents(limit = 300, query = query)) }) { it.events?.events }
     Page(modifier) {
@@ -45,7 +48,7 @@ fun EventsPage(
         }
         item { Problem(events.error) }
         items(events.value.orEmpty(), key = { it.seq }) { event ->
-            Item {
+            Item(Modifier.clickable { explained = event.seq }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
                         event.exe.ifEmpty { "(unknown program)" },
@@ -59,4 +62,45 @@ fun EventsPage(
             }
         }
     }
+}
+
+/** Why a recorded connection is decided as it is, by today's rules: every rule that matches it, the deciding first. */
+@Composable
+private fun Explain(
+    session: NodeSession,
+    seq: Long,
+    close: () -> Unit,
+) {
+    val explanation =
+        rememberRequest(session, seq, { Request(explain = snitchhiker.v1.Explain(seq = seq)) }) { it.explanation }
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = close,
+        confirmButton = { androidx.compose.material3.TextButton(onClick = close) { Text("Close") } },
+        title = { Text("Why") },
+        text = {
+            androidx.compose.foundation.layout.Column {
+                Problem(explanation.error)
+                val value = explanation.value
+                when {
+                    value == null -> {
+                        Muted("Loading…")
+                    }
+
+                    value.rules.isEmpty() -> {
+                        Text("No rule matches it now: the policy decides.")
+                    }
+
+                    else -> {
+                        value.rules.forEachIndexed { index, rule ->
+                            Text(
+                                (if (index == 0) "Decides: " else "Also matches: ") +
+                                    "${rule.name} (${actionName(rule.action)}, ${rule.tier.name.removePrefix("TIER_").lowercase()})",
+                            )
+                        }
+                    }
+                }
+                if (value?.partial == true) Muted("Rules on command lines or parent programs can't be checked against history.")
+            }
+        },
+    )
 }

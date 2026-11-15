@@ -3,6 +3,7 @@ package dev.nikarh.snitchhiker.app.ui
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -69,6 +70,14 @@ fun RulesPage(
 ) {
     val list = rememberRequest(session, state.rulesVersion, { Request(list_rules = ListRules()) }) { it.rules }
     var search by remember { mutableStateOf("") }
+    // The rule being edited (an empty one: a new rule).
+    var editing by remember { mutableStateOf<Rule?>(null) }
+    editing?.let { rule ->
+        RuleEditor(session, rule.takeIf { it.id != 0L }) {
+            editing = null
+            list.reload()
+        }
+    }
     val folders =
         list.value
             ?.folders
@@ -81,6 +90,9 @@ fun RulesPage(
         }
     Page(modifier) {
         item {
+            Button(onClick = { editing = Rule() }) { Text("New rule") }
+        }
+        item {
             OutlinedTextField(
                 value = search,
                 onValueChange = { search = it },
@@ -90,7 +102,9 @@ fun RulesPage(
             )
         }
         item { Problem(list.error) }
-        items(rules, key = { it.id }) { rule -> RuleCard(session, rule, path(rule.folder, folders), list.reload) }
+        items(rules, key = { it.id }) { rule ->
+            RuleCard(session, rule, path(rule.folder, folders), list.reload) { editing = rule }
+        }
     }
 }
 
@@ -100,6 +114,7 @@ private fun RuleCard(
     rule: Rule,
     folder: String,
     changed: () -> Unit,
+    edit: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     var error by remember { mutableStateOf<String?>(null) }
@@ -124,12 +139,15 @@ private fun RuleCard(
         if (rule.locked) Muted("A default or managed rule: changed in its file.")
         Problem(error)
         if (!rule.locked) {
-            TextButton(onClick = {
-                scope.launch {
-                    error = run(session, Request(delete_rule = DeleteRule(id = rule.id)))
-                    changed()
-                }
-            }) { Text("Delete") }
+            Row {
+                TextButton(onClick = edit) { Text("Edit") }
+                TextButton(onClick = {
+                    scope.launch {
+                        error = run(session, Request(delete_rule = DeleteRule(id = rule.id)))
+                        changed()
+                    }
+                }) { Text("Delete") }
+            }
         }
     }
 }

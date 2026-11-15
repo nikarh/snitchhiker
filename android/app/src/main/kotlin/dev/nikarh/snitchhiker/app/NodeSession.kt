@@ -85,6 +85,9 @@ class NodeSession(
         client = null
     }
 
+    /** Another connection to the node, for a page that subscribes to something of its own (Live). Blocking. */
+    fun openLink(): RustLink = RustLink(DeviceKey.get(context), info)
+
     /** A request to the node; its response, or an error. */
     suspend fun call(request: Request): Response = client?.call(request) ?: throw IOException("not connected to ${info.name}")
 

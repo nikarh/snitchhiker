@@ -59,8 +59,35 @@ fun PromptsPage(
         if (state.prompts.isEmpty() && state.approvals.isEmpty()) {
             item { Muted("No connection is waiting for an answer.") }
         }
+        if (state.prompts.size > 1) item { AnswerAll(session, state.prompts.keys.toList()) }
         items(state.approvals.values.toList(), key = { "approval-${it.id}" }) { ApprovalCard(session, it) }
         items(state.prompts.values.sortedBy { it.created_ms }, key = { "prompt-${it.id}" }) { PromptCard(session, it) }
+    }
+}
+
+/** Every prompt at once: allowed with its narrowest rule (kept), or denied once. */
+@Composable
+private fun AnswerAll(
+    session: NodeSession,
+    ids: List<Long>,
+) {
+    val scope = rememberCoroutineScope()
+
+    fun answer(action: Action) {
+        scope.launch {
+            for (id in ids) {
+                val duration = if (action == Action.ACTION_ALLOW) Duration.DURATION_FOREVER else Duration.DURATION_ONCE
+                run(session, Request(answer_prompt = AnswerPrompt(id = id, action = action, duration = duration, suggestion = 0)))
+            }
+        }
+    }
+    Item {
+        Text("${ids.size} waiting", style = MaterialTheme.typography.titleMedium)
+        Muted("All at once: allowed with each one's narrowest rule, or denied this time.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { answer(Action.ACTION_ALLOW) }) { Text("Allow all") }
+            OutlinedButton(onClick = { answer(Action.ACTION_DENY) }) { Text("Deny all") }
+        }
     }
 }
 

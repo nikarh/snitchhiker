@@ -32,7 +32,9 @@ import kotlinx.coroutines.launch
 import snitchhiker.v1.ChainPolicy
 import snitchhiker.v1.DecideProposal
 import snitchhiker.v1.Dimension
+import snitchhiker.v1.EditedRule
 import snitchhiker.v1.Explore
+import snitchhiker.v1.ExploreFilter
 import snitchhiker.v1.GetPolicy
 import snitchhiker.v1.GetSystemFirewall
 import snitchhiker.v1.KillConnection
@@ -50,7 +52,20 @@ import snitchhiker.v1.SetPolicy
 import snitchhiker.v1.SetSystemFirewall
 import snitchhiker.v1.Undo
 
-private val pages = listOf("Proposals", "Explorer", "Connections", "History", "Firewall", "Devices", "Status", "Settings")
+private val pages =
+    listOf(
+        "Proposals",
+        "Explorer",
+        "Live",
+        "Connections",
+        "History",
+        "Rules check",
+        "Alert rules",
+        "Firewall",
+        "Devices",
+        "Status",
+        "Settings",
+    )
 
 @Composable
 fun MorePage(
@@ -120,71 +135,141 @@ private fun ProposalsPage(
     modifier: Modifier,
 ) {
     val state by session.state.collectAsState()
-    val scope = rememberCoroutineScope()
     val list =
         rememberRequest(session, state.proposals, { Request(list_proposals = ListProposals(limit = 50)) }) { it.proposals?.proposals }
     Page(modifier) {
         item { Problem(list.error) }
-        items(list.value.orEmpty(), key = { it.id }) { proposal ->
-            var reason by remember { mutableStateOf("") }
-            var error by remember { mutableStateOf<String?>(null) }
-            val provenance = proposal.provenance
-            Item {
-                Text(provenance?.agent_exe ?: "an agent", style = MaterialTheme.typography.titleMedium)
-                Muted("in ${provenance?.cwd ?: "?"} · ${provenance?.user ?: ""}")
-                Muted("The agent says (not verified):")
-                Text(proposal.justification)
-                for (rule in proposal.rules) {
-                    Text(summary(rule.conditions), style = MaterialTheme.typography.bodyMedium)
-                    for (risk in rule.risks) Text(risk.description, color = MaterialTheme.colorScheme.tertiary)
-                }
-                if (proposal.state == ProposalState.PROPOSAL_STATE_PENDING) {
-                    OutlinedTextField(
-                        value = reason,
-                        onValueChange = { reason = it },
-                        label = { Text("Reason, told to the agent") },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Problem(error)
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            scope.launch {
-                                error =
-                                    run(
-                                        session,
-                                        Request(
-                                            decide_proposal =
-                                                DecideProposal(
-                                                    id = proposal.id,
-                                                    approve = true,
-                                                    reason = reason,
-                                                    duration = ProposalDuration.PROPOSAL_DURATION_SESSION,
-                                                ),
-                                        ),
-                                    )
-                                list.reload()
-                            }
-                        }) { Text(if (proposal.broad) "Approve (needs step-up)" else "Approve") }
-                        OutlinedButton(onClick = {
-                            scope.launch {
-                                error =
-                                    run(
-                                        session,
-                                        Request(decide_proposal = DecideProposal(id = proposal.id, approve = false, reason = reason)),
-                                    )
-                                list.reload()
-                            }
-                        }) { Text("Deny") }
-                    }
-                } else {
-                    Muted(
-                        proposal.state.name
-                            .removePrefix("PROPOSAL_STATE_")
-                            .lowercase() +
-                            if (proposal.reason.isEmpty()) "" else ": ${proposal.reason}",
+        items(list.value.orEmpty(), key = { it.id }) { proposal -> ProposalCard(session, proposal, list.reload) }
+    }
+}
+
+private val proposalDurations =
+    listOf(
+        ProposalDuration.PROPOSAL_DURATION_SESSION to "While the agent runs",
+        ProposalDuration.PROPOSAL_DURATION_HOUR to "1 hour",
+        ProposalDuration.PROPOSAL_DURATION_TWELVE_HOURS to "12 hours",
+        ProposalDuration.PROPOSAL_DURATION_FOREVER to "Forever",
+    )
+
+/** An agent's proposal: who, the agent's words, each rule (its hosts and ports narrowed before approving), and how long. */
+@Composable
+private fun ProposalCard(
+    session: NodeSession,
+    proposal: snitchhiker.v1.Proposal,
+    changed: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var reason by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    var duration by remember { mutableStateOf(ProposalDuration.PROPOSAL_DURATION_SESSION) }
+    val hosts =
+        remember {
+            proposal.rules.map { r ->
+                mutableStateOf((r.conditions?.host.orEmpty() + r.conditions?.net.orEmpty()).joinToString(", "))
+            }
+        }
+    val ports =
+        remember {
+            proposal.rules.map { r ->
+                mutableStateOf(
+                    r.conditions
+                        ?.port
+                        .orEmpty()
+                        .joinToString(", "),
+                )
+            }
+        }
+    val provenance = proposal.provenance
+
+    fun decide(approve: Boolean) {
+        val edited =
+            proposal.rules.mapIndexed { index, rule ->
+                val items =
+                    hosts[index]
+                        .value
+                        .split(',', ' ')
+                        .map(String::trim)
+                        .filter(String::isNotEmpty)
+                val (nets, names) = items.partition { it.firstOrNull()?.isDigit() == true || it.contains(':') }
+                EditedRule(
+                    index = index,
+                    conditions =
+                        (rule.conditions ?: snitchhiker.v1.Conditions()).copy(
+                            host = names,
+                            net = nets,
+                            port =
+                                ports[index]
+                                    .value
+                                    .split(',', ' ')
+                                    .map(String::trim)
+                                    .filter(String::isNotEmpty),
+                        ),
+                )
+            }
+        scope.launch {
+            error =
+                run(
+                    session,
+                    Request(
+                        decide_proposal =
+                            DecideProposal(
+                                id = proposal.id,
+                                approve = approve,
+                                reason = reason,
+                                duration = duration,
+                                rules = if (approve) edited else emptyList(),
+                            ),
+                    ),
+                )
+            changed()
+        }
+    }
+    Item {
+        Text(provenance?.agent_exe ?: "an agent", style = MaterialTheme.typography.titleMedium)
+        Muted("in ${provenance?.cwd ?: "?"} · ${provenance?.user ?: ""}")
+        Muted("The agent says (not verified):")
+        Text(proposal.justification)
+        val pending = proposal.state == ProposalState.PROPOSAL_STATE_PENDING
+        proposal.rules.forEachIndexed { index, rule ->
+            Text(rule.conditions?.exe?.firstOrNull() ?: "Any program", style = MaterialTheme.typography.titleSmall)
+            if (pending) {
+                OutlinedTextField(value = hosts[index].value, onValueChange = {
+                    hosts[index].value = it
+                }, label = { Text("To") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = ports[index].value, onValueChange = {
+                    ports[index].value = it
+                }, label = { Text("Ports") }, modifier = Modifier.fillMaxWidth())
+            } else {
+                Text(summary(rule.conditions), style = MaterialTheme.typography.bodyMedium)
+            }
+            for (risk in rule.risks) Text(risk.description, color = MaterialTheme.colorScheme.tertiary)
+            for (e in rule.evidence) Muted("refused: ${e.exe} → ${e.host.ifEmpty { address(e.address) }}:${e.port} ×${e.count}")
+        }
+        if (pending) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for ((value, label) in proposalDurations) {
+                    FilterChip(
+                        selected = duration == value,
+                        onClick = { duration = value },
+                        label = { Text(label) },
                     )
                 }
             }
+            OutlinedTextField(value = reason, onValueChange = {
+                reason = it
+            }, label = { Text("Reason, told to the agent") }, modifier = Modifier.fillMaxWidth())
+            Problem(error)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { decide(true) }) { Text(if (proposal.broad) "Approve (needs step-up)" else "Approve") }
+                OutlinedButton(onClick = { decide(false) }) { Text("Deny") }
+            }
+        } else {
+            Muted(
+                proposal.state.name
+                    .removePrefix("PROPOSAL_STATE_")
+                    .lowercase() +
+                    if (proposal.reason.isEmpty()) "" else ": ${proposal.reason}",
+            )
         }
     }
 }
@@ -196,10 +281,12 @@ private fun ExplorerPage(
 ) {
     var by by remember { mutableStateOf(Dimension.DIMENSION_PROGRAM) }
     var hours by remember { mutableLongStateOf(24L) }
+    // Drilled into: a row of another grouping, its connections grouped by `by`.
+    var filter by remember { mutableStateOf<ExploreFilter?>(null) }
     val rows =
-        rememberRequest(session, by to hours, {
+        rememberRequest(session, Triple(by, hours, filter), {
             val now = System.currentTimeMillis()
-            Request(explore = Explore(from_ms = now - hours * 3_600_000, to_ms = now, group_by = by, limit = 100))
+            Request(explore = Explore(from_ms = now - hours * 3_600_000, to_ms = now, group_by = by, filter = filter, limit = 100))
         }) { it.explored?.rows }
     Page(modifier) {
         item {
@@ -221,9 +308,23 @@ private fun ExplorerPage(
                 }
             }
         }
+        filter?.let { current ->
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Muted("Within ${current.value_.ifEmpty { "(none)" }}")
+                    TextButton(onClick = { filter = null }) { Text("Back") }
+                }
+            }
+        }
         item { Problem(rows.error) }
         items(rows.value.orEmpty()) { row ->
-            Item {
+            // A program's row drills into where it connected; any other's, into which programs reached it.
+            Item(
+                Modifier.clickable {
+                    filter = ExploreFilter(dimension = by, value_ = row.key)
+                    by = if (by == Dimension.DIMENSION_PROGRAM) Dimension.DIMENSION_HOST else Dimension.DIMENSION_PROGRAM
+                },
+            ) {
                 Text(row.key, style = MaterialTheme.typography.titleSmall)
                 Muted("${row.allowed} allowed · ${row.blocked} blocked · ${row.bytes_out} B out · ${row.bytes_in} B in")
             }
@@ -299,48 +400,6 @@ private fun HistoryPage(
 }
 
 @Composable
-private fun FirewallPage(
-    session: NodeSession,
-    modifier: Modifier,
-) {
-    val scope = rememberCoroutineScope()
-    val firewall = rememberRequest(session, Unit, { Request(get_system_firewall = GetSystemFirewall()) }) { it.system_firewall }
-    var error by remember { mutableStateOf<String?>(null) }
-    Page(modifier) {
-        item { Problem(firewall.error ?: error) }
-        firewall.value?.let { current ->
-            item {
-                Item {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("System firewall", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                        Switch(checked = current.enabled, onCheckedChange = { on ->
-                            scope.launch {
-                                error =
-                                    run(session, Request(set_system_firewall = SetSystemFirewall(firewall = current.copy(enabled = on))))
-                                firewall.reload()
-                            }
-                        })
-                    }
-                    Muted(
-                        "Inbound: ${if (current.input == ChainPolicy.CHAIN_POLICY_DROP) "drop" else "accept"} · forwarded: " +
-                            if (current.forward == ChainPolicy.CHAIN_POLICY_DROP) "drop" else "accept",
-                    )
-                }
-            }
-            items(current.rules) { rule ->
-                Item {
-                    Text(rule.description.ifEmpty { "(no description)" }, style = MaterialTheme.typography.titleSmall)
-                    Muted(
-                        "${rule.chain.name.removePrefix("SYSTEM_CHAIN_").lowercase()} ${rule.protocol} ${rule.destination_ports} " +
-                            "→ ${rule.target.name.removePrefix("SYSTEM_TARGET_").lowercase()}" + if (rule.enabled) "" else " (off)",
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun DevicesPage(
     session: NodeSession,
     modifier: Modifier,
@@ -382,61 +441,6 @@ private fun StatusPage(
                     Muted("${status.pending_prompts} waiting · ${status.open_alerts} alerts not acknowledged")
                 }
                 Muted("You are ${session.info.role} here.")
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettingsPage(
-    session: NodeSession,
-    modifier: Modifier,
-) {
-    val scope = rememberCoroutineScope()
-    val policy = rememberRequest(session, Unit, { Request(get_policy = GetPolicy()) }) { it.policy }
-    var error by remember { mutableStateOf<String?>(null) }
-
-    fun set(change: SetPolicy) {
-        scope.launch {
-            error = run(session, Request(set_policy = change))
-            policy.reload()
-        }
-    }
-    Page(modifier) {
-        item { Problem(policy.error ?: error) }
-        policy.value?.let { current ->
-            item {
-                Item {
-                    Text("Mode", style = MaterialTheme.typography.titleSmall)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        FilterChip(selected = current.mode == Mode.MODE_ENFORCE, onClick = {
-                            set(SetPolicy(mode = Mode.MODE_ENFORCE))
-                        }, label = { Text("Enforce") })
-                        FilterChip(selected = current.mode == Mode.MODE_MONITOR, onClick = {
-                            set(SetPolicy(mode = Mode.MODE_MONITOR))
-                        }, label = { Text("Monitor") })
-                    }
-                }
-            }
-            item {
-                Item {
-                    Text("Connections no rule decides", style = MaterialTheme.typography.titleSmall)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for ((value, label) in listOf(
-                            Policy.POLICY_ASK to "Ask",
-                            Policy.POLICY_DENY to "Deny",
-                            Policy.POLICY_REJECT to "Reject",
-                            Policy.POLICY_ALLOW to "Allow",
-                        )) {
-                            FilterChip(
-                                selected = current.no_match == value,
-                                onClick = { set(SetPolicy(no_match = value)) },
-                                label = { Text(label) },
-                            )
-                        }
-                    }
-                    Muted("Letting through what was blocked (monitor, allow) needs step-up: from a phone, an approval on the node.")
-                }
             }
         }
     }
