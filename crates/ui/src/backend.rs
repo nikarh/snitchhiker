@@ -48,6 +48,16 @@ pub enum Request {
     Explain {
         seq: i64,
     },
+    EditRules(v1::EditRules),
+    AddFolder(v1::Folder),
+    UpdateFolder(v1::Folder),
+    DeleteFolder {
+        id: u64,
+    },
+    /// The lint report, with rules unused for `days`.
+    Lint {
+        days: u32,
+    },
 }
 
 /// What the node tells the app.
@@ -79,6 +89,7 @@ pub enum Update {
     Connections(Vec<v1::LiveConnection>),
     /// Why an event is decided as it is.
     Explanation(Box<v1::Explanation>),
+    Lint(v1::LintReport),
     /// A request failed; for the user.
     Failed(String),
     /// A prompt's notification was clicked: show the prompts.
@@ -220,6 +231,19 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         Request::Connections => client.call(Method::ListConnections(v1::ListConnections {}))?,
         Request::Kill(kill) => client.call(Method::KillConnection(kill.clone()))?,
         Request::Explain { seq } => client.call(Method::Explain(v1::Explain { seq: *seq }))?,
+        Request::EditRules(edit) => client.call(Method::EditRules(edit.clone()))?,
+        Request::AddFolder(folder) => client.call(Method::AddFolder(v1::AddFolder {
+            folder: Some(folder.clone()),
+        }))?,
+        Request::UpdateFolder(folder) => client.call(Method::UpdateFolder(v1::UpdateFolder {
+            folder: Some(folder.clone()),
+        }))?,
+        Request::DeleteFolder { id } => {
+            client.call(Method::DeleteFolder(v1::DeleteFolder { id: *id }))?
+        }
+        Request::Lint { days } => {
+            client.call(Method::LintRules(v1::LintRules { unused_days: *days }))?
+        }
     };
     Ok(match result {
         R::Status(status) => Some(Update::Status(status)),
@@ -228,6 +252,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Explored(page) => Some(Update::Explored(page.rows)),
         R::Connections(list) => Some(Update::Connections(list.connections)),
         R::Explanation(explanation) => Some(Update::Explanation(explanation)),
+        R::LintReport(report) => Some(Update::Lint(report)),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

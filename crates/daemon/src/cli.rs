@@ -54,6 +54,11 @@ Commands:
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
   rules move <id> <folder>        Move a rule to a folder (0: the top level)
+  rules edit <id,id,...> <enable|disable|delete|move <folder>|action <a>|expires <d>>
+                                  Change many rules in one batch (one undo); expires: hour, half-day,
+                                  until-restart or never
+  rules lint [--days <n>]         Duplicate, redundant and shadowed rules, expired ones, ones on missing or
+                                  user-writable binaries, and with --days, ones that decided nothing in n days
   rules import <file>             Add the rules of a rule file (TOML), in a folder
   rules export                    Print the stored rules as a rule file
   rules import-opensnitch [<dir>] [--dry-run]
@@ -207,6 +212,83 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             "unknown command `{other}`; see --help"
         ))),
     }
+}
+
+fn format_lint(report: &v1::LintReport) -> String {
+    let mut text = String::new();
+    for finding in &report.findings {
+        let _ = writeln!(
+            text,
+            "rule {}: {}{}",
+            finding.rule,
+            finding.description,
+            if finding.suggestion.is_empty() {
+                String::new()
+            } else {
+                format!(" (the program now matches {})", finding.suggestion)
+            }
+        );
+    }
+    if report.findings.is_empty() {
+        text.push_str("nothing to report\n");
+    }
+    text
+}
+
+/// The rules and the change of `rules edit`.
+fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
+    use v1::edit_rules::Edit;
+    let ids: String = args.free_from_str()?;
+    let ids = ids
+        .split(',')
+        .map(|id| {
+            id.trim()
+                .parse()
+                .map_err(|_| Error::Usage(format!("`{id}` isn't a rule id")))
+        })
+        .collect::<Result<Vec<u64>, _>>()?;
+    let what: String = args.free_from_str()?;
+    let edit = match what.as_str() {
+        "enable" => Edit::Enabled(true),
+        "disable" => Edit::Enabled(false),
+        "delete" => Edit::Delete(true),
+        "move" => {
+            let folder: u64 = args.free_from_str()?;
+            Edit::Move(v1::MoveRules {
+                folder: (folder != 0).then_some(folder),
+            })
+        }
+        "action" => {
+            let action: String = args.free_from_str()?;
+            Edit::Action(
+                match action.as_str() {
+                    "allow" => v1::Action::Allow,
+                    "deny" => v1::Action::Deny,
+                    "reject" => v1::Action::Reject,
+                    other => return Err(Error::Usage(format!("unknown action `{other}`"))),
+                }
+                .into(),
+            )
+        }
+        "expires" => {
+            let when: String = args.free_from_str()?;
+            Edit::Expires(
+                match when.as_str() {
+                    "hour" => v1::Duration::Hour,
+                    "half-day" => v1::Duration::HalfDay,
+                    "until-restart" => v1::Duration::UntilRestart,
+                    "never" => v1::Duration::Forever,
+                    other => return Err(Error::Usage(format!("unknown expiry `{other}`"))),
+                }
+                .into(),
+            )
+        }
+        other => return Err(Error::Usage(format!("unknown edit `{other}`"))),
+    };
+    Ok(v1::EditRules {
+        ids,
+        edit: Some(edit),
+    })
 }
 
 fn print_file(result: v1::response::Result) -> Result<(), Error> {
@@ -529,6 +611,21 @@ fn rules(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             rule.folder = (folder != 0).then_some(folder);
             client.call(Method::UpdateRule(v1::UpdateRule { rule: Some(rule) }))?;
             out(&format!("moved rule {id}\n"))
+        }
+        Some("edit") => {
+            let edit = rules_edit(&mut args)?;
+            reject_rest(args)?;
+            let count = edit.ids.len();
+            client.call(Method::EditRules(edit))?;
+            out(&format!("changed {count} rules\n"))
+        }
+        Some("lint") => {
+            let unused_days: u32 = args.opt_value_from_str("--days")?.unwrap_or(0);
+            reject_rest(args)?;
+            match client.call(Method::LintRules(v1::LintRules { unused_days }))? {
+                v1::response::Result::LintReport(report) => out(&format_lint(&report)),
+                _ => Err(unexpected()),
+            }
         }
         Some(which @ ("enable" | "disable")) => {
             let id: u64 = args.free_from_str()?;

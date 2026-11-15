@@ -686,3 +686,73 @@ pub fn connections_are_listed_and_killed() -> Result<(), String> {
         &found,
     )
 }
+
+/// Rules are changed in bulk as one batch that one undo reverts, and the lint finds duplicates and rules on binaries
+/// that are gone.
+pub fn rules_are_edited_in_bulk_and_linted() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let mut daemon = Running::start("bulk", "mode = \"enforce\"\nno_match = \"reject\"\n")?;
+    let add = |name: &str, exe: &str| -> Result<String, String> {
+        let added = daemon.cli(&[
+            "rules",
+            "add",
+            "allow",
+            "--exe",
+            exe,
+            "--port",
+            &port.to_string(),
+            "--name",
+            name,
+        ])?;
+        added
+            .trim()
+            .strip_prefix("added rule ")
+            .map(str::to_owned)
+            .ok_or_else(|| format!("no rule id: {added}"))
+    };
+    let a = add("a", "glob:/usr/bin/python3*")?;
+    let b = add("b", "glob:/usr/bin/python3*")?;
+    let gone = add("gone", "/usr/bin/no-such-program")?;
+    thread::sleep(Duration::from_millis(300));
+    let before = mallory_connects(port)?;
+    let lint = daemon.cli(&["rules", "lint"])?;
+    daemon.cli(&["rules", "edit", &format!("{a},{b}"), "disable"])?;
+    thread::sleep(Duration::from_millis(300));
+    let disabled = mallory_connects(port)?;
+    let history = daemon.cli(&["history"])?;
+    let last = history
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().next())
+        .ok_or("no history")?
+        .to_owned();
+    daemon.cli(&["undo", &last])?;
+    thread::sleep(Duration::from_millis(300));
+    let undone = mallory_connects(port)?;
+    daemon.cli(&["rules", "edit", &format!("{a},{b}"), "action", "deny"])?;
+    thread::sleep(Duration::from_millis(300));
+    let denied = mallory_connects(port)?;
+    let refused = daemon
+        .cli(&["rules", "edit", "1,999999", "enable"])
+        .is_err();
+    daemon.stop()?;
+    let found = format!(
+        "{lint}{history}before {before}, disabled {disabled}, undone {undone}, denied {denied}, refused {refused}"
+    );
+    check(
+        lint.contains(&format!("rule {b}: duplicates \"a\""))
+            && lint.contains(&format!("rule {gone}: its binary is gone")),
+        "the lint doesn't report the duplicate and the missing binary",
+        &found,
+    )?;
+    check(
+        before && !disabled && undone && !denied,
+        "bulk edits and their undo don't take effect",
+        &found,
+    )?;
+    check(
+        refused,
+        "a bulk edit with an unknown rule went through",
+        &found,
+    )
+}

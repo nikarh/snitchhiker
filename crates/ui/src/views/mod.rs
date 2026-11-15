@@ -6,6 +6,7 @@ pub mod events;
 pub mod explain;
 pub mod explorer;
 pub mod history;
+pub mod lint;
 pub mod prompts;
 pub mod rules;
 pub mod status;

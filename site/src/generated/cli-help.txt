@@ -17,6 +17,11 @@ Commands:
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
   rules move <id> <folder>        Move a rule to a folder (0: the top level)
+  rules edit <id,id,...> <enable|disable|delete|move <folder>|action <a>|expires <d>>
+                                  Change many rules in one batch (one undo); expires: hour, half-day,
+                                  until-restart or never
+  rules lint [--days <n>]         Duplicate, redundant and shadowed rules, expired ones, ones on missing or
+                                  user-writable binaries, and with --days, ones that decided nothing in n days
   rules import <file>             Add the rules of a rule file (TOML), in a folder
   rules export                    Print the stored rules as a rule file
   rules import-opensnitch [<dir>] [--dry-run]

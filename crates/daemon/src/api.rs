@@ -26,7 +26,7 @@ use crate::store::{
     AuditEntry, Batch, Dimension, Error as StoreError, HOUR_MS, Store, StringKind, UndoError,
 };
 use snitchhiker_core::query::{self, EventFilter};
-use snitchhiker_core::rule::{Condition, allows_everything};
+use snitchhiker_core::rule::{Action, Condition, Expiry, allows_everything};
 use snitchhiker_proto::columns::{self, EventRow};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
@@ -327,6 +327,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::Explore(_)
             | Method::ListConnections(_)
             | Method::Explain(_)
+            | Method::LintRules(_)
     );
     match role {
         v1::Role::Root | v1::Role::Admin => true,
@@ -373,6 +374,8 @@ fn handle(
             Err(e) => internal(e),
         },
         Method::KillConnection(kill) => kill_connection(daemon, &kill),
+        Method::LintRules(lint) => lint_rules(daemon, lint),
+        Method::EditRules(edit) => edit_rules(daemon, caller, app, &edit),
         Method::Explain(explain) => match daemon.explain(explain.seq) {
             Ok(Some(explanation)) => R::Explanation(Box::new(explanation)),
             Ok(None) => error(v1::ErrorCode::NotFound, format!("no event {}", explain.seq)),
@@ -656,6 +659,165 @@ fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::r
 
 /// Deleting more rules than this at once is a dangerous action.
 const DANGEROUS_DELETE: usize = 20;
+
+fn lint_rules(daemon: &Daemon, lint: v1::LintRules) -> v1::response::Result {
+    let managed = match crate::managed::Managed::load(
+        daemon.shared.config.default_rules,
+        &daemon.shared.config.rules_dir,
+    ) {
+        Ok(managed) => managed,
+        Err(e) => return internal(e),
+    };
+    let loaded = {
+        let store = daemon.store();
+        store
+            .rules()
+            .and_then(|rules| Ok((rules, store.folders()?, store.rule_times()?)))
+    };
+    let (rules, mut folders, times) = match loaded {
+        Ok(loaded) => loaded,
+        Err(e) => return internal(e),
+    };
+    folders.extend(managed.folders);
+    let facts = crate::lint::Facts { times };
+    v1::response::Result::LintReport(v1::LintReport {
+        findings: crate::lint::report(
+            &rules,
+            &managed.rules,
+            &folders,
+            &facts,
+            now_ms(),
+            lint.unused_days,
+        ),
+    })
+}
+
+/// The dangerous actions among bulk edits: many deletions at once, or allowing everything.
+fn edit_rules_step_up(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    edit: &v1::EditRules,
+    action: Option<Action>,
+) -> Result<(), v1::response::Result> {
+    use v1::edit_rules::Edit;
+    if matches!(edit.edit, Some(Edit::Delete(true)))
+        && edit.ids.len() > DANGEROUS_DELETE
+        && let Err(refused) = step_up(
+            daemon,
+            caller,
+            app,
+            &format!("delete {} rules", edit.ids.len()),
+        )
+    {
+        return Err(refused);
+    }
+    if let Some(action) = action {
+        let mut everything = false;
+        for id in &edit.ids {
+            let rule = match daemon.store().rule(*id) {
+                Ok(Some(rule)) => rule,
+                Ok(None) => return Err(error(v1::ErrorCode::NotFound, format!("no rule {id}"))),
+                Err(e) => return Err(internal(e)),
+            };
+            let scope = match scope_of(daemon, rule.folder) {
+                Ok(scope) => scope,
+                Err(e) => return Err(internal(e)),
+            };
+            everything |= allows_everything(action, rule.conditions.iter().chain(&scope));
+        }
+        if everything
+            && let Err(refused) = step_up(
+                daemon,
+                caller,
+                app,
+                "change rules to allow every program to connect anywhere",
+            )
+        {
+            return Err(refused);
+        }
+    }
+    Ok(())
+}
+
+fn edit_rules(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    edit: &v1::EditRules,
+) -> v1::response::Result {
+    use v1::edit_rules::Edit;
+    let Some(change_wanted) = &edit.edit else {
+        return error(v1::ErrorCode::Invalid, "no edit");
+    };
+    if edit.ids.is_empty() {
+        return error(v1::ErrorCode::Invalid, "no rules");
+    }
+    if let Some(refused) = edit.ids.iter().find_map(|id| locked(*id)) {
+        return refused;
+    }
+    let expiry = match change_wanted {
+        Edit::Expires(duration) => {
+            let now = now_ms();
+            match v1::Duration::try_from(*duration).unwrap_or(v1::Duration::Unspecified) {
+                v1::Duration::UntilRestart => Some(Expiry::UntilRestart),
+                v1::Duration::Hour => Some(Expiry::At(now + 3_600_000)),
+                v1::Duration::HalfDay => Some(Expiry::At(now + 43_200_000)),
+                v1::Duration::Forever => Some(Expiry::Never),
+                v1::Duration::Once | v1::Duration::Unspecified => {
+                    return error(v1::ErrorCode::Invalid, "a rule can't expire once");
+                }
+            }
+        }
+        _ => None,
+    };
+    let action = match change_wanted {
+        Edit::Action(action) => match convert::action_from(
+            v1::Action::try_from(*action).unwrap_or(v1::Action::Unspecified),
+        ) {
+            Some(action) => Some(action),
+            None => return error(v1::ErrorCode::Invalid, "no action"),
+        },
+        _ => None,
+    };
+    if let Err(refused) = edit_rules_step_up(daemon, caller, app, edit, action) {
+        return refused;
+    }
+    if let Edit::Move(v1::MoveRules {
+        folder: Some(folder),
+    }) = change_wanted
+        && let Some(refused) = locked(*folder)
+    {
+        return refused;
+    }
+    done(change(daemon, app, |store, batch| {
+        for id in &edit.ids {
+            if matches!(change_wanted, Edit::Delete(true)) {
+                if !store.remove_rule(*id, batch)? {
+                    return Err(StoreError::NotFound("rule", *id));
+                }
+                continue;
+            }
+            let mut rule = store.rule(*id)?.ok_or(StoreError::NotFound("rule", *id))?;
+            match change_wanted {
+                Edit::Enabled(enabled) => rule.enabled = *enabled,
+                Edit::Move(to) => {
+                    if let Some(folder) = to.folder
+                        && store.folder(folder)?.is_none()
+                    {
+                        return Err(StoreError::NotFound("folder", folder));
+                    }
+                    rule.folder = to.folder;
+                }
+                Edit::Action(_) => rule.action = action.unwrap_or(rule.action),
+                Edit::Expires(_) => rule.expiry = expiry.unwrap_or(rule.expiry),
+                Edit::Delete(_) => {}
+            }
+            store.put_rule(&rule, batch)?;
+        }
+        Ok(())
+    }))
+}
 
 fn delete_folder(
     daemon: &Daemon,

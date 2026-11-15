@@ -39,7 +39,7 @@ for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchh
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
 click 66 283
-click 1095 113
+click 1165 121
 click 545 192
 click 955 665
 sleep 1

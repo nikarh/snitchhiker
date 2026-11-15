@@ -7,7 +7,7 @@ use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Window, div,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::Button;
 use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_component::table::{DataTable, TableEvent, TableState};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
@@ -16,13 +16,12 @@ use crate::backend::{Request, Update};
 use crate::model::{Changed, Model};
 use crate::notify::{self, Notice};
 use crate::views::connections::ConnectionsTable;
-use crate::views::editor;
 use crate::views::events::{self, EventsPage, EventsTable};
 use crate::views::explain;
 use crate::views::explorer::Explorer;
 use crate::views::history::History;
 use crate::views::prompts::Prompts;
-use crate::views::rules::RulesTable;
+use crate::views::rules::{RulesPage, RulesTable};
 use crate::views::status::Status;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,6 +42,7 @@ pub struct App {
     events: Entity<TableState<EventsTable>>,
     events_page: Entity<EventsPage>,
     rules: Entity<TableState<RulesTable>>,
+    rules_page: Entity<RulesPage>,
     history: Entity<History>,
     explorer: Entity<Explorer>,
     connections: Entity<TableState<ConnectionsTable>>,
@@ -87,9 +87,34 @@ impl App {
             let _ = requests.send(request);
         }
         events::request_page(&model, &requests, cx);
+        let rules_page =
+            cx.new(|cx| RulesPage::new(model.clone(), requests.clone(), rules.clone(), window, cx));
         let events_page = cx
             .new(|cx| EventsPage::new(model.clone(), requests.clone(), events.clone(), window, cx));
-        // The backend's updates, folded into the model on the UI thread.
+        Self::fold_updates(updates, requests, notices, cx);
+        Self {
+            model,
+            page: Page::Events,
+            prompts,
+            events,
+            events_page,
+            rules,
+            rules_page,
+            history,
+            explorer,
+            connections,
+            status,
+            requests: own_requests,
+        }
+    }
+
+    /// The backend's updates, folded into the model on the UI thread.
+    fn fold_updates(
+        updates: async_channel::Receiver<Update>,
+        requests: mpsc::Sender<Request>,
+        notices: async_channel::Sender<Notice>,
+        cx: &mut Context<Self>,
+    ) {
         cx.spawn(async move |this, cx| {
             while let Ok(update) = updates.recv().await {
                 let applied = this.update(cx, |app: &mut Self, cx| {
@@ -127,7 +152,10 @@ impl App {
                             }
                         }
                         Changed::Connections => app.connections.update(cx, TableState::refresh),
-                        Changed::Rules => app.rules.update(cx, TableState::refresh),
+                        Changed::Rules => app.rules.update(cx, |table, cx| {
+                            table.delegate_mut().recompute(cx);
+                            table.refresh(cx);
+                        }),
                         Changed::Prompts if !app.model.read(cx).prompts.is_empty() => {
                             app.page = Page::Prompts;
                         }
@@ -145,19 +173,6 @@ impl App {
             }
         })
         .detach();
-        Self {
-            model,
-            page: Page::Events,
-            prompts,
-            events,
-            events_page,
-            rules,
-            history,
-            explorer,
-            connections,
-            status,
-            requests: own_requests,
-        }
     }
 
     /// A double-click on an event says why it was decided so, as its info button does.
@@ -240,25 +255,7 @@ impl Render for App {
         let page: AnyElement = match self.page {
             Page::Prompts => self.prompts.clone().into_any_element(),
             Page::Events => self.events_page.clone().into_any_element(),
-            Page::Rules => {
-                let model = self.model.clone();
-                let requests = self.requests.clone();
-                v_flex()
-                    .size_full()
-                    .child(
-                        h_flex().p_2().child(
-                            Button::new("new-rule")
-                                .small()
-                                .primary()
-                                .label("New rule")
-                                .on_click(move |_, window, cx| {
-                                    editor::open(model.clone(), requests.clone(), None, window, cx);
-                                }),
-                        ),
-                    )
-                    .child(DataTable::new(&self.rules))
-                    .into_any_element()
-            }
+            Page::Rules => self.rules_page.clone().into_any_element(),
             Page::History => self.history.clone().into_any_element(),
             Page::Explorer => self.explorer.clone().into_any_element(),
             Page::Connections => {

@@ -31,6 +31,8 @@ The daemon's version, mode and policy, and its counters: rules in effect, connec
 | `rules rm <id>` | Delete a rule |
 | `rules move <id> <folder>` | Move a rule to a folder (`0`: the top level) |
 | `rules enable <id>`, `rules disable <id>` | Switch a rule on or off |
+| `rules edit <id,id,...> <change>` | Change many rules as one batch (one undo): `enable`, `disable`, `delete`, `move <folder>`, `action <allow\|deny\|reject>`, `expires <hour\|half-day\|until-restart\|never>` |
+| `rules lint [--days <n>]` | The [rules check](/guides/rules/#checking-the-rules); with `--days`, also rules that decided nothing in that many days |
 | `rules import <file>` | Add the rules of a [rule file](/reference/rule-files/), in a new folder (named by the file's `[folder]`, or after the file) |
 | `rules export` | Print the stored rules as a rule file |
 | `rules import-opensnitch [<dir>] [--dry-run]` | Import OpenSnitch's rules (default `/etc/opensnitchd/rules`) into a folder `OpenSnitch`; see [Moving from OpenSnitch](/guides/opensnitch/) |

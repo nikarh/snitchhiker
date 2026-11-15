@@ -138,6 +138,11 @@ INSERT INTO rollups_by SELECT 2, hour, host, action, sum(count), sum(bytes_out),
 INSERT INTO rollups_by SELECT 3, hour, port, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
 INSERT INTO rollups_by SELECT 4, hour, uid, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 3, 4;
 ",
+    // When each rule last decided a connection, for the lint's "never hit".
+    r"
+ALTER TABLE rules ADD COLUMN last_hit_ms INTEGER;
+UPDATE rules SET last_hit_ms = (SELECT max(time_ms) FROM events WHERE events.rule = rules.id);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
@@ -211,6 +216,11 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
+    (
+        "rules.hit",
+        "UPDATE rules SET last_hit_ms = max(coalesce(last_hit_ms, 0), ?2) WHERE id = ?1",
+    ),
+    ("rules.times", "SELECT id, updated_ms, last_hit_ms FROM rules"),
     (
         "rules.get",
         "SELECT id, folder, name, enabled, action, tier, expiry, log, notes, conditions FROM rules WHERE id = ?1",
@@ -1270,6 +1280,7 @@ impl Store {
     /// Records `events`; what `recorded` held is replaced by each one's seq and string ids, in the same order.
     pub fn record(&mut self, events: &[Event], recorded: &mut Vec<Recorded>) -> Result<(), Error> {
         recorded.clear();
+        let mut hits: HashMap<RuleId, u64> = HashMap::new();
         let transaction = self.connection.unchecked_transaction()?;
         for event in events {
             let exe = intern(
@@ -1340,7 +1351,17 @@ impl Store {
                 exe: u32::try_from(exe).unwrap_or(0),
                 host: host.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
             });
+            if let Some(rule) = event.rule {
+                let hit = hits.entry(rule).or_insert(0);
+                *hit = (*hit).max(event.time_ms);
+            }
         }
+        // Once per rule and batch, not per event.
+        let mut hit = self.connection.prepare_cached(sql("rules.hit")?)?;
+        for (rule, time_ms) in hits {
+            hit.execute(params![db_id(rule), db_id(time_ms)])?;
+        }
+        drop(hit);
         transaction.commit()?;
         Ok(())
     }
@@ -1349,6 +1370,18 @@ impl Store {
     pub fn events(&self, before: i64, limit: u32) -> Result<Vec<StoredEvent>, Error> {
         let mut statement = self.connection.prepare_cached(sql("events.page")?)?;
         let rows = statement.query_map(params![before, limit], stored_event)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// For each rule: when it was last changed, and when it last decided a connection.
+    pub fn rule_times(&self) -> Result<HashMap<RuleId, (u64, Option<u64>)>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("rules.times")?)?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                id_of(row.get(0)?),
+                (id_of(row.get(1)?), row.get::<_, Option<i64>>(2)?.map(id_of)),
+            ))
+        })?;
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
@@ -2241,7 +2274,7 @@ mod tests {
         };
         let mut queries: Vec<String> = terms.iter().map(|t| (*t).to_owned()).collect();
         for _ in 0..300 {
-            let mut term = |next: &mut dyn FnMut(u64) -> u64| {
+            let term = |next: &mut dyn FnMut(u64) -> u64| {
                 let t = pick(&terms, next(terms.len() as u64));
                 if next(4) == 0 {
                     format!("-{t}")

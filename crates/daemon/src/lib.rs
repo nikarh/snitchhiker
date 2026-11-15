@@ -7,6 +7,7 @@ pub mod config;
 pub mod dns;
 pub mod hub;
 pub mod learn;
+pub mod lint;
 pub mod managed;
 pub mod notify;
 pub mod peer;

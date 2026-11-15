@@ -101,6 +101,8 @@ message Request {
     ListConnections list_connections = 31;
     KillConnection kill_connection = 32;
     Explain explain = 33;
+    LintRules lint_rules = 34;
+    EditRules edit_rules = 35;
   }
 }
 
@@ -123,6 +125,7 @@ message Response {
     ExplorePage explored = 27;
     ConnectionList connections = 28;
     Explanation explanation = 29;
+    LintReport lint_report = 30;
   }
 }
 
@@ -661,6 +664,64 @@ message KillConnection {
   uint32 local_port = 3;
   bytes remote = 4;
   uint32 remote_port = 5;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Rule maintenance: changes to many rules at once, and the lint and dedupe report.
+
+// Changes the rules `ids` in one batch, which one undo reverts. Locked rules can't be changed. Deleting more than 20
+// rules, or making an allow rule that allows every program to connect anywhere, is a dangerous action.
+message EditRules {
+  repeated uint64 ids = 1;
+  oneof edit {
+    bool enabled = 2;
+    MoveRules move = 3;
+    Action action = 4;
+    // From now; not DURATION_ONCE.
+    Duration expires = 5;
+    bool delete = 6;
+  }
+}
+
+message MoveRules {
+  // None: the top level.
+  optional uint64 folder = 1;
+}
+
+message LintRules {
+  // Rules that decided no connection in this many days (and weren't changed in them) are reported; 0: not looked at.
+  uint32 unused_days = 1;
+}
+
+enum LintKind {
+  LINT_KIND_UNSPECIFIED = 0;
+  // Matches exactly what `other` matches, with the same action.
+  LINT_KIND_DUPLICATE = 1;
+  // `other` matches everything it does, with the same action, at the same tier or above.
+  LINT_KIND_REDUNDANT = 2;
+  // An allow rule that the deny or reject rule `other` always beats.
+  LINT_KIND_SHADOWED = 3;
+  // Its time is up.
+  LINT_KIND_EXPIRED = 4;
+  LINT_KIND_NEVER_HIT = 5;
+  // An allow rule on a binary that a user other than root can replace.
+  LINT_KIND_WRITABLE_BINARY = 6;
+  // Its binary is gone; `suggestion` covers the one that took its place, if one did.
+  LINT_KIND_MISSING_BINARY = 7;
+}
+
+message LintFinding {
+  LintKind kind = 1;
+  uint64 rule = 2;
+  optional uint64 other = 3;
+  // A program pattern to replace the rule's with, as rule files write it (`glob:/opt/app/*/bin/app`).
+  string suggestion = 4;
+  // What is wrong, for people.
+  string description = 5;
+}
+
+message LintReport {
+  repeated LintFinding findings = 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

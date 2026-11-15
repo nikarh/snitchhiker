@@ -193,6 +193,8 @@ pub struct Model {
     pub connections: Vec<v1::LiveConnection>,
     /// The last explanation the node sent.
     pub explanation: Option<v1::Explanation>,
+    /// The last lint report.
+    pub lint: Option<v1::LintReport>,
     /// The last request that failed, for the user.
     pub error: Option<String>,
 }
@@ -279,6 +281,10 @@ impl Model {
             Update::Connections(connections) => {
                 self.connections = connections;
                 Changed::Connections
+            }
+            Update::Lint(report) => {
+                self.lint = Some(report);
+                Changed::Status
             }
             Update::Explanation(explanation) => {
                 self.explanation = Some(*explanation);

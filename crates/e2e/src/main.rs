@@ -163,6 +163,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::changes_are_recorded_and_undone,
     ),
     (
+        "daemon/rules-are-edited-in-bulk-and-linted",
+        daemon::rules_are_edited_in_bulk_and_linted,
+    ),
+    (
         "daemon/connections-are-listed-and-killed",
         daemon::connections_are_listed_and_killed,
     ),

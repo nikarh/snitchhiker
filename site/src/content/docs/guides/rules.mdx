@@ -80,7 +80,27 @@ A rule without a `context` condition applies to processes on the host only. Allo
 
 Folders group rules and can be switched off as a whole. A folder may have a **scope**: conditions added to every rule inside it. A folder scoped to `exe = ["/usr/bin/git"]` holds rules that only need to say where git may connect.
 
-A rule applies only while it and its folder are enabled.
+A rule applies only while it and every folder above it are enabled. Switching a folder off switches off everything inside it; switching it back on restores each rule and folder inside to the state it had.
+
+## Finding and changing many rules
+
+The desktop app's Rules page shows the folder tree beside the rules of the folder chosen (and the folders below it). The search box takes the [query language](/reference/query-language/#keys-for-rules) and filters as you type: `curl`, `host:example.com action:deny`, `enabled:no`, `folder:Apps/*`.
+
+Rules are picked with their check boxes (Shift picks a range) and changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted. One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. Deleting more than 20 rules at once is a [dangerous action](/reference/configuration/#step_up). From the command line: `snitchhiker rules edit 12,13,14 disable`.
+
+## Checking the rules
+
+*Check rules* in the app (or `snitchhiker rules lint --days 30`) reports:
+
+- **duplicates**: two rules that match exactly the same connections, with the same action;
+- **redundant rules**: another rule with the same action, at the same tier or above, already matches everything this one does (`api.example.com` under `*.example.com`);
+- **allow rules that never win**: a deny or reject rule at the same tier or above matches everything they do;
+- **expired rules**, which no longer apply;
+- **unused rules**: they decided no connection in the days asked about and weren't changed in them;
+- **replaceable binaries**: an allow rule on a program that a user other than root can change or replace;
+- **binaries that are gone**: when an update moved a program to a new versioned path (`…/versions/2.0.40/claude`), the report offers the pattern that covers every version (`…/versions/*/claude`).
+
+A rule is called redundant only when the other rule certainly covers it, judged on the conditions as written (an exact path inside a glob, a network inside a network, a port inside a range): two different globs are never compared.
 
 ## Precedence
 
