@@ -100,11 +100,11 @@ download() { # url file
 # by e2e/run.sh, never installed from here.
 packages() {
   case "${DISTRO}" in
-    # The desktop app's tests: a headless Wayland compositor, screenshots, software Vulkan (no GPU in the VM), fonts.
+    # The desktop app's tests: a headless Wayland compositor, screenshots, a virtual keyboard (wtype), software Vulkan (no GPU in the VM), fonts.
     arch) printf '%s\n' bpf conntrack-tools curl iproute2 jq nftables polkit python socat sqlite strace \
-      sway grim mako vulkan-swrast ttf-dejavu libxkbcommon-x11 ;;
+      sway grim mako wtype vulkan-swrast ttf-dejavu libxkbcommon-x11 ;;
     debian) printf '%s\n' bpftool conntrack curl iproute2 jq nftables polkitd python3 socat sqlite3 strace \
-      sway grim mako-notifier mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 ;;
+      sway grim mako-notifier wtype mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 ;;
   esac
 }
 
