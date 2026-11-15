@@ -50,6 +50,10 @@ depends = ["android:core"]
 dir = "android"
 run = "./gradlew :app:assembleRelease"
 
+[tasks."e2e:android"]
+description = "The Android app end to end: an emulator, the node VM and a relay between them (e2e/android.sh)"
+run = "e2e/android.sh"
+
 [tasks.fmt]
 description = "Format the Rust code"
 run = "cargo fmt --all"
