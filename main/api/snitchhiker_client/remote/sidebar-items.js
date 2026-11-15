@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["connect","pair","pair_with_code"]};
