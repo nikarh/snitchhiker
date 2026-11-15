@@ -48,6 +48,54 @@ fn destination(hosts: &[Arc<str>], address: IpAddr) -> (String, Conditions) {
     }
 }
 
+/// What every suggestion for one connection shares.
+struct Ask<'a> {
+    name: &'a str,
+    exes: &'a [String],
+    ports: &'a [String],
+    protocol: &'a [String],
+    port: u16,
+}
+
+impl Ask<'_> {
+    fn at_port(&self, what: &str) -> String {
+        if self.port == 0 {
+            what.to_owned()
+        } else {
+            format!("{what}:{}", self.port)
+        }
+    }
+
+    fn to(&self, net: String, broad: bool) -> Suggestion {
+        Suggestion {
+            label: format!("{} → {}", self.name, self.at_port(&net)),
+            conditions: Conditions {
+                exe: self.exes.to_vec(),
+                net: vec![net],
+                port: self.ports.to_vec(),
+                protocol: self.protocol.to_vec(),
+                ..Conditions::default()
+            },
+            broad,
+        }
+    }
+}
+
+/// The address itself, when the narrower rules named the host, and its network (a /24, or a /64 for IPv6): for
+/// services that move between addresses of one range, or are reached by address.
+fn address_rules(out: &mut Vec<Suggestion>, ask: &Ask<'_>, named: bool, address: IpAddr) {
+    if named {
+        out.push(ask.to(address.to_string(), false));
+    }
+    let network = match address {
+        IpAddr::V4(v4) => ipnet::Ipv4Net::new(v4, 24).map(|n| ipnet::IpNet::V4(n.trunc())),
+        IpAddr::V6(v6) => ipnet::Ipv6Net::new(v6, 64).map(|n| ipnet::IpNet::V6(n.trunc())),
+    };
+    if let Ok(network) = network {
+        out.push(ask.to(network.to_string(), true));
+    }
+}
+
 /// The suggestions for a connection of `exe` (run by a user whose home is `home`) to `address`:`port`.
 #[must_use]
 pub fn suggestions(
@@ -127,6 +175,18 @@ pub fn suggestions(
             broad: true,
         });
     }
+    address_rules(
+        &mut out,
+        &Ask {
+            name: &name,
+            exes: &exes,
+            ports: &ports,
+            protocol: &protocol,
+            port,
+        },
+        !hosts.is_empty(),
+        address,
+    );
     if !exes.is_empty() {
         out.push(Suggestion {
             label: format!("{name} → anywhere"),
@@ -171,6 +231,8 @@ mod tests {
                 "claude → api.eu.example.co.uk:443",
                 "claude → api.eu.example.co.uk, any port",
                 "claude → *.example.co.uk:443",
+                "claude → 198.51.100.7:443",
+                "claude → 198.51.100.0/24:443",
                 "claude → anywhere",
                 "any program → api.eu.example.co.uk:443",
             ]
@@ -179,7 +241,7 @@ mod tests {
             all[0].conditions.exe,
             vec!["glob:{home}/.local/share/claude/versions/*/claude"]
         );
-        assert!(!all[0].broad && all[2].broad && all[3].broad && all[4].broad);
+        assert!(!all[0].broad && all[2].broad && !all[3].broad && all[4].broad && all[5].broad);
         // Every suggestion is a valid rule.
         for suggestion in &all {
             assert!(
@@ -204,5 +266,16 @@ mod tests {
         assert_eq!(all[0].label, "curl → 203.0.113.9:80");
         assert_eq!(all[0].conditions.net, vec!["203.0.113.9"]);
         assert!(all.iter().all(|s| !s.label.contains("*.")));
+        // The address is the destination already: only its network is added.
+        assert_eq!(all[2].label, "curl → 203.0.113.0/24:80");
+        let v6 = suggestions(
+            "/usr/bin/curl",
+            None,
+            &[],
+            "2001:db8::7".parse().unwrap(),
+            443,
+            6,
+        );
+        assert!(v6.iter().any(|s| s.conditions.net == vec!["2001:db8::/64"]));
     }
 }
