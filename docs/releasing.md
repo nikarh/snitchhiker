@@ -20,6 +20,8 @@ the newest file:
 | Asset | Contents |
 | --- | --- |
 | `snitchhikerd-x86_64-linux-gnu`, `snitchhikerd-aarch64-linux-gnu` | The daemon and command line (one binary) |
+| `snitchhiker_amd64.deb`, `snitchhiker_arm64.deb` | Debian and Ubuntu packages: the binary, the systemd unit, the client group, the configuration |
+| `snitchhiker-x86_64.pkg.tar.zst`, `snitchhiker-aarch64.pkg.tar.zst` | The same for Arch Linux |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums of all of the above and their detached GPG signature |
 
 More assets (packages, the desktop app, the relay and its image, the Android app) are added as those parts land; see
