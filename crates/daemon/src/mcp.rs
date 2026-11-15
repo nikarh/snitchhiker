@@ -6,7 +6,6 @@
 
 use std::io::{self, BufRead as _, Write as _};
 use std::path::Path;
-use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use snitchhiker_client::{AGENT_SOCKET, Client};
@@ -166,31 +165,21 @@ impl Server {
                     _ => Err(unexpected()),
                 }
             }
-            "get_proposal" => {
+            "get_proposal" | "wait_for_proposal" => {
                 let id = id(args)?;
-                match self.request(&Method::GetProposal(v1::GetProposal { id }))? {
+                // The node answers once it changes (or the time is up).
+                let wait_secs = if tool == "wait_for_proposal" {
+                    let secs = args
+                        .get("timeout_secs")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(300);
+                    u32::try_from(secs.min(3600)).unwrap_or(3600)
+                } else {
+                    0
+                };
+                match self.request(&Method::GetProposal(v1::GetProposal { id, wait_secs }))? {
                     R::Proposal(proposal) => Ok(proposal_json(&proposal)),
                     _ => Err(unexpected()),
-                }
-            }
-            "wait_for_proposal" => {
-                let id = id(args)?;
-                let wait = args
-                    .get("timeout_secs")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(300)
-                    .min(3600);
-                let until = Instant::now() + Duration::from_secs(wait);
-                loop {
-                    let R::Proposal(proposal) =
-                        self.request(&Method::GetProposal(v1::GetProposal { id }))?
-                    else {
-                        return Err(unexpected());
-                    };
-                    if proposal.state() != v1::ProposalState::Pending || Instant::now() >= until {
-                        return Ok(proposal_json(&proposal));
-                    }
-                    std::thread::sleep(Duration::from_secs(1));
                 }
             }
             "withdraw_proposal" => {
@@ -415,7 +404,8 @@ fn proposal_json(p: &v1::Proposal) -> Value {
 }
 
 /// The tools, with their descriptions and input schemas.
-fn tools() -> Value {
+#[must_use]
+pub fn tools() -> Value {
     let rule = json!({
         "type": "object",
         "properties": {
@@ -441,9 +431,9 @@ fn tools() -> Value {
                 "type": "object",
                 "properties": {
                     "exe": {"type": "string", "description": "The program's full path."},
-                    "host": {"type": "string"},
-                    "port": {"type": "integer"},
-                    "protocol": {"type": "string", "enum": ["tcp", "udp"]}
+                    "host": {"type": "string", "description": "A host name or an address."},
+                    "port": {"type": "integer", "description": "The destination port."},
+                    "protocol": {"type": "string", "enum": ["tcp", "udp"], "description": "tcp by default."}
                 },
                 "required": ["exe", "host", "port"]
             },
@@ -457,7 +447,7 @@ fn tools() -> Value {
         },
         {
             "name": "propose_rules",
-            "description": "Propose rules that allow connections, for a person to approve. Propose only what recent_blocked shows was refused and the task needs, as narrow as possible: the exact program, exact host names, the port. Good: {exe: /usr/bin/cargo, hosts: [index.crates.io, static.crates.io], ports: [443]}. Bad: any program, any host, `*.com`, a /8 network, the LAN or 169.254.169.254: those are refused or marked, and marked rules need the person's password. Approved rules apply to this session's processes only, and end with it, unless the person chooses longer. The justification is shown to the person as your words: one or two plain sentences on why the task needs it.",
+            "description": "Propose rules that allow connections, for a person to approve. Propose only what recent_blocked shows was refused and the task needs, as narrow as possible: the exact program, exact host names, the port. Good: `{exe: /usr/bin/cargo, hosts: [index.crates.io, static.crates.io], ports: [443]}`. Bad: any program, any host, `*.com`, a `/8` network, the LAN or `169.254.169.254`: those are refused or marked, and marked rules need the person's password. Approved rules apply to this session's processes only, and end with it, unless the person chooses longer. The justification is shown to the person as your words: one or two plain sentences on why the task needs it.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -470,7 +460,7 @@ fn tools() -> Value {
         {
             "name": "get_proposal",
             "description": "A proposal's state: pending, approved (with the rules the person kept, possibly narrowed), denied (with their reason), withdrawn or expired.",
-            "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]},
+            "inputSchema": {"type": "object", "properties": {"id": {"type": "integer", "description": "The proposal's id, as propose_rules returned it."}}, "required": ["id"]},
             "annotations": {"readOnlyHint": true}
         },
         {
@@ -478,7 +468,10 @@ fn tools() -> Value {
             "description": "Waits until a person answers a proposal (or timeout_secs pass, 300 by default), then returns it as get_proposal does.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"id": {"type": "integer"}, "timeout_secs": {"type": "integer", "maximum": 3600}},
+                "properties": {
+                    "id": {"type": "integer", "description": "The proposal's id, as propose_rules returned it."},
+                    "timeout_secs": {"type": "integer", "maximum": 3600, "description": "How long to wait at most; 300 by default."}
+                },
                 "required": ["id"]
             },
             "annotations": {"readOnlyHint": true}
@@ -486,14 +479,17 @@ fn tools() -> Value {
         {
             "name": "withdraw_proposal",
             "description": "Withdraws a pending proposal (it is no longer needed).",
-            "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}
+            "inputSchema": {"type": "object", "properties": {"id": {"type": "integer", "description": "The proposal's id, as propose_rules returned it."}}, "required": ["id"]}
         },
         {
             "name": "annotate_pending",
             "description": "Adds a short note to a prompt that one of this session's processes caused and a person is being asked about now (its id is in recent_blocked), saying what the connection is for. Shown to them as your words.",
             "inputSchema": {
                 "type": "object",
-                "properties": {"prompt": {"type": "integer"}, "note": {"type": "string", "maxLength": 500}},
+                "properties": {
+                    "prompt": {"type": "integer", "description": "The prompt's id, from recent_blocked."},
+                    "note": {"type": "string", "maxLength": 500, "description": "What the connection is for."}
+                },
                 "required": ["prompt", "note"]
             }
         }

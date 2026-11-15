@@ -446,7 +446,7 @@ fn handle(
         Method::CheckConnection(check) => check_connection(daemon, caller, &check),
         Method::RecentBlocked(_) => recent_blocked(daemon, caller),
         Method::ProposeRules(propose) => propose_rules(daemon, caller, &propose),
-        Method::GetProposal(get) => get_proposal(daemon, caller, get.id),
+        Method::GetProposal(get) => get_proposal(daemon, caller, get),
         Method::WithdrawProposal(withdraw) => withdraw_proposal(daemon, caller, withdraw.id),
         Method::AnnotatePending(annotate) => annotate_pending(daemon, caller, &annotate),
         Method::ListProposals(list) => list_proposals(daemon, list),
@@ -1937,10 +1937,7 @@ fn recent_blocked(daemon: &Daemon, caller: &Caller) -> v1::response::Result {
 }
 
 fn publish_proposal(daemon: &Daemon, proposal: &v1::Proposal) {
-    daemon.shared.hub.publish(
-        v1::Topic::Proposals,
-        &v1::notice::Body::Proposal(Box::new(proposal.clone())),
-    );
+    daemon.publish_proposal(proposal);
 }
 
 fn propose_rules(
@@ -2068,8 +2065,19 @@ fn visible_proposal(
     Ok(proposal)
 }
 
-fn get_proposal(daemon: &Daemon, caller: &Caller, id: u64) -> v1::response::Result {
-    match visible_proposal(daemon, caller, id) {
+fn get_proposal(daemon: &Daemon, caller: &Caller, get: v1::GetProposal) -> v1::response::Result {
+    let mut found = visible_proposal(daemon, caller, get.id);
+    if get.wait_secs > 0 {
+        let timeout = std::time::Duration::from_secs(u64::from(get.wait_secs.min(3600)));
+        daemon.wait_for_proposals(timeout, || {
+            let pending = matches!(&found, Ok(p) if p.state() == v1::ProposalState::Pending);
+            if pending {
+                found = visible_proposal(daemon, caller, get.id);
+            }
+            matches!(&found, Ok(p) if p.state() == v1::ProposalState::Pending)
+        });
+    }
+    match found {
         Ok(proposal) => v1::response::Result::Proposal(Box::new(proposal)),
         Err(e) => e,
     }

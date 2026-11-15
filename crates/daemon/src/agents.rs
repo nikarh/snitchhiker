@@ -177,6 +177,90 @@ fn truncate(text: &str, max: usize) -> String {
     }
 }
 
+/// The agents whose session rules or waiting proposals end with them, each held by a pidfd: it becomes readable when
+/// the process exits, so nothing is polled.
+pub struct Watch {
+    agents: Mutex<HashMap<ProcessRef, Arc<std::os::fd::OwnedFd>>>,
+    wake_reader: std::io::PipeReader,
+    wake: Mutex<std::io::PipeWriter>,
+}
+
+impl Watch {
+    pub fn new() -> std::io::Result<Self> {
+        let (wake_reader, wake) = std::io::pipe()?;
+        Ok(Self {
+            agents: Mutex::new(HashMap::new()),
+            wake_reader,
+            wake: Mutex::new(wake),
+        })
+    }
+
+    /// Watches `agent`; false when it has ended already.
+    pub fn add(&self, agent: ProcessRef) -> bool {
+        use std::io::Write as _;
+        let mut agents = self.agents.lock().unwrap_or_else(PoisonError::into_inner);
+        if agents.contains_key(&agent) {
+            return true;
+        }
+        let pidfd = rustix::process::Pid::from_raw(i32::try_from(agent.pid).unwrap_or(-1))
+            .and_then(|pid| {
+                rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty()).ok()
+            });
+        // The pid held is the agent's only if it still started when the agent did.
+        let Some(pidfd) = pidfd.filter(|_| alive(agent)) else {
+            return false;
+        };
+        agents.insert(agent, Arc::new(pidfd));
+        drop(agents);
+        let _ = self
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .write_all(&[1]);
+        true
+    }
+
+    /// Waits until agents end (or the list changes); the agents that ended, no longer watched.
+    pub fn wait(&self) -> Vec<ProcessRef> {
+        use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+        use std::io::Read as _;
+        use std::os::fd::AsFd as _;
+        let watched: Vec<(ProcessRef, Arc<std::os::fd::OwnedFd>)> = self
+            .agents
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(agent, fd)| (*agent, Arc::clone(fd)))
+            .collect();
+        let mut fds: Vec<PollFd<'_>> =
+            std::iter::once(PollFd::new(self.wake_reader.as_fd(), PollFlags::POLLIN))
+                .chain(
+                    watched
+                        .iter()
+                        .map(|(_, fd)| PollFd::new(fd.as_fd(), PollFlags::POLLIN)),
+                )
+                .collect();
+        if poll(&mut fds, PollTimeout::NONE).is_err() {
+            return Vec::new();
+        }
+        let ready = |fd: &PollFd<'_>| fd.revents().is_some_and(|r| !r.is_empty());
+        if fds.first().is_some_and(ready) {
+            let _ = (&self.wake_reader).read(&mut [0; 64]);
+        }
+        let ended: Vec<ProcessRef> = watched
+            .iter()
+            .zip(fds.iter().skip(1))
+            .filter(|(_, fd)| ready(fd))
+            .map(|((agent, _), _)| *agent)
+            .collect();
+        let mut agents = self.agents.lock().unwrap_or_else(PoisonError::into_inner);
+        for agent in &ended {
+            agents.remove(agent);
+        }
+        ended
+    }
+}
+
 /// Whether the process still runs (the same one: pid and start time).
 #[must_use]
 pub fn alive(process: ProcessRef) -> bool {

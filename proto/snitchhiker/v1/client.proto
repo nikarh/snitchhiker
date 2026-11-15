@@ -1145,6 +1145,8 @@ message Proposal {
 // The agent: only its own proposals.
 message GetProposal {
   uint64 id = 1;
+  // While it is pending, the answer waits up to this many seconds (at most 3600) for it to change.
+  uint32 wait_secs = 2;
 }
 
 message WithdrawProposal {

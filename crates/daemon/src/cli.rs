@@ -1414,7 +1414,7 @@ fn proposals(mut args: pico_args::Arguments, version: &str) -> Result<(), Error>
     let command = args.subcommand()?;
     let mut client = connect(version)?;
     let get = |client: &mut Client, id: u64| -> Result<v1::Proposal, Error> {
-        match client.call(Method::GetProposal(v1::GetProposal { id }))? {
+        match client.call(Method::GetProposal(v1::GetProposal { id, wait_secs: 0 }))? {
             v1::response::Result::Proposal(proposal) => Ok(*proposal),
             _ => Err(unexpected()),
         }

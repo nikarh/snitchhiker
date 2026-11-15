@@ -105,7 +105,9 @@ pub struct Shared {
     /// The connections not allowed over the last hour, with their processes' lineage, for agents.
     pub blocked: crate::agents::Ring,
     /// Agents with session rules or proposals waiting: when one ends, so do they.
-    pub agents: Mutex<HashSet<ProcessRef>>,
+    pub agents: crate::agents::Watch,
+    /// Counts changes of proposals, for requests waiting for one.
+    proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
 
 /// The daemon, running. Shared by the signal handler and the API's threads.
@@ -178,7 +180,8 @@ impl Daemon {
             alert_rules_changed: AtomicU64::new(0),
             policy: ArcSwap::from_pointee(policy),
             blocked: crate::agents::Ring::default(),
-            agents: Mutex::new(agents),
+            agents: crate::agents::Watch::new()?,
+            proposals_changed: (Mutex::new(0), std::sync::Condvar::new()),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -225,27 +228,62 @@ impl Daemon {
         daemon.spawn_prompt_timeouts()?;
         daemon.spawn_table_watch()?;
         daemon.spawn_agent_watch()?;
+        daemon.watch_agents(agents);
         Ok(daemon)
     }
 
-    /// Watches `agents` too: their session rules and waiting proposals end with them.
-    pub fn watch_agents(&self, agents: impl IntoIterator<Item = ProcessRef>) {
-        self.shared
-            .agents
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend(agents);
+    /// Announces a proposal made or changed: to subscribers, and to requests waiting for a change.
+    pub fn publish_proposal(&self, proposal: &v1::Proposal) {
+        self.shared.hub.publish(
+            v1::Topic::Proposals,
+            &v1::notice::Body::Proposal(Box::new(proposal.clone())),
+        );
+        let (count, changed) = &self.shared.proposals_changed;
+        *count.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        changed.notify_all();
     }
 
-    /// Every two seconds, checks whether the agents watched still run (the same processes: pid and start time).
+    /// Waits until `still` says no, checking it again whenever a proposal changes, for at most `timeout`.
+    pub fn wait_for_proposals(&self, timeout: Duration, mut still: impl FnMut() -> bool) {
+        let deadline = Instant::now() + timeout;
+        let (count, changed) = &self.shared.proposals_changed;
+        let mut seen = *count.lock().unwrap_or_else(PoisonError::into_inner);
+        while still() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return;
+            }
+            let guard = count.lock().unwrap_or_else(PoisonError::into_inner);
+            let (guard, _) = changed
+                .wait_timeout_while(guard, left, |now| *now == seen)
+                .unwrap_or_else(PoisonError::into_inner);
+            seen = *guard;
+        }
+    }
+
+    /// Watches `agents` too: their session rules and waiting proposals end with them (at once, for those already
+    /// gone).
+    pub fn watch_agents(&self, agents: impl IntoIterator<Item = ProcessRef>) {
+        let ended: Vec<ProcessRef> = agents
+            .into_iter()
+            .filter(|a| !self.shared.agents.add(*a))
+            .collect();
+        if !ended.is_empty() {
+            self.end_agents(&ended);
+        }
+    }
+
+    /// Waits for watched agents to end, and ends what they left.
     fn spawn_agent_watch(self: &Arc<Self>) -> std::io::Result<()> {
         let daemon = Arc::clone(self);
         thread::Builder::new()
             .name("agent-watch".to_owned())
             .spawn(move || {
                 loop {
-                    daemon.end_agents();
-                    thread::sleep(AGENT_WATCH_EVERY);
+                    let ended = daemon.shared.agents.wait();
+                    if !ended.is_empty() {
+                        daemon.end_agents(&ended);
+                    }
                 }
             })?;
         Ok(())
@@ -253,26 +291,7 @@ impl Daemon {
 
     /// Ends what the agents that exited left: their session rules are removed (one batch of the history) and their
     /// waiting proposals expire.
-    fn end_agents(&self) {
-        let ended: Vec<ProcessRef> = {
-            let mut agents = self
-                .shared
-                .agents
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            let ended: Vec<ProcessRef> = agents
-                .iter()
-                .copied()
-                .filter(|a| !crate::agents::alive(*a))
-                .collect();
-            for agent in &ended {
-                agents.remove(agent);
-            }
-            ended
-        };
-        if ended.is_empty() {
-            return;
-        }
+    fn end_agents(&self, ended: &[ProcessRef]) {
         let now = now_ms();
         let removed = {
             let mut store = self.store();
@@ -329,10 +348,7 @@ impl Daemon {
             proposal.decided_ms = now;
             let updated = self.store().update_proposal(&proposal);
             match updated {
-                Ok(()) => self.shared.hub.publish(
-                    v1::Topic::Proposals,
-                    &v1::notice::Body::Proposal(Box::new(proposal)),
-                ),
+                Ok(()) => self.publish_proposal(&proposal),
                 Err(error) => error!(%error, "expiring a proposal"),
             }
         }
@@ -1303,8 +1319,6 @@ fn config_marker(config: &Config) -> std::path::PathBuf {
 
 /// How often the tables are checked.
 const TABLE_WATCH_EVERY: Duration = Duration::from_secs(10);
-/// How often agents being watched are checked.
-const AGENT_WATCH_EVERY: Duration = Duration::from_secs(2);
 /// How often the counters of what was lost are checked.
 const LOSS_CHECK_EVERY: Duration = Duration::from_secs(60);
 
