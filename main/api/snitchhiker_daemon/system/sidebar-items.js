@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["TABLE"],"fn":["apply","describe","from_wire","loosened","remove","table","wire"]};

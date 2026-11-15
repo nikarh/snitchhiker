@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["encode_install","encode_remove"],"struct":["Batch","Table"]};
+window.SIDEBAR_ITEMS = {"enum":["SystemChain","SystemTarget"],"fn":["encode_install","encode_remove","encode_system"],"struct":["Batch","Interface","Prefix","SystemRule","SystemTable","Table"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["ICMP","ICMPV6","TCP","UDP"],"enum":["Chain","ChainPolicy","CtState","IcmpType","Invalid","Target"],"fn":["defaults","implied"],"struct":["Firewall","Rule"]};
