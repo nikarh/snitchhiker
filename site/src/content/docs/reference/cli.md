@@ -19,7 +19,7 @@ The daemon's version, mode and policy, and its counters: rules in effect, connec
 
 | Command | |
 | --- | --- |
-| `rules` | List the rules: id (`-` for locked ones), action, tier, name and conditions |
+| `rules` | List the rules: id (`-` for locked ones), action, tier, folder path and name, and conditions |
 | `rules add <allow\|deny\|reject> [conditions] [--name <n>] [--tier <override\|normal\|fallback>]` | Add a rule |
 | `rules rm <id>` | Delete a rule |
 | `rules enable <id>`, `rules disable <id>` | Switch a rule on or off |
@@ -67,7 +67,7 @@ Prints a rule file with a rule for each program, destination and port that no ru
 | --- | --- |
 | `prompts` | The prompts waiting for an answer, each with its numbered suggestions |
 | `prompts watch` | Print prompts as they open and as they are resolved, until interrupted. While it runs, the daemon has a client to ask |
-| `prompts answer <id> <allow\|deny\|reject> [--suggestion <n>] [--duration <d>]` | Answer a prompt with a rule made from suggestion `n` (default 0, the narrowest) |
+| `prompts answer <id> <allow\|deny\|reject> [--suggestion <n>] [--duration <d>] [--folder <id>]` | Answer a prompt with a rule made from suggestion `n` (default 0, the narrowest), in the program's folder (`Apps/<program>`) or the folder given |
 
 Durations: `once` (no rule), `restart`, `hour`, `12h`, `forever` (default). See [Prompts](/guides/prompts/#answering).
 

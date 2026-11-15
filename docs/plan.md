@@ -2023,8 +2023,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
   - [ ] Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
         every admin client can answer regardless of notification.
-  - [ ] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement. All but folder
-        placement done.
+  - [x] Suggestion engine: scopes, generalised paths, registrable domain via PSL, folder placement.
   - [x] The CLI `prompts --watch` for testing before any GUI exists.
 - [ ] **`client` crate**
   - [ ] Unix socket transport, reconnect, resubscribe from watermarks, typed API.

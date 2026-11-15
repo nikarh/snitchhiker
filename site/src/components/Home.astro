@@ -13,8 +13,10 @@ const prompt = `prompt 7: /usr/bin/curl (uid 1000 ada) -> api.example.com:443 pr
   0: curl → api.example.com:443
   1: curl → api.example.com, any port
   2: curl → *.example.com:443 (broad)
-  3: curl → anywhere (broad)
-  4: any program → api.example.com:443 (broad)
+  3: curl → 192.0.2.10:443
+  4: curl → 192.0.2.0/24:443 (broad)
+  5: curl → anywhere (broad)
+  6: any program → api.example.com:443 (broad)
 prompt 7 resolved: Allow by cli`;
 
 // What Snitchhiker is made of, each with what exists today.

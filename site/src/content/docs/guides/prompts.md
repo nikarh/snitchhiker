@@ -33,12 +33,15 @@ prompt 7: /home/ada/.local/share/claude/versions/2.0.31/claude (uid 1000 ada) ->
   0: claude → api.example.com:443
   1: claude → api.example.com, any port
   2: claude → *.example.com:443 (broad)
-  3: claude → anywhere (broad)
-  4: any program → api.example.com:443 (broad)
+  3: claude → 192.0.2.10:443
+  4: claude → 192.0.2.0/24:443 (broad)
+  5: claude → anywhere (broad)
+  6: any program → api.example.com:443 (broad)
 ```
 
 - The **program** is its path with version numbers and hashes replaced by `*` and the user's home by `{home}`. Here: `glob:{home}/.local/share/claude/versions/*/claude`. The rule then survives updates of the program and covers it for every user.
 - The **destination** is the name the program itself looked up for the address, or the address when it looked none up.
+- The **address** and its network (a /24, or a /64 for IPv6) are offered for services reached by address, or that move between addresses of one range.
 - **Broad** suggestions allow more than this destination for this program. The first suggestion is never broad: the quickest answer makes the narrowest rule.
 
 A prompt also warns when the program's executable belongs to a user other than root, or its group or others may write it: a rule for that path covers whatever is written there later.
@@ -54,12 +57,14 @@ An answer is an action (`allow`, `deny`, `reject`), a duration and the rule to m
 | hour, 12 hours | expires then |
 | forever | stays (the default on the command line) |
 
-The rule is made from the chosen suggestion, or from conditions the client gives of its own, in the normal tier. Every listening client is told the prompt was resolved, by whom, and which rule it made, and closes its copy of the question.
+The rule is made from the chosen suggestion, or from conditions the client gives of its own, in the normal tier.
+
+It goes in the program's folder, `Apps/<program>`, which is scoped to the program: the folder says which program, and its rules say only where it may connect. The folder is made by the first rule for the program and reused by the next ones; programs of the same name at different paths get folders of their own (`python3`, `python3 2`). A rule for any program stays at the top level. A client can name another folder instead. Every listening client is told the prompt was resolved, by whom, and which rule it made, and closes its copy of the question.
 
 ```bash
 sudo snitchhiker prompts watch                         # print prompts as they open and close
 sudo snitchhiker prompts answer 7 allow                # suggestion 0, forever
-sudo snitchhiker prompts answer 7 reject --suggestion 3 --duration hour
+sudo snitchhiker prompts answer 7 reject --suggestion 5 --duration hour
 ```
 
 ## Timeouts
