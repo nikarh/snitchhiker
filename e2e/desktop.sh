@@ -87,14 +87,20 @@ runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$bus /tmp/snitchhiker-e2e-ui 
 sleep 2
 item=$(head -1 /tmp/tray.log)
 property() { runuser -u mallory -- busctl --address="$bus" get-property "$item" /StatusNotifierItem org.kde.StatusNotifierItem "$1"; }
-before=$(property Status)
+# Background traffic can still start waiting: answer it until the tray is quiet.
+for _ in 1 2 3 4 5; do
+  for id in $(snitchhiker prompts | awk "/^prompt [0-9]+:/ {sub(\":\", \"\", \$2); print \$2}"); do snitchhiker prompts answer "$id" deny --duration once >/dev/null 2>&1 || true; done
+  sleep 1
+  before=$(property Status)
+  case "$before" in *Active*) break ;; esac
+done
 runuser -u mallory -- curl -s -m 20 http://198.51.100.10:443 >/dev/null 2>&1 &
 sleep 2
 echo "item $item before $(echo $before) during $(property Status) title $(property Title)" > /tmp/desktop-result.txt
 pkill -f "snitchhiker-e2e-ui --tray" || true' "${ask}" >/dev/null 2>&1
 out=$(result)
 if grep -q 'item org.kde.StatusNotifierItem-' <<<"${out}" && grep -q 'before s "Active" during s "NeedsAttention"' <<<"${out}" \
-  && grep -q 'a connection is waiting' <<<"${out}"; then
+  && grep -Eq 'connections? (is|are) waiting' <<<"${out}"; then
   pass tray-shows-waiting-prompts
 else
   fail tray-shows-waiting-prompts "the tray item didn't register, or didn't ask for attention" "${out}"
@@ -124,6 +130,8 @@ scripts/ui-vm.sh "${shots}/import" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
 mkdir -p /etc/opensnitchd/rules && rm -f /etc/opensnitchd/rules/*.json
+# The node'"'"'s own system firewall is off, and must stay so (Keep this node'"'"'s is the default).
+snitchhiker system off >/dev/null
 printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"allow\", \"duration\": \"always\", \"operator\": {\"type\": \"simple\", \"operand\": \"process.path\", \"data\": \"/usr/bin/curl\"}}" > /etc/opensnitchd/rules/000-allow-curl.json
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
 # A system firewall too, which converts in part (the layout of the dialog depends on it).
@@ -134,7 +142,7 @@ click 941 48
 sleep 2
 shot preview
 click 969 623
-sleep 2
+for _ in $(seq 20); do snitchhiker rules | grep -q OpenSnitch/ && break; sleep 0.5; done
 { snitchhiker rules; snitchhiker system; } > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
 if grep -q "OpenSnitch/000-allow-curl" <<<"${out}" && ! grep -q "002-lists" <<<"${out}" && grep -q "system firewall off" <<<"${out}"; then
