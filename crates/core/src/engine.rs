@@ -23,15 +23,15 @@ use crate::rule::{Action, Condition, ContextKind, Expiry, Folder, FolderId, Rule
 pub struct Facts<'a> {
     pub exe: &'a str,
     /// Stable identities of the program, if any are known (`pkg:firefox`, `unit:sshd.service`).
-    pub apps: &'a [&'a str],
+    pub apps: &'a [String],
     pub cmdline: &'a str,
     /// Executables of the ancestor processes, nearest first.
-    pub ancestors: &'a [&'a str],
+    pub ancestors: &'a [String],
     pub uid: u32,
     /// The user's home directory, for `{home}` patterns.
     pub home: Option<&'a str>,
     /// Names known for the destination address (as resolved by this process first).
-    pub hosts: &'a [&'a str],
+    pub hosts: &'a [std::sync::Arc<str>],
     pub address: IpAddr,
     pub port: u16,
     pub protocol: u8,
@@ -251,9 +251,12 @@ fn condition_matches(condition: &Compiled, facts: &Facts<'_>) -> bool {
         |patterns: &[Pattern], value: &str| patterns.iter().any(|p| p.matches(value, facts.home));
     match condition {
         Compiled::Exe(patterns) => any(patterns, facts.exe),
-        Compiled::App(patterns) => facts.apps.iter().any(|app| any(patterns, app)),
+        Compiled::App(patterns) => facts.apps.iter().any(|app| any(patterns, app.as_str())),
         Compiled::Cmdline(patterns) => any(patterns, facts.cmdline),
-        Compiled::Parent(patterns) => facts.ancestors.iter().any(|exe| any(patterns, exe)),
+        Compiled::Parent(patterns) => facts
+            .ancestors
+            .iter()
+            .any(|exe| any(patterns, exe.as_str())),
         Compiled::Uid(uids) => uids.contains(&facts.uid),
         Compiled::Host(patterns) => facts
             .hosts
@@ -387,7 +390,18 @@ mod tests {
         Condition::Host(vec![HostPattern::try_from(name.to_owned()).unwrap()])
     }
 
-    fn facts<'a>(exe: &'a str, hosts: &'a [&'a str], port: u16) -> Facts<'a> {
+    /// Host names for facts, leaked: tests only.
+    fn names(hosts: &[&str]) -> &'static [std::sync::Arc<str>] {
+        Box::leak(
+            hosts
+                .iter()
+                .map(|h| std::sync::Arc::from(*h))
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        )
+    }
+
+    fn facts<'a>(exe: &'a str, hosts: &[&str], port: u16) -> Facts<'a> {
         Facts {
             exe,
             apps: &[],
@@ -395,7 +409,7 @@ mod tests {
             ancestors: &[],
             uid: 1000,
             home: Some("/home/ada"),
-            hosts,
+            hosts: names(hosts),
             address: "198.51.100.7".parse().unwrap(),
             port,
             protocol: 6,
