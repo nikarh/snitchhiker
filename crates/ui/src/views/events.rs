@@ -96,6 +96,8 @@ pub struct EventsPage {
     input: Entity<InputState>,
     table: Entity<TableState<EventsTable>>,
     error: Option<String>,
+    /// Where the query's error is, for the highlighting.
+    error_span: Option<std::ops::Range<usize>>,
 }
 
 impl EventsPage {
@@ -115,6 +117,8 @@ impl EventsPage {
             let empty = input.read(cx).value().is_empty();
             match event {
                 InputEvent::PressEnter { .. } => page.apply(cx),
+                // The highlighting and completions follow the typing.
+                InputEvent::Change if !empty => cx.notify(),
                 // Cleared: back to everything.
                 InputEvent::Change if empty && !page.model.read(cx).events.query.is_empty() => {
                     page.apply(cx);
@@ -129,6 +133,7 @@ impl EventsPage {
             input,
             table,
             error: None,
+            error_span: None,
         }
     }
 
@@ -147,6 +152,7 @@ impl EventsPage {
             match EventFilter::parse(&text, &query_cx) {
                 Ok(filter) => Some(filter),
                 Err(e) => {
+                    self.error_span = Some(e.span.clone());
                     self.error = Some(format!(
                         "{}: {}",
                         text.get(e.span.clone()).unwrap_or(""),
@@ -158,6 +164,7 @@ impl EventsPage {
             }
         };
         self.error = None;
+        self.error_span = None;
         self.model
             .update(cx, |model, _| model.events.set_query(text, filter));
         self.table.update(cx, TableState::refresh);
@@ -242,7 +249,14 @@ fn events_csv(model: &Model) -> String {
 }
 
 impl Render for EventsPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let hints = crate::views::query::hints(
+            &self.input,
+            &crate::views::query::EVENT_KEYS,
+            self.error_span.as_ref(),
+            window,
+            cx,
+        );
         v_flex()
             .size_full()
             .child(
@@ -270,6 +284,7 @@ impl Render for EventsPage {
                                     })
                             }),
                     )
+                    .child(hints)
                     .children(
                         self.error.clone().map(|error| {
                             div().text_sm().text_color(cx.theme().danger).child(error)

@@ -564,6 +564,7 @@ pub struct RulesPage {
     table: Entity<TableState<RulesTable>>,
     search: Entity<InputState>,
     error: Option<String>,
+    error_span: Option<std::ops::Range<usize>>,
 }
 
 impl RulesPage {
@@ -617,6 +618,7 @@ impl RulesPage {
             table,
             search,
             error: None,
+            error_span: None,
         }
     }
 
@@ -635,6 +637,7 @@ impl RulesPage {
         match filter {
             Ok(filter) => {
                 self.error = None;
+                self.error_span = None;
                 self.table.update(cx, |table, cx| {
                     table.delegate_mut().filter = filter;
                     table.delegate_mut().recompute(cx);
@@ -642,7 +645,10 @@ impl RulesPage {
                 });
             }
             // A query half typed: the rules shown stay until it reads.
-            Err(e) => self.error = Some(e.message),
+            Err(e) => {
+                self.error_span = Some(e.span);
+                self.error = Some(e.message);
+            }
         }
         cx.notify();
     }
@@ -1022,7 +1028,14 @@ fn new_folder(
 }
 
 impl Render for RulesPage {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let hints = crate::views::query::hints(
+            &self.search,
+            &crate::views::query::RULE_KEYS,
+            self.error_span.as_ref(),
+            window,
+            cx,
+        );
         let tree = self.tree(cx);
         let bulk = self.bulk_bar(cx);
         let (model, requests) = (self.model.clone(), self.requests.clone());
@@ -1105,6 +1118,7 @@ impl Render for RulesPage {
                                     }),
                             ),
                     )
+                    .child(div().px_2().child(hints))
                     .children(self.error.clone().map(|error| {
                         div()
                             .px_2()
