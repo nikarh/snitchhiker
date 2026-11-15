@@ -67,7 +67,7 @@ jobs:
           SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
           set -euo pipefail
-          cargo build --locked --release
+          cargo build --locked --release -p snitchhiker-daemon
           bin=target/release/snitchhikerd
           "$bin" --version
           mkdir -p out

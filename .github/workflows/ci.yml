@@ -21,14 +21,17 @@ jobs:
   check:
     name: fmt, lint, tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The protocol check compares the schema with main's (pull requests) or the previous commit's (pushes).
           fetch-depth: 0
-      # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers.
-      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+      # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers; the desktop app links
+      # fontconfig and freetype, and its toolkit wants the Wayland and xkbcommon headers.
+      - run: >-
+          sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+          libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       # The toolchain (with clippy and rustfmt) comes from rust-toolchain.toml.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
