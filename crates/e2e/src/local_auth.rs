@@ -5,6 +5,7 @@
 //! client group, it is a client the way the desktop app will be.
 
 use std::io::{BufRead as _, BufReader, Write as _};
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
@@ -137,7 +138,7 @@ fn serve(name: &str, mode: u32) -> Result<String, String> {
     thread::spawn(move || {
         for stream in listener.incoming().flatten() {
             let answer = match identify(&stream) {
-                Ok(peer) => match verify(&peer, &policy) {
+                Ok((peer, _pidfd)) => match verify(&peer, &policy) {
                     Ok(()) => "accepted\n".to_owned(),
                     Err(refusal) => format!("refused: {refusal}\n"),
                 },
@@ -352,5 +353,83 @@ pub fn registered_clients_are_pinned() -> Result<(), String> {
         !untrusted_ok,
         "a client got in after untrust-client",
         &untrusted,
+    )
+}
+
+/// The client side of `connection_ends_with_its_process`: connects as a client, hands the connection to a child (as its
+/// stdin, which survives exec) and exits, leaving the child holding it.
+pub fn hand_off(socket: &str) -> std::process::ExitCode {
+    use snitchhiker_proto::{frame, v1};
+    let mut out = std::io::stdout().lock();
+    let attempt = (|| -> std::io::Result<u32> {
+        let stream = UnixStream::connect(socket)?;
+        let mut buffer = Vec::new();
+        frame::write_preamble(&mut &stream)?;
+        let hello = v1::ClientFrame {
+            body: Some(v1::client_frame::Body::Hello(v1::Hello {
+                app: "e2e".to_owned(),
+                ..v1::Hello::default()
+            })),
+        };
+        frame::write(&mut &stream, &hello, &mut buffer)?;
+        let welcome: v1::ServerFrame = frame::read(&mut &stream, &mut buffer)?;
+        if !matches!(welcome.body, Some(v1::server_frame::Body::Welcome(_))) {
+            return Err(std::io::Error::other("no welcome"));
+        }
+        let child = Command::new("sleep")
+            .arg("30")
+            .stdin(Stdio::from(OwnedFd::from(stream)))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()?;
+        Ok(child.id())
+    })();
+    match attempt {
+        Ok(child) => {
+            let _ = writeln!(out, "handed off to {child}");
+            std::process::ExitCode::SUCCESS
+        }
+        Err(error) => {
+            let _ = writeln!(out, "hand-off: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn clients(daemon: &crate::daemon::Running) -> Result<String, String> {
+    let status = daemon.cli(&["status"])?;
+    Ok(status
+        .lines()
+        .find_map(|line| line.strip_prefix("clients"))
+        .map_or_else(String::new, |count| count.trim().to_owned()))
+}
+
+/// A trusted client hands its connection to another process and exits: the daemon ends the connection with the
+/// client's process, so the other one doesn't inherit the client's rights.
+pub fn connection_ends_with_its_process() -> Result<(), String> {
+    let _ = serve("hand-off-setup", 0o660)?;
+    let mut daemon = crate::daemon::Running::start(
+        "hand-off",
+        &format!("mode = \"monitor\"\ntrusted_clients = [\"{CLIENT}\"]\n"),
+    )?;
+    // `status` counts its own connection.
+    let baseline = clients(&daemon)?;
+    let (ok, text) = as_mallory(CLIENT, &["--hand-off", "/run/snitchhiker/client.sock"])?;
+    let child: Option<u32> = text
+        .trim()
+        .strip_prefix("handed off to ")
+        .and_then(|pid| pid.parse().ok());
+    thread::sleep(Duration::from_millis(500));
+    let child_alive = child.is_some_and(|pid| Path::new(&format!("/proc/{pid}")).exists());
+    let after = clients(&daemon)?;
+    if let Some(pid) = child {
+        let _ = run("kill", &[&pid.to_string()]);
+    }
+    daemon.stop()?;
+    check(ok && child_alive, "the hand-off didn't happen", &text)?;
+    check(
+        after == baseline,
+        "the connection outlived the client's process in another process's hands",
+        &format!("clients: {after}, without the client: {baseline}"),
     )
 }

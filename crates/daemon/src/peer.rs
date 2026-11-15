@@ -81,8 +81,9 @@ pub enum Error {
 }
 
 /// Identifies the process connected to `stream`. The process is held by a pidfd, and checked to still be alive after
-/// everything was read, so its pid can't have been reused by another process in between.
-pub fn identify(stream: &UnixStream) -> Result<Peer, Error> {
+/// everything was read, so its pid can't have been reused by another process in between. The pidfd is returned: it
+/// tells when that process exits.
+pub fn identify(stream: &UnixStream) -> Result<(Peer, OwnedFd), Error> {
     let pidfd = getsockopt(stream, sockopt::PeerPidfd).map_err(|e| Error::NoPidfd(e.into()))?;
     let pid = pidfd_pid(&pidfd)?;
     let proc = |path: &str| -> Result<String, Error> {
@@ -125,7 +126,33 @@ pub fn identify(stream: &UnixStream) -> Result<Peer, Error> {
     if exited(&pidfd) {
         return Err(Error::Exited);
     }
-    Ok(peer)
+    Ok((peer, pidfd))
+}
+
+/// Ends `stream` when the process of `pidfd` exits, even if another process holds the connection (it was passed on, or
+/// inherited): a client's rights are its process's, not its socket's. Dropping the returned guard stops watching.
+pub fn end_with_process(pidfd: OwnedFd, stream: &UnixStream) -> io::Result<io::PipeWriter> {
+    let stream = stream.try_clone()?;
+    let (stop, guard) = io::pipe()?;
+    std::thread::Builder::new()
+        .name("api-client-watch".to_owned())
+        .spawn(move || {
+            let mut fds = [
+                PollFd::new(pidfd.as_fd(), PollFlags::POLLIN),
+                PollFd::new(stop.as_fd(), PollFlags::POLLIN),
+            ];
+            loop {
+                match poll(&mut fds, PollTimeout::NONE) {
+                    Err(nix::errno::Errno::EINTR) => {}
+                    Err(_) => return,
+                    Ok(_) => break,
+                }
+            }
+            if exited(&pidfd) {
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        })?;
+    Ok(guard)
 }
 
 /// The pid a pidfd refers to, from `/proc/self/fdinfo`.

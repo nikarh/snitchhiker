@@ -75,6 +75,10 @@ const SCENARIOS: &[Scenario] = &[
         local_auth::registered_clients_are_pinned,
     ),
     (
+        "local-auth/connection-ends-with-its-process",
+        local_auth::connection_ends_with_its_process,
+    ),
+    (
         "local-auth/client-refuses-a-fake-node",
         local_auth::client_refuses_a_fake_node,
     ),
@@ -162,6 +166,9 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2))
     {
         return local_auth::protocol_client(socket);
+    }
+    if let (Some("--hand-off"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
+        return local_auth::hand_off(socket);
     }
     if let (Some("--client"), Some(socket)) = (args.get(1).map(String::as_str), args.get(2)) {
         return local_auth::client(socket, args.get(3).is_some_and(|a| a == "--hold"));

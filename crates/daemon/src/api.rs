@@ -8,6 +8,7 @@ use std::io::{BufReader, BufWriter, Write as _};
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 
+use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
@@ -19,7 +20,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::{Config, Mode, Policy};
 use crate::hub::OUTBOUND;
-use crate::peer::{identify, verify};
+use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
@@ -100,8 +101,8 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
                 continue;
             }
         };
-        let role = match admit(&stream, access, &daemon.shared.config) {
-            Ok(role) => role,
+        let (role, pidfd) = match admit(&stream, access, &daemon.shared.config) {
+            Ok(admitted) => admitted,
             Err(reason) => {
                 info!(%reason, "refused a client");
                 refuse(&stream, &reason);
@@ -112,6 +113,15 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
         let _ = thread::Builder::new()
             .name("api-connection".to_owned())
             .spawn(move || {
+                // Held until the connection ends; dropping it stops the watch.
+                let _watch = match pidfd.map(|pidfd| end_with_process(pidfd, &stream)) {
+                    Some(Err(error)) => {
+                        warn!(%error, "watching a client's process; refusing it");
+                        return;
+                    }
+                    Some(Ok(guard)) => Some(guard),
+                    None => None,
+                };
                 OPEN.fetch_add(1, Ordering::Relaxed);
                 if let Err(error) = serve(&daemon, &stream, role) {
                     debug!(%error, "client connection ended");
@@ -121,14 +131,18 @@ fn accept(daemon: &Arc<Daemon>, listener: &UnixListener, access: &Access) {
     }
 }
 
-/// The role a connection gets, or why it is refused.
-fn admit(stream: &UnixStream, access: &Access, config: &Config) -> Result<v1::Role, String> {
+/// The role a connection gets, or why it is refused. For a client, also its process's pidfd: the connection ends when that process does.
+fn admit(
+    stream: &UnixStream,
+    access: &Access,
+    config: &Config,
+) -> Result<(v1::Role, Option<OwnedFd>), String> {
     match access {
         Access::Admin => {
             let credentials =
                 getsockopt(stream, sockopt::PeerCredentials).map_err(|e| e.to_string())?;
             if credentials.uid() == 0 {
-                Ok(v1::Role::Root)
+                Ok((v1::Role::Root, None))
             } else {
                 Err("the admin socket is root's".to_owned())
             }
@@ -136,9 +150,9 @@ fn admit(stream: &UnixStream, access: &Access, config: &Config) -> Result<v1::Ro
         Access::Client { group } => {
             let policy = crate::trust::policy(config, *group)
                 .map_err(|e| format!("the trusted-client registry: {e}"))?;
-            let peer = identify(stream).map_err(|e| e.to_string())?;
+            let (peer, pidfd) = identify(stream).map_err(|e| e.to_string())?;
             verify(&peer, &policy).map_err(|e| e.to_string())?;
-            Ok(v1::Role::Admin)
+            Ok((v1::Role::Admin, Some(pidfd)))
         }
     }
 }
