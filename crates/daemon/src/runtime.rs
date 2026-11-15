@@ -19,6 +19,7 @@ use snitchhiker_netfilter::netlink::{Socket, Writer};
 use snitchhiker_netfilter::nftables::{Table, encode_install, encode_remove};
 use snitchhiker_netfilter::packet;
 use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
+use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
 use tracing::{error, info, warn};
 
 use crate::config::{Config, Fail, Mode};
@@ -228,13 +229,32 @@ fn dns_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
 fn decide_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
     let mut processes = ProcessCache::new(shared.host);
     let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
+    let mut rejected: Vec<SocketId> = Vec::with_capacity(8);
+    let mut sockdiag: Option<SockDiag> = None;
     loop {
         verdicts.clear();
+        rejected.clear();
         for packet in queue.receive()? {
-            verdicts.push((packet.id, decide(shared, &mut processes, &packet)));
+            let (verdict, reject) = decide(shared, &mut processes, &packet);
+            verdicts.push((packet.id, verdict));
+            rejected.extend(reject);
         }
         for &(id, verdict) in &verdicts {
             queue.verdict(id, verdict)?;
+        }
+        // After the drop: the program's socket is closed, so it fails at once instead of retrying.
+        for id in &rejected {
+            if sockdiag.is_none() {
+                sockdiag = SockDiag::open()
+                    .inspect_err(|error| warn!(%error, "sock_diag: rejected connections will time out instead"))
+                    .ok();
+            }
+            if let Some(diag) = sockdiag.as_mut()
+                && let Err(error) = diag.destroy(id)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                warn!(%error, "closing a rejected socket");
+            }
         }
     }
 }
@@ -256,12 +276,16 @@ fn context_code(context: ContextKind) -> u8 {
     }
 }
 
-/// The verdict for one packet, recording what happened.
-fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) -> Verdict {
+/// The verdict for one packet, recording what happened, and the socket to close for a rejected connection.
+fn decide(
+    shared: &Shared,
+    processes: &mut ProcessCache,
+    queued: &Packet<'_>,
+) -> (Verdict, Option<SocketId>) {
     shared.decided.fetch_add(1, Ordering::Relaxed);
     let Some(headers) = packet::parse(queued.payload) else {
         // Not IPv4 or IPv6: nothing rules speak about.
-        return Verdict::Accept;
+        return (Verdict::Accept, None);
     };
     let key = FlowKey {
         netns: shared.netns,
@@ -338,7 +362,14 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
     {
         shared.dropped_events.fetch_add(1, Ordering::Relaxed);
     }
-    verdict
+    let reject = (verdict == Verdict::Drop && action == Action::Reject).then_some(SocketId {
+        protocol: headers.protocol,
+        local: headers.source,
+        local_port: headers.source_port,
+        remote: headers.destination,
+        remote_port: headers.destination_port,
+    });
+    (verdict, reject)
 }
 
 fn write_loop(store: &Mutex<Store>, events: &Receiver<Event>, retention: Duration) {
