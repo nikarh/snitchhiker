@@ -7,6 +7,7 @@ use std::io::{self, Write as _};
 use std::process::ExitCode;
 use std::time::Instant;
 
+mod attribution;
 mod nftables;
 mod queue;
 mod util;
@@ -32,6 +33,9 @@ const SCENARIOS: &[Scenario] = &[
         "queue/unbound-with-bypass-fails-open",
         queue::unbound_with_bypass_fails_open,
     ),
+    ("attribution/tcp-v4", attribution::tcp_v4),
+    ("attribution/tcp-v6", attribution::tcp_v6),
+    ("attribution/udp-sendto", attribution::udp_sendto),
 ];
 
 /// The marker `e2e/vm.sh` leaves in every test VM.

@@ -15,13 +15,13 @@ use snitchhiker_netfilter::queue::{Queue, Verdict};
 use crate::util::check;
 
 /// The test VMs' unprivileged user (see e2e/vm.sh).
-const MALLORY_UID: u32 = 1001;
+pub const MALLORY_UID: u32 = 1001;
 
 /// The table, installed for the life of the value and removed when it is dropped.
-struct Installed;
+pub struct Installed;
 
 impl Installed {
-    fn new(bypass: bool) -> Result<Self, String> {
+    pub fn new(bypass: bool) -> Result<Self, String> {
         let table = Table {
             queues: 1,
             bypass,
