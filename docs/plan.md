@@ -1911,7 +1911,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] VM harness from barbican's `e2e/vm.sh`: cached cloud images per distro, throwaway overlays, user-mode
         networking, inter-VM links, `vm:*` mise tasks, the `single` topology first; KVM on CI. `AGENTS.md` states
         that nothing privileged runs on the host ([§12.1](#121-where-tests-run-virtual-machines-only)).
-  - [x] Create the private GitHub repo; go public when M2 lands (decision).
+  - [x] Create the private GitHub repo. It stays private until every milestone through M9 is done (the user's
+        decision, 2026-11-15); M10 is an open-ended backlog and doesn't hold it back.
 - [x] **Spike: interception + attribution** (in the VMs; throwaway code allowed, but in `crates/daemon` if it
       survives)
   - [x] Create our nftables table, chains and queue rules with our own netlink batches (no libnftables).
@@ -2038,8 +2039,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
         rustdoc publishing. The protocol schema is read from `proto/` at build time; the rest are left.
   - [x] Pages for what exists so far: introduction, both quick starts, install, configuration, CLI, the security
         model, how it works, writing the docs. (One quick start: the remote one waits for M5.)
-- [ ] **Go public**
-  - [ ] `public-github-project` settings, Dependabot, release bot, first `0.1.0` release of daemon + CLI.
+- [ ] **First release**
+  - [ ] Release 0.1.0 of the daemon and CLI through the release bot (the repository stays private; see M9).
 - **DoD:** a test client (CLI) authenticates as setgid, receives prompts and answers them, and everything an
   unprivileged same-uid process tries is refused. Release 0.1.0 is published.
 
@@ -2217,7 +2218,11 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 - [ ] External review of the security model (or at least a structured self-review with the `security-review` skill
       and a written threat model document).
 - [ ] Kernel matrix green; upgrade tests (old daemon + new app, new daemon + old app).
-- [ ] Packages: Arch repo, apt repo, rpm; F-Droid submission.
+- [ ] Packages: Arch repo, apt repo, rpm.
+- [ ] **Go public**, once everything above and in M0–M8 is done: scan the whole history for secrets, then the
+      `public-github-project` settings that need a public repository (auto-merge, secret scanning, vulnerability
+      alerts and reporting, code scanning, the `main` ruleset), and the docs on GitHub Pages.
+- [ ] F-Droid submission (needs the public source).
 - [ ] Release 1.0.0.
 
 ### M10. Later / nice-to-have
