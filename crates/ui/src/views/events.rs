@@ -353,11 +353,30 @@ pub fn action_tag(action: u8) -> Tag {
 fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
     match column {
         0 => time(row.time_ms).into(),
-        2 => match model.events.string(row.exe) {
-            // A socket older than the daemon, or a process gone before it was seen.
-            Some("") | None => "(unknown program)".into(),
-            Some(exe) => exe.to_owned().into(),
-        },
+        2 => {
+            let program = match model.events.string(row.exe) {
+                // A socket older than the daemon, or a process gone before it was seen (or a VM's: no program).
+                Some("") | None => "(unknown program)",
+                Some(exe) => exe,
+            };
+            // A container's (or VM's, or named namespace's) connection says whose it is first.
+            match model
+                .events
+                .string(row.container)
+                .filter(|_| row.container != 0)
+            {
+                Some(key) => {
+                    let context = snitchhiker_core::context::Container::from_key(key);
+                    format!(
+                        "[{} {}] {program}",
+                        context.runtime,
+                        context.compose.as_deref().unwrap_or(&context.name)
+                    )
+                    .into()
+                }
+                None => program.to_owned().into(),
+            }
+        }
         3 => match model.events.string(row.host) {
             Some(host) if row.host != 0 => host.to_owned().into(),
             _ => address(row).to_string().into(),

@@ -70,7 +70,7 @@ fun LivePage(
         item { Problem(error) }
         items(events, key = { it.seq }) { event ->
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(event.exe.substringAfterLast('/').ifEmpty { "?" }, modifier = Modifier.weight(1f))
+                Text(inContext(event.container, event.exe.substringAfterLast('/').ifEmpty { "?" }), modifier = Modifier.weight(1f))
                 Text("${event.host.ifEmpty { address(event.address) }}:${event.port}", modifier = Modifier.weight(1.4f))
                 Text(actionName(event.action), color = actionColor(event.action))
             }

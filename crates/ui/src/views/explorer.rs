@@ -93,6 +93,12 @@ impl Explorer {
         }
     }
 
+    /// Groups by container, from the top: the Containers & VMs page.
+    pub fn by_containers(&mut self) {
+        self.group = v1::Dimension::Container;
+        self.filter = None;
+    }
+
     /// Asks the node for the groups as the page is set.
     pub fn query(&self) {
         let now = SystemTime::now()

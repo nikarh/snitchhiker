@@ -51,7 +51,7 @@ fun EventsPage(
             Item(Modifier.clickable { explained = event.seq }) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(
-                        event.exe.ifEmpty { "(unknown program)" },
+                        inContext(event.container, event.exe.ifEmpty { "(unknown program)" }),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.weight(1f),
                     )

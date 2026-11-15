@@ -62,6 +62,7 @@ private val pages =
     listOf(
         "Proposals",
         "Explorer",
+        "Containers & VMs",
         "Live",
         "Connections",
         "History",
@@ -89,6 +90,10 @@ fun MorePage(
 
         "Explorer" -> {
             ExplorerPage(session, modifier)
+        }
+
+        "Containers & VMs" -> {
+            ExplorerPage(session, modifier, Dimension.DIMENSION_CONTAINER)
         }
 
         "Connections" -> {
@@ -284,8 +289,9 @@ private fun ProposalCard(
 private fun ExplorerPage(
     session: NodeSession,
     modifier: Modifier,
+    first: Dimension = Dimension.DIMENSION_PROGRAM,
 ) {
-    var by by remember { mutableStateOf(Dimension.DIMENSION_PROGRAM) }
+    var by by remember { mutableStateOf(first) }
     var hours by remember { mutableLongStateOf(24L) }
     // Drilled into: a row of another grouping, its connections grouped by `by`.
     var filter by remember { mutableStateOf<ExploreFilter?>(null) }

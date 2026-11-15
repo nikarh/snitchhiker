@@ -1498,6 +1498,9 @@ fn publish_events(shared: &Shared, batch: &[Event], recorded: &[crate::store::Re
             if let Some(host) = &event.host {
                 strings.push((r.host, Arc::clone(host)));
             }
+            if let Some(container) = &event.container {
+                strings.push((r.container, Arc::clone(container)));
+            }
         }
         let mut columns = Vec::new();
         match columns::encode_events(&rows, &mut columns) {

@@ -34,6 +34,8 @@ pub enum Page {
     Live,
     Events,
     Explorer,
+    /// The Explorer, grouped by container (and VM, and named namespace).
+    Containers,
     Connections,
     Rules,
     History,
@@ -319,6 +321,11 @@ impl App {
                 if page == Page::Explorer {
                     app.explorer.read(cx).query();
                 }
+                if page == Page::Containers {
+                    app.explorer
+                        .update(cx, |explorer, _| explorer.by_containers());
+                    app.explorer.read(cx).query();
+                }
                 if page == Page::Connections {
                     let _ = app.requests.send(Request::Connections);
                 }
@@ -351,7 +358,7 @@ impl App {
             Page::Events => self.events_page.clone().into_any_element(),
             Page::Rules => self.rules_page.clone().into_any_element(),
             Page::History => self.history.clone().into_any_element(),
-            Page::Explorer => self.explorer.clone().into_any_element(),
+            Page::Explorer | Page::Containers => self.explorer.clone().into_any_element(),
             Page::Connections => {
                 let requests = self.requests.clone();
                 v_flex()
@@ -452,6 +459,12 @@ impl App {
                             cx,
                         ))
                         .child(self.item(Page::Explorer, "Explorer".into(), IconName::ChartPie, cx))
+                        .child(self.item(
+                            Page::Containers,
+                            "Containers & VMs".into(),
+                            IconName::LayoutDashboard,
+                            cx,
+                        ))
                         .child(self.item(
                             Page::Connections,
                             "Connections".into(),

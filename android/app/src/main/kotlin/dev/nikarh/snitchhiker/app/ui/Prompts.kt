@@ -143,7 +143,7 @@ private fun PromptCard(
     }
     val destination = prompt.hosts.firstOrNull() ?: address(prompt.address)
     Item {
-        Text(prompt.exe.ifEmpty { "An unknown program" }, style = MaterialTheme.typography.titleMedium)
+        Text(inContext(prompt.container, prompt.exe.ifEmpty { "An unknown program" }), style = MaterialTheme.typography.titleMedium)
         Muted(
             "${prompt.user.ifEmpty { prompt.uid.toString() }} → $destination:${prompt.port} (${protocol(
                 prompt.protocol,

@@ -558,7 +558,10 @@ enum Reply {
 
 /// Rows and the strings they use, as a block.
 fn block_of(daemon: &Daemon, rows: &[EventRow]) -> Result<Block, String> {
-    let mut ids: Vec<u32> = rows.iter().flat_map(|r| [r.exe, r.host]).collect();
+    let mut ids: Vec<u32> = rows
+        .iter()
+        .flat_map(|r| [r.exe, r.host, r.container])
+        .collect();
     ids.sort_unstable();
     ids.dedup();
     let strings = daemon.store().strings_of(ids).map_err(|e| e.to_string())?;

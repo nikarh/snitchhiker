@@ -190,3 +190,13 @@ fun qrBitmap(text: String): androidx.compose.ui.graphics.ImageBitmap? =
         }
         bitmap.asImageBitmap()
     }.getOrNull()
+
+/** A program as shown with the container (or VM, or named namespace) it ran in, if any: `[docker shop/web] node`. */
+fun inContext(
+    container: snitchhiker.v1.ContainerIdentity?,
+    program: String,
+): String {
+    container ?: return program
+    val name = container.compose.ifEmpty { container.name }
+    return "[${container.runtime} $name] $program"
+}
