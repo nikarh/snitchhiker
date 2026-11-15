@@ -332,3 +332,53 @@ pub fn managed_rules_apply_and_are_locked() -> Result<(), String> {
         &format!("{removal:?}"),
     )
 }
+
+pub fn bytes_are_counted() -> Result<(), String> {
+    use std::io::{Read as _, Write as _};
+
+    let (listener, port) = listener()?;
+    // The server reads 100 000 bytes and answers with 50 000.
+    let server = thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let mut buffer = vec![0_u8; 100_000];
+            if stream.read_exact(&mut buffer).is_ok() {
+                let _ = stream.write_all(&vec![7_u8; 50_000]);
+            }
+        }
+    });
+    let mut daemon = Running::start("bytes", "mode = \"enforce\"\nno_match = \"allow\"\n")?;
+    let script = format!(
+        "import socket\ns = socket.create_connection(('127.0.0.1', {port}), timeout=5)\ns.sendall(b'x' * 100000)\nn = 0\nwhile n < 50000:\n    d = s.recv(65536)\n    if not d:\n        break\n    n += len(d)\nprint('read', n)"
+    );
+    let output = Command::new("runuser")
+        .args(["-u", "mallory", "--", "python3", "-c", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let _ = server.join();
+    // Counts reach the history every few seconds.
+    thread::sleep(Duration::from_secs(7));
+    let events = daemon.cli(&["events", "--limit", "10"])?;
+    daemon.stop()?;
+    let client = String::from_utf8_lossy(&output.stdout).into_owned();
+    check(
+        client.contains("read 50000"),
+        "the exchange didn't complete",
+        &client,
+    )?;
+    let line = events
+        .lines()
+        .find(|l| l.contains(&format!(":{port} ")))
+        .ok_or_else(|| format!("the connection isn't in the history:\n{events}"))?;
+    let number_after = |word: &str| -> u64 {
+        line.split_whitespace()
+            .skip_while(|w| *w != word)
+            .nth(1)
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(0)
+    };
+    check(
+        number_after("out") >= 100_000 && number_after("in") >= 50_000,
+        "the connection's bytes weren't counted",
+        line,
+    )
+}
