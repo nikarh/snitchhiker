@@ -65,7 +65,7 @@ shot alerts
 click 66 499
 sleep 2
 shot firewall
-click 66 535
+click 66 571
 sleep 2
 shot settings
 for i in $(seq 1 12); do

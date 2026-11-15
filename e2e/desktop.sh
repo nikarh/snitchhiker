@@ -215,5 +215,28 @@ else
   fail proposal-approved-in-the-app "the proposal wasn't approved in the app, or its connection didn't go through" "${out}"
 fi
 
+# 10. A node added in the app by its pairing link (here this machine's own node, over the network): the app pairs,
+# keeps the node, and shows it beside this machine's.
+scripts/ui-vm.sh "${shots}/node" '
+for id in $(snitchhiker devices | awk "NR > 1 {print \$1}"); do snitchhiker devices rm "$id" >/dev/null; done
+link=$(snitchhiker pair | grep "^snitchhiker://")
+click 66 535
+sleep 2
+click 315 253
+sleep 2
+click 640 144
+type_text "$link"
+sleep 1
+click 49 266
+sleep 10
+{ snitchhiker devices; cat /var/lib/snitchhiker-ui/$uid/nodes.toml; } > /tmp/desktop-result.txt 2>&1' 'mode = "monitor"
+remote = true' >/dev/null 2>&1
+out=$(result)
+if grep -Eq "snitchhiker-e2e +admin +connected" <<<"${out}" && grep -q '^id = "' <<<"${out}"; then
+  pass node-added-in-the-app
+else
+  fail node-added-in-the-app "the app didn't pair with the node by its link, or didn't connect to it" "${out}"
+fi
+
 echo "screenshots in ${shots}"
 exit "${failed}"
