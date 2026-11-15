@@ -2056,35 +2056,39 @@ the security model, and the GUI framework are proven before the bulk of feature 
 
 - [ ] **`client` crate (from M2)**
   - [x] Reconnect with backoff, resubscribing from the last seq seen (the app's backend).
-  - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)) and the query language with its two
-        executors.
+  - [x] The query language with its two executors: parsed in the core crate (spans for highlighting), run in memory
+        by clients and as SQL by the node through the same matching functions, checked equal by a property test.
+  - [ ] Cache and replication ([§11.6](#116-client-cache-and-replication)).
 - [ ] **App shell**
   - [ ] Framework from M0, theme (light and dark), sidebar with nodes, navigation, settings storage (cosmetic only).
-  - [ ] Environment scrubbing at start, the X11 banner, the compositor peer check.
+  - [x] Environment scrubbing at start. [ ] The X11 banner, the compositor peer check.
 - [ ] **Shared widgets**
-  - [ ] Virtualized table with a tested selection model, sort, column chooser, copy CSV.
-  - [ ] Tree view with drag-and-drop, query input with highlighting and completion, time-range picker, sparklines.
+  - [x] Virtualized table with a tested selection model (check boxes, Shift ranges). [ ] Sort, column chooser,
+        copy CSV.
+  - [x] Query input (checked as typed, the error shown). [ ] Highlighting and completion, tree drag-and-drop,
+        time-range picker, sparklines.
 - [ ] **Views**
-  - [ ] Prompts window + notifications with actions + tray icon with count.
-  - [ ] Live, Events (infinite scroll), Explorer (pivot + drill-down), Connections (live, kill).
-  - [ ] Rules: tree, search, edit dialog with matcher builder and live preview ("matches N past events"), bulk ops,
-        enable/disable subtree, lint/dedupe, history/undo, explain.
-  - [ ] System firewall editor.
-  - [ ] Alerts list and acknowledge; alert rules editor.
-  - [ ] Settings/policy per node; trusted clients; about/diagnostics.
+  - [x] Prompts window + notifications with actions. [ ] Tray icon with count.
+  - [x] Events (infinite scroll, query filter, explain), Explorer (pivot + drill-down), Connections (live, kill).
+        [ ] Live.
+  - [x] Rules: tree, search, edit dialog with matcher builder and history check, bulk ops, enable/disable subtree,
+        lint/dedupe, history/undo, explain.
+  - [x] System firewall editor.
+  - [x] Alerts list and acknowledge; alert rules editor.
+  - [x] Settings/policy per node; trusted clients; about.
 - [ ] **Import/export**
-  - [ ] Native, the OpenSnitch rules + `system-fw.json` importer (with a preview), CSV export.
+  - [x] The OpenSnitch importer (command line). [ ] In the app with a preview, `system-fw.json`, CSV export.
 - [x] **Packaging**
   - [x] `.desktop` file, icons, the setgid install, a systemd user unit for autostart, the `snitchhiker-ui` package.
   - [x] Package hooks: `snitchhikerd trust-client /usr/bin/snitchhiker-ui` after install and upgrade, `untrust-client`
         on removal ([decision 0006](decisions/0006-client-trust.md)); the app shows the daemon's refusal reason.
 - [ ] **Docs**
   - [ ] Screenshot pipeline for the desktop app (synthetic history, VM, headless compositor, text check).
-  - [ ] Guides: answering prompts, rules and folders, the query language, the Explorer, importing from OpenSnitch.
-Done so far besides: the shell with environment scrubbing; Prompts with desktop notifications and their actions;
-Events with infinite scroll and live events; the Explorer, from hourly rollups (a month of a million connections in
-about 50 ms); the rule editor with its check against history, and history with undo; the OpenSnitch importer (command
-line). Left: as unchecked above.
+  - [x] Guides: rules and folders, the query language, the system firewall, alerts, importing from OpenSnitch.
+        [ ] Answering prompts in the app, the Explorer.
+Besides the plan: the node's policy can be changed by clients while it runs (recorded and undoable), the system
+firewall can be changed on trial (reverting unless confirmed), and the node raises alerts about itself (crashes,
+tables removed by other tools, queue overflows, lost history, dangerous actions).
 
 - **DoD:** the user replaces OpenSnitch on the workstation. Every OpenSnitch rule is imported, prompts are answered in
   the app, and the explorer stays responsive on more than 1M events.
