@@ -107,6 +107,7 @@ message Response {
     PromptList prompts = 18;
     RuleFile rule_file = 20;
     AuditPage audit = 23;
+    EventBlock event_block = 24;
   }
 }
 
@@ -322,6 +323,22 @@ message ListEvents {
   // Events older than this sequence number; 0 for the newest.
   int64 before = 1;
   uint32 limit = 2;
+  // Answer with an EventBlock instead of an EventPage.
+  bool columnar = 3;
+}
+
+// Bulk data: events as a columnar block (its format is in the protocol documentation), and the strings it refers to
+// that this connection hasn't been sent yet. Strings are the node's interned ids: stable for the node's epoch, so a
+// client keeps one dictionary per node.
+message EventBlock {
+  bytes columns = 1;
+  Dictionary dictionary = 2;
+}
+
+message Dictionary {
+  repeated uint32 ids = 1;
+  // values[i] is the string of ids[i].
+  repeated string values = 2;
 }
 
 message EventPage {
@@ -351,6 +368,9 @@ message Subscribe {
   // TOPIC_EVENTS: send the stored events with a greater seq first. At most 4000 can be sent this way; further behind,
   // the answer is ERROR_CODE_INVALID, and the client pages with ListEvents and subscribes from the newest.
   optional int64 after = 2;
+  // TOPIC_EVENTS: events come as EventBlock notices, one per batch the node records (about every 100 ms), instead of
+  // one ConnectionEvent each. A backfill comes as one block.
+  bool columnar = 3;
 }
 
 message Subscribed {
@@ -368,6 +388,7 @@ message Notice {
     PromptResolved prompt_resolved = 3;
     ConnectionEvent event = 4;
     RulesChanged rules_changed = 5;
+    EventBlock event_block = 7;
   }
   // Notices of this subscription were dropped before this one, because the client didn't read them fast enough: it
   // resubscribes from the last event it saw, or lists prompts or rules again.
