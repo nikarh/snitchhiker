@@ -1,0 +1,25 @@
+# snitchhiker-relay's configuration. Every key is optional; unknown keys are errors.
+# https://nikarh.github.io/snitchhiker/install/relay/
+
+# Plain HTTP: the relay protocol (behind a reverse proxy doing TLS), and ACME's challenges.
+# http_bind = "[::]:80"
+
+# TLS: "none" (default: a reverse proxy in front terminates it), "acme" (certificates from Let's Encrypt for
+# `domains`), or "files" (`cert` and `key`, PEM).
+# tls = "acme"
+# https_bind = "[::]:443"
+# domains = ["relay.example.org"]
+# contact = "admin@example.org"
+# cert_dir = "/var/lib/snitchhiker-relay/certs"
+# acme_staging = false
+# cert = "/etc/snitchhiker/relay.crt"
+# key = "/etc/snitchhiker/relay.key"
+
+# QUIC address discovery, so devices learn their public address (needs tls = "files").
+# quic_bind = "[::]:7842"
+
+# The endpoint ids (of nodes and devices: `snitchhiker devices` lists them) that may use the relay. None: anyone.
+# allow = []
+
+# Prometheus metrics.
+# metrics_bind = "127.0.0.1:9090"

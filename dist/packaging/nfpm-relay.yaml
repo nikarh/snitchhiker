@@ -1,0 +1,42 @@
+# nfpm config of the relay's packages, built by scripts/package.sh from a release binary of snitchhiker-relay.
+name: snitchhiker-relay
+arch: ${SNITCHHIKER_ARCH}
+version: ${SNITCHHIKER_VERSION}
+version_schema: none
+release: 1
+section: net
+priority: optional
+maintainer: Nikolay Arhipov <nikarh@users.noreply.github.com>
+description: Relay of the Snitchhiker application firewall, for nodes and devices behind NAT
+homepage: https://github.com/nikarh/snitchhiker
+license: MIT OR Apache-2.0
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+  archlinux:
+    depends:
+      - glibc
+
+archlinux:
+  packager: Nikolay Arhipov <nikarh@users.noreply.github.com>
+
+contents:
+  - src: target/package/snitchhiker-relay
+    dst: /usr/bin/snitchhiker-relay
+    file_info:
+      mode: 0755
+  - src: dist/relay/snitchhiker-relay.service
+    dst: /usr/lib/systemd/system/snitchhiker-relay.service
+    file_info:
+      mode: 0644
+  - src: dist/relay/relay.toml
+    dst: /etc/snitchhiker/relay.toml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: LICENSE-MIT
+    dst: /usr/share/licenses/snitchhiker-relay/LICENSE-MIT
+  - src: LICENSE-APACHE
+    dst: /usr/share/licenses/snitchhiker-relay/LICENSE-APACHE

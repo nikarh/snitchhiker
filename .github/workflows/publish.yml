@@ -70,16 +70,19 @@ jobs:
           SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
           set -euo pipefail
-          cargo build --locked --release -p snitchhiker-daemon -p snitchhiker-ui
+          cargo build --locked --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-relay
           bin=target/release/snitchhikerd
           "$bin" --version
           mkdir -p out
           cp "$bin" "out/snitchhikerd-${{ matrix.arch }}-linux-gnu"
           cp target/release/snitchhiker-ui "out/snitchhiker-ui-${{ matrix.arch }}-linux-gnu"
+          cp target/release/snitchhiker-relay "out/snitchhiker-relay-${{ matrix.arch }}-linux-gnu"
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install_args: nfpm
       - name: Packages
+        env:
+          SNITCHHIKER_RELAY: target/release/snitchhiker-relay
         run: scripts/package.sh ${{ matrix.arch }} target/release/snitchhikerd out target/release/snitchhiker-ui
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
