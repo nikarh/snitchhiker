@@ -60,7 +60,7 @@ run = ["npm install --no-audit --no-fund", "npm run dev"]
 [tasks."docs:api"]
 description = "The crates' API docs (rustdoc), into site/public/api, published with the site"
 run = [
-  "cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e",
+  "cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e --exclude snitchhiker-ui --exclude snitchhiker-wire-bench",
   "rm -rf site/public/api",
   "cp -r target/doc site/public/api",
 ]

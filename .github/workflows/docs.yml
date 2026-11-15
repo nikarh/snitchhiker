@@ -47,7 +47,7 @@ jobs:
       - run: rustup toolchain install
       - name: API docs
         run: |
-          cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e
+          cargo doc --locked --no-deps --workspace --exclude snitchhiker-e2e --exclude snitchhiker-ui --exclude snitchhiker-wire-bench
           cp -r target/doc site/public/api
       - name: Build
         working-directory: site
