@@ -1903,38 +1903,39 @@ the security model, and the GUI framework are proven before the bulk of feature 
 
 ### M0. Spikes and decisions
 
-- [ ] **Repo bootstrap**
-  - [ ] `git init`, workspace skeleton, `rust-toolchain.toml` (latest stable), `mise.toml` tasks, lints, `clippy.toml`,
+- [x] **Repo bootstrap**
+  - [x] `git init`, workspace skeleton, `rust-toolchain.toml` (latest stable), `mise.toml` tasks, lints, `clippy.toml`,
         `deny.toml`, `cliff.toml`, `AGENTS.md`, `LICENSE-MIT` + `LICENSE-APACHE`, `SECURITY.md`, README stub.
-  - [ ] CI skeleton (`fmt, lint, tests`, `dependency audit`, `dependency review`), `allowed-actions.txt`,
+  - [x] CI skeleton (`fmt, lint, tests`, `dependency audit`, `dependency review`), `allowed-actions.txt`,
         `check-actions.sh`.
-  - [ ] VM harness from barbican's `e2e/vm.sh`: cached cloud images per distro, throwaway overlays, user-mode
+  - [x] VM harness from barbican's `e2e/vm.sh`: cached cloud images per distro, throwaway overlays, user-mode
         networking, inter-VM links, `vm:*` mise tasks, the `single` topology first; KVM on CI. `AGENTS.md` states
         that nothing privileged runs on the host ([§12.1](#121-where-tests-run-virtual-machines-only)).
-  - [ ] Create the private GitHub repo; go public when M2 lands (decision).
-- [ ] **Spike: interception + attribution** (in the VMs; throwaway code allowed, but in `crates/daemon` if it
+  - [x] Create the private GitHub repo; go public when M2 lands (decision).
+- [x] **Spike: interception + attribution** (in the VMs; throwaway code allowed, but in `crates/daemon` if it
       survives)
-  - [ ] Create our nftables table, chains and queue rules with our own netlink batches (no libnftables).
-  - [ ] NFQUEUE with `nfq`: hold a SYN for 30 s without a verdict, then accept. Measure the client-visible delay and
+  - [x] Create our nftables table, chains and queue rules with our own netlink batches (no libnftables).
+  - [x] NFQUEUE (our own netlink code, not `nfq`): hold a SYN without a verdict, then accept. Measure the client-visible delay and
         the retransmit behaviour. Check queue-full behaviour with `fail-open`.
-  - [ ] Write the connect kprobes in CO-RE C (`"Dual MIT/GPL"`), load them with aya, and get pid + exe for TCP and
+  - [x] Write the connect kprobes in CO-RE C (`"Dual MIT/GPL"`), load them with aya, and get pid + exe for TCP and
         UDP flows on Arch (latest kernel) and Ubuntu 24.04 / Amazon Linux 2023 (6.1).
-  - [ ] Decide: C + clang CO-RE vs `aya-ebpf` (Rust). Record in `docs/decisions/0001-ebpf.md`.
+  - [x] Decide: C + clang CO-RE vs `aya-ebpf` (Rust). Record in `docs/decisions/0001-ebpf.md`.
 - [ ] **Spike: local auth**
-  - [ ] Setgid test client: confirm non-dumpable (ptrace and `/proc/pid/mem` from the same uid fail), `SO_PEERPIDFD`
+  - [x] Setgid test client: confirm non-dumpable (ptrace and `/proc/pid/mem` from the same uid fail), `SO_PEERPIDFD`
         and `/proc/pid/exe` checks, and the race re-check.
-  - [ ] polkit check from the daemon with `zbus_polkit` and a pidfd subject.
+  - [ ] polkit check from the daemon with `zbus_polkit` and a pidfd subject. *(Moved to M2, with step-up.)*
 - [ ] **Spike: GUI**
-  - [ ] gpui-ce hello world with a virtualized 1M-row table, a tree view and a text input, on Wayland (niri/KDE/GNOME)
+  - [x] gpui-ce hello world with a virtualized 1M-row table, a tree view and a text input, on Wayland (niri/KDE/GNOME)
         and X11.
-  - [ ] The same with `gpui-pre` + `gpui-component`. Compare effort.
-  - [ ] Run each setgid. Check that wgpu/Vulkan, fonts, IME, clipboard, the notification D-Bus, the tray and portals
-        (file chooser) all still work.
-  - [ ] Decide the framework. Record in `docs/decisions/0002-desktop-ui.md`.
-- [ ] **Spike: remote**
+  - [x] The same with `gpui-pre` + `gpui-component`. Compare effort.
+  - [ ] Run each setgid (done: renders on Wayland with Vulkan and fonts). Check that IME, clipboard, the notification D-Bus, the tray and portals
+        (file chooser) all still work. *(Moved to M3, once the app exists.)*
+  - [x] Decide the framework. Record in `docs/decisions/0004-desktop-ui.md`.
+- [ ] **Spike: remote** *(moved to the start of M5: M1–M4 don't depend on it)*
   - [ ] iroh 1.x echo between the daemon on a NAT'd host and an Android emulator/device through the Rust core via
         UniFFI. Use a self-hosted `iroh-relay`. Measure connect time (direct vs relayed) and idle battery cost.
-- **DoD:** four decision records written; the risky unknowns resolved or re-planned.
+- **DoD:** four decision records written; the risky unknowns resolved or re-planned. *(Done: `docs/decisions/`
+  0001–0004; polkit, the GUI's desktop integration and the remote spike re-planned as noted.)*
 
 ### M1. Headless daemon MVP
 
