@@ -27,11 +27,19 @@ uid=\$(id -u mallory)
 install -d -o mallory -m 700 /run/user/\$uid
 pkill -u mallory -x sway || true
 pkill -u mallory -f snitchhiker-ui || true
+pkill -u mallory -x mako || true
+pkill -u mallory -x dbus-daemon || true
+# One session bus for sway, the notification server (mako) and the app; its address is kept for makoctl.
 runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 \
-  WLR_RENDERER=pixman sway -c /dev/null >/tmp/sway.log 2>&1 &
+  WLR_RENDERER=pixman dbus-run-session -- sh -c '
+    echo "\$DBUS_SESSION_BUS_ADDRESS" > "\$XDG_RUNTIME_DIR/bus-address"
+    sway -c /dev/null >/tmp/sway.log 2>&1 &
+    while [ ! -S "\$XDG_RUNTIME_DIR/wayland-1" ]; do sleep 0.1; done
+    export WAYLAND_DISPLAY=wayland-1
+    mako >/tmp/mako.log 2>&1 &
+    LANG=C.UTF-8 /usr/bin/snitchhiker-ui >/tmp/ui.log 2>&1
+  ' </dev/null >/dev/null 2>&1 &
 for _ in \$(seq 50); do [ -S /run/user/\$uid/wayland-1 ] && break; sleep 0.1; done
-runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=wayland-1 LANG=C.UTF-8 \
-  /usr/bin/snitchhiker-ui >/tmp/ui.log 2>&1 &
 sleep 4
 ${setup}
 sleep 2
