@@ -2215,30 +2215,41 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M7. Containers, VMs and network namespaces
 
-- [ ] **Spikes**
-  - [ ] Rootless Podman with pasta and with slirp4netns: install and manage our table inside the container's
-        namespace (setns from the daemon), check the queue and verdict path there, and map the helper's host sockets
-        to the container from Podman's state.
-  - [ ] VM tap → QEMU process via `/proc/<pid>/fdinfo` `iff:`; machined lookups for libvirt VMs and nspawn.
-- [ ] **Forward-path interception**
-  - [ ] `forward` chain queueing for container bridges and VM taps; priority relative to Docker's and libvirt's rules
-        and to NAT; tested with Docker on both iptables-nft and native nftables.
-  - [ ] Per-namespace tables: rootless container namespaces (following container lifecycle events) and managed bare
-        namespaces (watch `/run/netns`); tamper detection and restore; `CAP_NET_ADMIN` container flagging.
-  - [ ] Host-side container-level enforcement of pasta/slirp4netns sockets.
-- [ ] **Identity**
-  - [ ] Docker (reuse portcullis's client and events), Podman rootful and rootless (on-disk state), machined (nspawn,
-        libvirt), QEMU command lines; cache by cgroup id; lifecycle events.
-  - [ ] Container filesystem view for exe, hash, writable and package checks (`/proc/<pid>/root`).
-- [ ] **Rules and prompts**
-  - [ ] `container.*`, `vm.*`, `netns.name` matchers; `context` semantics; id-bound rules expiring on removal.
-  - [ ] Suggestion ladder for containers and VMs; Compose-service folders.
-- [ ] **Clients**
-  - [ ] Context column and Explorer pivots; Containers & VMs view on desktop and Android; `snitchhiker contexts`.
-- [ ] **Coexistence docs:** Docker, libvirt, portcullis.
-- [ ] **Docs:** "Containers and VMs" guide with per-runtime notes and the coexistence page (Docker, libvirt,
-      portcullis, barbican); screenshots of the Containers & VMs view.
-- [ ] **Tests:** the container and VM matrix in [§12](#12-testing).
+- [x] **Spikes**
+  - [x] Rootless Podman with pasta: the daemon enters the container's namespace (a thread, `setns`), installs its table
+        and binds a queue there; the helper's host connections are tied to the container through the namespace on
+        its command line, resolved through the runtime's processes (pasta sandboxes itself).
+  - [x] A forwarded packet's sender: the bridge's forwarding database by source address, the veth's peer namespace
+        ([decision 0013](decisions/0013-forwarded-senders.md): the bridge port isn't in the packet's metadata at the IP
+        hooks). VM tap → its process via `/proc/<pid>/fdinfo` `iff:`. [ ] machined lookups (the command line names
+        libvirt's VMs already).
+- [x] **Forward-path interception**
+  - [x] `forward` chain queueing from the bridges in `forward_from` (Docker, Podman, CNI, libvirt, LXD, Incus), at
+        mangle priority, before NAT; tested with Docker on iptables-nft. [ ] Docker's native nftables backend.
+  - [x] Per-namespace tables: rootless container namespaces (from their helper's first connection, until the
+        container's process ends) and named namespaces (`/run/netns`, followed by the mount table's change
+        notifications); tamper detection by nftables notifications, restore and alert. [ ] `CAP_NET_ADMIN` container
+        flagging in the view.
+  - [x] Host-side container-level enforcement of pasta/slirp4netns sockets (the outer layer), let through once the
+        namespace is decided inside.
+- [x] **Identity**
+  - [x] Docker (its API), Podman rootful and rootless (its database), nspawn and LXC (cgroup), QEMU (command line);
+        cached by cgroup id. [ ] Docker's event stream (lookups are on first connection).
+  - [x] Container filesystem view: programs are their paths inside the container (`/proc/<pid>/exe`).
+- [x] **Rules and prompts**
+  - [x] `container.*`, `vm.*`, `netns` conditions (they imply their context); `context` semantics; [ ] id-bound rules
+        expiring on removal.
+  - [x] Suggestion ladder for containers (service, any program in it, image, this container) and VMs; prompts per
+        container. [ ] Compose-service folders.
+- [x] **Clients**
+  - [x] Context shown with the program (history, live, prompts) and a Container pivot in the Explorer; Containers & VMs
+        page on desktop and Android; `snitchhiker contexts`.
+- [x] **Coexistence docs:** Docker, libvirt, Podman, portcullis, barbican.
+- [x] **Docs:** "Containers and VMs" guide with per-runtime notes and the coexistence page. [ ] Screenshots of the
+      Containers & VMs view.
+- [x] **Tests:** bridged Docker containers, rules by name/image/Compose service, a container's prompt and its answer,
+      rootful and rootless Podman (inside the namespace, and its tamper), named namespaces, a VM on a bridge (a tap
+      held by a process with QEMU's command line). [ ] A real libvirt VM; Docker on native nftables.
 - **DoD:** a Compose project's `web` service is allowed to reach its API host and nothing else, a host rule for
   `/usr/bin/curl` does not let `curl` inside a container out, a libvirt VM shows up by name and can be limited to a set
   of destinations, and rootless Podman traffic is decided per binary inside the container rather than attributed to `pasta`.
