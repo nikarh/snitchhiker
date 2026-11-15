@@ -5,7 +5,7 @@
 //! change, and the process serving it runs as root. A process that bound a socket somewhere else, or got one into a
 //! directory it may write, can't pose as the node to answer the client's requests or feed it prompts.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{BufReader, BufWriter, Write as _};
 use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
@@ -71,6 +71,8 @@ pub struct Client {
     next_id: u64,
     notices: VecDeque<v1::Notice>,
     welcome: v1::Welcome,
+    /// The node's strings this connection was sent with columnar blocks, by id.
+    strings: HashMap<u32, String>,
 }
 
 impl Client {
@@ -109,6 +111,7 @@ impl Client {
                 buffer,
                 next_id: 0,
                 notices: VecDeque::new(),
+                strings: HashMap::new(),
                 welcome,
             }),
             Some(v1::server_frame::Body::Refusal(refusal)) => Err(Error::Refused(refusal.reason)),
@@ -135,7 +138,7 @@ impl Client {
         frame::write(&mut self.writer, &request, &mut self.buffer)?;
         self.writer.flush()?;
         loop {
-            let frame: v1::ServerFrame = frame::read(&mut self.reader, &mut self.buffer)?;
+            let frame = self.read()?;
             match frame.body {
                 Some(v1::server_frame::Body::Response(response)) if response.id == id => {
                     return match response.result {
@@ -162,7 +165,7 @@ impl Client {
             return Ok(notice);
         }
         loop {
-            let frame: v1::ServerFrame = frame::read(&mut self.reader, &mut self.buffer)?;
+            let frame = self.read()?;
             match frame.body {
                 Some(v1::server_frame::Body::Notice(notice)) => return Ok(notice),
                 Some(v1::server_frame::Body::Refusal(refusal)) => {
@@ -171,6 +174,36 @@ impl Client {
                 _ => {}
             }
         }
+    }
+
+    /// The next frame, with the dictionary entries of a block it carries learned.
+    fn read(&mut self) -> Result<v1::ServerFrame, Error> {
+        let frame: v1::ServerFrame = frame::read(&mut self.reader, &mut self.buffer)?;
+        let block = match &frame.body {
+            Some(
+                v1::server_frame::Body::Response(v1::Response {
+                    result: Some(v1::response::Result::EventBlock(block)),
+                    ..
+                })
+                | v1::server_frame::Body::Notice(v1::Notice {
+                    body: Some(v1::notice::Body::EventBlock(block)),
+                    ..
+                }),
+            ) => Some(block),
+            _ => None,
+        };
+        if let Some(dictionary) = block.and_then(|b| b.dictionary.as_ref()) {
+            for (id, value) in dictionary.ids.iter().zip(&dictionary.values) {
+                self.strings.insert(*id, value.clone());
+            }
+        }
+        Ok(frame)
+    }
+
+    /// A string of the node's dictionary, by the id a columnar block uses.
+    #[must_use]
+    pub fn string(&self, id: u32) -> Option<&str> {
+        self.strings.get(&id).map(String::as_str)
     }
 
     /// How long reads wait (for [`Client::notice`]); `None` for ever.
@@ -186,9 +219,20 @@ impl Client {
     /// Subscribes to a topic, for events after the sequence number `after` first (the last event seen before a
     /// reconnect): they are queued as notices before this returns. Returns the subscription's id.
     pub fn subscribe_after(&mut self, topic: v1::Topic, after: Option<i64>) -> Result<u64, Error> {
+        self.subscribe_with(topic, after, false)
+    }
+
+    /// Subscribes to a topic, from `after` (see [`Client::subscribe_after`]); `columnar` asks for events as blocks.
+    pub fn subscribe_with(
+        &mut self,
+        topic: v1::Topic,
+        after: Option<i64>,
+        columnar: bool,
+    ) -> Result<u64, Error> {
         match self.call(v1::request::Method::Subscribe(v1::Subscribe {
             topic: topic.into(),
             after,
+            columnar,
         }))? {
             v1::response::Result::Subscribed(subscribed) => Ok(subscribed.subscription),
             _ => Err(Error::Protocol("not a subscription")),

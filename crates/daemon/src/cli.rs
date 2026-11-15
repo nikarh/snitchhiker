@@ -142,7 +142,11 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
             reject_rest(args)?;
             let mut client = connect(version)?;
-            match client.call(Method::ListEvents(v1::ListEvents { before: 0, limit }))? {
+            match client.call(Method::ListEvents(v1::ListEvents {
+                before: 0,
+                limit,
+                columnar: false,
+            }))? {
                 v1::response::Result::Events(page) => out(&format_events(&page.events)),
                 _ => Err(unexpected()),
             }

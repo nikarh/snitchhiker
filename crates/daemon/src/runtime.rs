@@ -23,7 +23,9 @@ use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
 use tracing::{error, info, warn};
 
+use crate::hub::Outgoing;
 use snitchhiker_core::rule::{Expiry, FolderId, Rule, RuleId, Tier};
+use snitchhiker_proto::columns::{self, EventRow};
 use snitchhiker_proto::{convert, v1};
 
 use crate::config::{Config, Fail, Mode, Policy};
@@ -681,17 +683,80 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) {
     }
 }
 
-/// Pushes recorded events to the subscribers of the events topic, if there are any.
-fn publish_events(shared: &Shared, batch: &[Event], seqs: &[i64]) {
-    if !shared.hub.has_subscribers(v1::Topic::Events) {
-        return;
+/// Pushes recorded events to the subscribers of the events topic: one message each to those that want messages, and
+/// the batch as one columnar block to those that want blocks.
+fn publish_events(shared: &Shared, batch: &[Event], recorded: &[crate::store::Recorded]) {
+    let (messages, blocks) = shared.hub.wanted(v1::Topic::Events);
+    let plain: Vec<Outgoing> = if messages {
+        batch
+            .iter()
+            .zip(recorded)
+            .map(|(event, r)| {
+                Outgoing::Notice(v1::notice::Body::Event(crate::api::event(
+                    &event.stored(r.seq),
+                )))
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let block = if blocks {
+        let rows: Vec<EventRow> = batch
+            .iter()
+            .zip(recorded)
+            .map(|(e, r)| event_row(e, r))
+            .collect();
+        let mut strings: Vec<(u32, Arc<str>)> = Vec::new();
+        for (event, r) in batch.iter().zip(recorded) {
+            strings.push((r.exe, Arc::clone(&event.exe)));
+            if let Some(host) = &event.host {
+                strings.push((r.host, Arc::clone(host)));
+            }
+        }
+        let mut columns = Vec::new();
+        match columns::encode_events(&rows, &mut columns) {
+            Ok(()) => Some(Outgoing::Block {
+                columns: bytes::Bytes::from(columns),
+                strings: Arc::from(strings),
+            }),
+            Err(error) => {
+                error!(%error, "encoding an event block");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if messages || block.is_some() {
+        shared
+            .hub
+            .publish_all(v1::Topic::Events, &plain, block.as_ref());
     }
-    let bodies: Vec<v1::notice::Body> = batch
-        .iter()
-        .zip(seqs)
-        .map(|(event, seq)| v1::notice::Body::Event(crate::api::event(&event.stored(*seq))))
-        .collect();
-    shared.hub.publish_all(v1::Topic::Events, &bodies);
+}
+
+/// A recorded event as a block's row: the protocol's numbers, the strings' ids.
+fn event_row(event: &Event, recorded: &crate::store::Recorded) -> EventRow {
+    let address = match event.address {
+        std::net::IpAddr::V4(a) => a.to_ipv6_mapped().octets(),
+        std::net::IpAddr::V6(a) => a.octets(),
+    };
+    EventRow {
+        seq: recorded.seq,
+        time_ms: event.time_ms,
+        exe: recorded.exe,
+        host: recorded.host,
+        uid: event.uid,
+        pid: event.pid,
+        address,
+        port: event.port,
+        protocol: event.protocol,
+        context: event.context.saturating_add(1),
+        action: u8::try_from(i32::from(convert::action(event.action))).unwrap_or(0),
+        source: event.source as u8,
+        rule: event.rule.unwrap_or(0),
+        bytes_out: 0,
+        bytes_in: 0,
+    }
 }
 
 fn write_loop(
@@ -701,7 +766,7 @@ fn write_loop(
     retention: Duration,
 ) {
     let mut batch = Vec::with_capacity(BATCH);
-    let mut seqs = Vec::with_capacity(BATCH);
+    let mut recorded = Vec::with_capacity(BATCH);
     let mut last_prune = Instant::now();
     let mut last_bytes = Instant::now();
     let mut counted: HashMap<u64, (u64, u64)> = HashMap::new();
@@ -723,8 +788,8 @@ fn write_loop(
         }
         let mut store = store.lock().unwrap_or_else(PoisonError::into_inner);
         if !batch.is_empty() {
-            match store.record(&batch, &mut seqs) {
-                Ok(()) => publish_events(shared, &batch, &seqs),
+            match store.record(&batch, &mut recorded) {
+                Ok(()) => publish_events(shared, &batch, &recorded),
                 Err(error) => error!(%error, events = batch.len(), "recording events"),
             }
         }

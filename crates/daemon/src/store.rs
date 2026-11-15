@@ -9,6 +9,7 @@ use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension as _, params};
 use snitchhiker_core::rule::{Action, Expiry, Folder, FolderId, Rule, RuleId, Tier};
+use snitchhiker_proto::columns::EventRow;
 
 /// The schema, applied in order; the index of the last one applied is kept in `PRAGMA user_version`.
 const MIGRATIONS: &[&str] = &[
@@ -155,6 +156,7 @@ pub const STATEMENTS: &[(&str, &str)] = &[
         "strings.find",
         "SELECT id FROM strings WHERE kind = ?1 AND value = ?2",
     ),
+    ("strings.by_id", "SELECT value FROM strings WHERE id = ?1"),
     (
         "strings.insert",
         "INSERT INTO strings (kind, value) VALUES (?1, ?2)",
@@ -179,6 +181,19 @@ pub const STATEMENTS: &[(&str, &str)] = &[
                 e.action, e.source, e.rule, e.bytes_out, e.bytes_in
          FROM events e CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
          WHERE e.seq > ?1 ORDER BY e.seq LIMIT ?2",
+    ),
+    // The same pages as rows for columnar blocks: strings stay ids.
+    (
+        "events.page_rows",
+        "SELECT seq, time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule, bytes_out,
+                bytes_in
+         FROM events WHERE seq < ?1 ORDER BY seq DESC LIMIT ?2",
+    ),
+    (
+        "events.after_rows",
+        "SELECT seq, time_ms, exe, host, uid, pid, protocol, address, port, context, action, source, rule, bytes_out,
+                bytes_in
+         FROM events WHERE seq > ?1 ORDER BY seq LIMIT ?2",
     ),
     // Connections no rule decided, since a time: what `learn` turns into rules.
     (
@@ -244,6 +259,14 @@ impl Event {
             bytes_in: 0,
         }
     }
+}
+
+/// What recording an event gave it: its seq, and the ids of its strings (0 for no host).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Recorded {
+    pub seq: i64,
+    pub exe: u32,
+    pub host: u32,
 }
 
 /// A recorded connection, as read back.
@@ -462,9 +485,9 @@ impl Store {
     }
 
     /// Records events in one transaction.
-    /// Records `events`; their sequence numbers replace what `seqs` held, in the same order.
-    pub fn record(&mut self, events: &[Event], seqs: &mut Vec<i64>) -> Result<(), Error> {
-        seqs.clear();
+    /// Records `events`; what `recorded` held is replaced by each one's seq and string ids, in the same order.
+    pub fn record(&mut self, events: &[Event], recorded: &mut Vec<Recorded>) -> Result<(), Error> {
+        recorded.clear();
         let transaction = self.connection.unchecked_transaction()?;
         for event in events {
             let exe = intern(
@@ -503,7 +526,11 @@ impl Store {
                     event.rule.map(db_id),
                     event.cookie.map(db_id),
                 ])?;
-            seqs.push(self.connection.last_insert_rowid());
+            recorded.push(Recorded {
+                seq: self.connection.last_insert_rowid(),
+                exe: u32::try_from(exe).unwrap_or(0),
+                host: host.map_or(0, |id| u32::try_from(id).unwrap_or(0)),
+            });
         }
         transaction.commit()?;
         Ok(())
@@ -555,6 +582,43 @@ impl Store {
             },
         )?;
         Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The newest events before `before` as rows for a columnar block, oldest first.
+    pub fn event_rows(&self, before: i64, limit: u32) -> Result<Vec<EventRow>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("events.page_rows")?)?;
+        let rows = statement.query_map(params![before, limit], event_row)?;
+        let mut rows: Vec<EventRow> = rows.collect::<Result<_, _>>()?;
+        rows.reverse();
+        Ok(rows)
+    }
+
+    /// The oldest events after `after` as rows for a columnar block.
+    pub fn event_rows_after(&self, after: i64, limit: u32) -> Result<Vec<EventRow>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("events.after_rows")?)?;
+        let rows = statement.query_map(params![after, limit], event_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The strings of `ids` (an exe's or a host's), for a block's dictionary; unknown ids are left out.
+    pub fn strings_of(
+        &self,
+        ids: impl IntoIterator<Item = u32>,
+    ) -> Result<Vec<(u32, std::sync::Arc<str>)>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("strings.by_id")?)?;
+        let mut out = Vec::new();
+        for id in ids {
+            if id == 0 {
+                continue;
+            }
+            let value: Option<String> = statement
+                .query_row(params![id], |row| row.get(0))
+                .optional()?;
+            if let Some(value) = value {
+                out.push((id, std::sync::Arc::from(value)));
+            }
+        }
+        Ok(out)
     }
 
     /// Connections no rule decided since `since_ms`: (exe, host, uid, protocol, address, port).
@@ -666,6 +730,33 @@ fn db_id(id: u64) -> i64 {
     i64::try_from(id).unwrap_or(i64::MAX)
 }
 
+/// An event as `events.page_rows` and `events.after_rows` select it.
+fn event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<EventRow> {
+    let address: Vec<u8> = row.get(7)?;
+    let id = |index| {
+        row.get::<_, Option<i64>>(index)
+            .map(|id| id.map_or(0, |id| u32::try_from(id).unwrap_or(0)))
+    };
+    Ok(EventRow {
+        seq: row.get(0)?,
+        time_ms: id_of(row.get(1)?),
+        exe: id(2)?,
+        host: id(3)?,
+        uid: row.get(4)?,
+        pid: row.get(5)?,
+        address: address.try_into().unwrap_or([0; 16]),
+        port: row.get(8)?,
+        protocol: row.get(6)?,
+        // Blocks carry the protocol's numbers; the history keeps the host as 0.
+        context: row.get::<_, u8>(9)?.saturating_add(1),
+        action: row.get(10)?,
+        source: row.get(11)?,
+        rule: row.get::<_, Option<i64>>(12)?.map_or(0, id_of),
+        bytes_out: id_of(row.get(13)?),
+        bytes_in: id_of(row.get(14)?),
+    })
+}
+
 /// An event as `events.page` and `events.after` select it.
 fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
     let address: Vec<u8> = row.get(7)?;
@@ -722,7 +813,7 @@ mod tests {
     #[test]
     fn recording_gives_sequence_numbers_to_resume_from() {
         let mut store = Store::in_memory().unwrap();
-        let mut seqs = Vec::new();
+        let mut recorded = Vec::new();
         store
             .record(
                 &[
@@ -730,10 +821,32 @@ mod tests {
                     event(2, "/usr/bin/curl", None),
                     event(3, "/usr/bin/wget", None),
                 ],
-                &mut seqs,
+                &mut recorded,
             )
             .unwrap();
+        let seqs: Vec<i64> = recorded.iter().map(|r| r.seq).collect();
         assert_eq!(seqs.len(), 3);
+        assert!(
+            recorded[0].exe != 0
+                && recorded[0].exe == recorded[1].exe
+                && recorded[2].exe != recorded[0].exe
+        );
+        let rows = store.event_rows_after(seqs[0], 10).unwrap();
+        assert_eq!(rows.iter().map(|r| r.seq).collect::<Vec<_>>(), seqs[1..]);
+        assert_eq!(
+            store
+                .event_rows(i64::MAX, 2)
+                .unwrap()
+                .iter()
+                .map(|r| r.seq)
+                .collect::<Vec<_>>(),
+            seqs[1..]
+        );
+        let names = store.strings_of([recorded[2].exe, 0, 999_999]).unwrap();
+        assert_eq!(
+            names,
+            vec![(recorded[2].exe, std::sync::Arc::from("/usr/bin/wget"))]
+        );
         assert!(seqs.windows(2).all(|pair| pair[0] < pair[1]));
         let after = store.events_after(seqs[0], 10).unwrap();
         let resumed: Vec<i64> = after.iter().map(|e| e.seq).collect();

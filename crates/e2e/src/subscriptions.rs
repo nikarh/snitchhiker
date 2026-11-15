@@ -53,6 +53,7 @@ pub fn events_resume_from_a_sequence_number() -> Result<(), String> {
         .call(v1::request::Method::ListEvents(v1::ListEvents {
             before: 0,
             limit: 100,
+            columnar: false,
         }))
         .map_err(|e| e.to_string())?
     {
@@ -128,5 +129,93 @@ pub fn waiting_prompts_are_sent_on_subscribing() -> Result<(), String> {
         matches!(&sent.body, Some(v1::notice::Body::Prompt(p)) if p.id == prompt.id),
         "the waiting prompt wasn't sent to a client subscribing after it opened",
         &format!("{sent:?}"),
+    )
+}
+
+/// Events as columnar blocks: a page and a live batch, read in place, agree with the same events as messages, and the
+/// strings they use come with them once.
+pub fn events_come_as_columnar_blocks() -> Result<(), String> {
+    use snitchhiker_proto::columns::EventBlock;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    let mut daemon = Running::start("columnar", "mode = \"monitor\"\n")?;
+    for _ in 0..3 {
+        connect(port);
+    }
+    thread::sleep(Duration::from_secs(1));
+    let mut client = client()?;
+    let list = |columnar| {
+        v1::request::Method::ListEvents(v1::ListEvents {
+            before: 0,
+            limit: 100,
+            columnar,
+        })
+    };
+    let plain = match client.call(list(false)).map_err(|e| e.to_string())? {
+        v1::response::Result::Events(page) => page.events,
+        _ => return Err("not an event page".to_owned()),
+    };
+    let block = match client.call(list(true)).map_err(|e| e.to_string())? {
+        v1::response::Result::EventBlock(block) => block,
+        other => return Err(format!("not a block: {other:?}")),
+    };
+    let parsed = EventBlock::parse(&block.columns).map_err(|e| e.to_string())?;
+    let mut from_block: Vec<(i64, String, u32)> = parsed
+        .rows()
+        .map(|row| {
+            (
+                row.seq,
+                client.string(row.exe).unwrap_or("?").to_owned(),
+                u32::from(row.port),
+            )
+        })
+        .collect();
+    from_block.sort_unstable();
+    let mut from_messages: Vec<(i64, String, u32)> = plain
+        .iter()
+        .map(|e| (e.seq, e.exe.clone(), e.port))
+        .collect();
+    from_messages.sort_unstable();
+    // A live batch, as a block, after subscribing with blocks.
+    client
+        .subscribe_with(v1::Topic::Events, None, true)
+        .map_err(|e| e.to_string())?;
+    connect(port);
+    let live = loop {
+        let notice = client.notice().map_err(|e| e.to_string())?;
+        if let Some(v1::notice::Body::EventBlock(block)) = notice.body {
+            break block;
+        }
+    };
+    let live_rows: Vec<_> = EventBlock::parse(&live.columns)
+        .map_err(|e| e.to_string())?
+        .rows()
+        .collect();
+    daemon.stop()?;
+    let found = format!(
+        "messages {from_messages:?}\nblock {from_block:?}\nlive {live_rows:?} {:?}",
+        live.dictionary
+    );
+    check(
+        !from_messages.is_empty() && from_block == from_messages,
+        "the block doesn't hold the same events as the messages",
+        &found,
+    )?;
+    check(
+        live_rows
+            .iter()
+            .any(|row| row.port == port && client.string(row.exe).is_some()),
+        "the live block doesn't hold the new connection, or its program's name never came",
+        &found,
+    )?;
+    // The program's name was sent with the page: the live block doesn't repeat it.
+    check(
+        live.dictionary.as_ref().is_some_and(|d| {
+            d.ids
+                .iter()
+                .all(|id| live_rows.iter().all(|r| r.exe != *id))
+        }),
+        "the live block repeated a string this connection was sent already",
+        &found,
     )
 }

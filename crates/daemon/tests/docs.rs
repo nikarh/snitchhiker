@@ -31,11 +31,30 @@ fn aliases() -> String {
     text
 }
 
+fn block_columns() -> String {
+    use snitchhiker_proto::columns::Column;
+    let mut text = String::from(
+        "{/* Generated from Column in crates/proto/src/columns.rs by crates/daemon/tests/docs.rs. */}\n\n\
+         | Id | Column | Width | Holds |\n| --- | --- | --- | --- |\n",
+    );
+    for column in Column::all() {
+        let _ = writeln!(
+            text,
+            "| {} | `{column:?}` | {} | {} |",
+            column as u16,
+            column.width(),
+            column.describe()
+        );
+    }
+    text
+}
+
 fn generated() -> Vec<(&'static str, String)> {
     vec![
         ("cli-help.txt", HELP.to_owned()),
         ("daemon-help.txt", DAEMON_HELP.to_owned()),
         ("aliases.mdx", aliases()),
+        ("block-columns.mdx", block_columns()),
         (
             "config-defaults.toml",
             format!(

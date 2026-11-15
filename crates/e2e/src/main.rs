@@ -118,6 +118,10 @@ const SCENARIOS: &[Scenario] = &[
         subscriptions::events_resume_from_a_sequence_number,
     ),
     (
+        "subscriptions/events-come-as-columnar-blocks",
+        subscriptions::events_come_as_columnar_blocks,
+    ),
+    (
         "subscriptions/waiting-prompts-are-sent-on-subscribing",
         subscriptions::waiting_prompts_are_sent_on_subscribing,
     ),

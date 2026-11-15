@@ -11,7 +11,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::fd::OwnedFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+use std::sync::mpsc::{Receiver, sync_channel};
 use std::thread;
 
 use nix::sys::socket::{getsockopt, sockopt};
@@ -19,11 +19,12 @@ use snitchhiker_proto::{MAJOR, MINOR, convert, frame, v1};
 use tracing::{debug, info, warn};
 
 use crate::config::{Config, Mode, Policy, StepUp};
-use crate::hub::OUTBOUND;
+use crate::hub::{OUTBOUND, Outbox, Outgoing};
 use crate::peer::{end_with_process, identify, verify};
 use crate::runtime::{AnswerError, Daemon, now_ms};
 use crate::store::AuditEntry;
 use snitchhiker_core::rule::{Condition, allows_everything};
+use snitchhiker_proto::columns::{self, EventRow};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
 pub const CLIENT_SOCKET: &str = "/run/snitchhiker/client.sock";
@@ -211,6 +212,7 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io:
     debug!(app = %hello.app, version = %hello.app_version, ?role, "client connected");
 
     let (outbound, frames) = sync_channel::<v1::ServerFrame>(OUTBOUND);
+    let outbox = Arc::new(Outbox::new(outbound));
     let writer = {
         let stream = stream.try_clone()?;
         thread::Builder::new()
@@ -227,7 +229,7 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io:
             role: role.into(),
         })),
     };
-    let _ = outbound.send(welcome);
+    let _ = outbox.send(welcome);
     let result = loop {
         let incoming: v1::ClientFrame = match frame::read(&mut reader, &mut buffer) {
             Ok(frame) => frame,
@@ -238,19 +240,30 @@ fn serve(daemon: &Arc<Daemon>, stream: &UnixStream, caller: &Caller) -> std::io:
             continue;
         };
         let id = request.id;
-        let result = handle(daemon, connection, caller, &hello.app, &outbound, request);
-        let response = v1::ServerFrame {
+        let response = |result| v1::ServerFrame {
             body: Some(v1::server_frame::Body::Response(v1::Response {
                 id,
                 result: Some(result),
             })),
         };
-        if outbound.send(response).is_err() {
+        let sent = match handle(daemon, connection, caller, &hello.app, &outbox, request) {
+            Reply::Result(result) => outbox.send(response(result)),
+            // A block's dictionary is filled in as it is queued: see hub::Outbox.
+            Reply::Block { columns, strings } => outbox
+                .send_block(&strings, true, |dictionary| {
+                    response(v1::response::Result::EventBlock(v1::EventBlock {
+                        columns,
+                        dictionary: Some(dictionary),
+                    }))
+                })
+                .map_err(|_| crate::hub::Closed),
+        };
+        if sent.is_err() {
             break Ok(());
         }
     };
     daemon.shared.hub.forget(connection);
-    drop(outbound);
+    drop(outbox);
     let _ = writer.join();
     result
 }
@@ -315,26 +328,30 @@ fn handle(
     connection: u64,
     caller: &Caller,
     app: &str,
-    outbound: &SyncSender<v1::ServerFrame>,
+    outbox: &Arc<Outbox>,
     request: v1::Request,
-) -> v1::response::Result {
+) -> Reply {
     use v1::request::Method;
     use v1::response::Result as R;
     let role = caller.role;
     let Some(method) = request.method else {
-        return error(v1::ErrorCode::Unsupported, "unknown method");
+        return Reply::Result(error(v1::ErrorCode::Unsupported, "unknown method"));
     };
     if !allowed(role, &method) {
-        return error(v1::ErrorCode::Forbidden, "not allowed for this connection");
+        return Reply::Result(error(
+            v1::ErrorCode::Forbidden,
+            "not allowed for this connection",
+        ));
     }
-    match method {
+    Reply::Result(match method {
         Method::GetStatus(_) => R::Status(status(daemon)),
         Method::ListRules(_) => list_rules(daemon),
         Method::AddRule(add) => add_rule(daemon, caller, app, add),
         Method::DeleteRule(delete) => delete_rule(daemon, delete.id),
         Method::SetRuleEnabled(set) => set_rule_enabled(daemon, &set),
+        Method::ListEvents(list) if list.columnar => return event_block(daemon, &list),
         Method::ListEvents(list) => list_events(daemon, &list),
-        Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbound, &subscribe),
+        Method::Subscribe(subscribe) => self::subscribe(daemon, connection, outbox, &subscribe),
         Method::Unsubscribe(unsubscribe) => {
             if daemon
                 .shared
@@ -354,6 +371,48 @@ fn handle(
         Method::ImportRules(import) => import_rules(daemon, caller, app, &import),
         Method::ListAudit(list) => list_audit(daemon, &list),
         Method::ExportRules(_) => export_rules(daemon),
+    })
+}
+
+/// A block's columns and the strings they use.
+type Block = (bytes::Bytes, Vec<(u32, Arc<str>)>);
+
+/// What a request is answered with: a result, or a columnar block whose dictionary is filled in as it is queued.
+enum Reply {
+    Result(v1::response::Result),
+    Block {
+        columns: bytes::Bytes,
+        strings: Vec<(u32, Arc<str>)>,
+    },
+}
+
+/// Rows and the strings they use, as a block.
+fn block_of(daemon: &Daemon, rows: &[EventRow]) -> Result<Block, String> {
+    let mut ids: Vec<u32> = rows.iter().flat_map(|r| [r.exe, r.host]).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let strings = daemon.store().strings_of(ids).map_err(|e| e.to_string())?;
+    let mut columns = Vec::new();
+    columns::encode_events(rows, &mut columns).map_err(|e| e.to_string())?;
+    Ok((bytes::Bytes::from(columns), strings))
+}
+
+/// `ListEvents` as a block: the newest events before `before`, oldest first.
+fn event_block(daemon: &Daemon, list: &v1::ListEvents) -> Reply {
+    let before = if list.before == 0 {
+        i64::MAX
+    } else {
+        list.before
+    };
+    let rows = daemon
+        .store()
+        .event_rows(before, list.limit.clamp(1, 10_000));
+    match rows
+        .map_err(|e| e.to_string())
+        .and_then(|rows| block_of(daemon, &rows))
+    {
+        Ok((columns, strings)) => Reply::Block { columns, strings },
+        Err(e) => Reply::Result(internal(e)),
     }
 }
 
@@ -801,11 +860,12 @@ const BACKFILL: u32 = 4000;
 fn subscribe(
     daemon: &Daemon,
     connection: u64,
-    outbound: &SyncSender<v1::ServerFrame>,
+    outbox: &Arc<Outbox>,
     subscribe: &v1::Subscribe,
 ) -> v1::response::Result {
     let topic = subscribe.topic();
-    let backfill = || -> Option<Vec<v1::notice::Body>> {
+    let columnar = subscribe.columnar && topic == v1::Topic::Events;
+    let backfill = || -> Option<Vec<Outgoing>> {
         match (topic, subscribe.after) {
             (v1::Topic::Prompts, _) => Some(
                 daemon
@@ -813,9 +873,28 @@ fn subscribe(
                     .broker
                     .list()
                     .into_iter()
-                    .map(v1::notice::Body::Prompt)
+                    .map(|prompt| Outgoing::Notice(v1::notice::Body::Prompt(prompt)))
                     .collect(),
             ),
+            (v1::Topic::Events, Some(after)) if columnar => {
+                let rows = daemon.store().event_rows_after(after, BACKFILL + 1);
+                let rows = rows
+                    .inspect_err(|error| warn!(%error, "reading events for a subscription"))
+                    .ok()?;
+                if rows.len() > BACKFILL as usize {
+                    return None;
+                }
+                if rows.is_empty() {
+                    return Some(Vec::new());
+                }
+                let (columns, strings) = block_of(daemon, &rows)
+                    .inspect_err(|error| warn!(%error, "an event block for a subscription"))
+                    .ok()?;
+                Some(vec![Outgoing::Block {
+                    columns,
+                    strings: Arc::from(strings),
+                }])
+            }
             (v1::Topic::Events, Some(after)) => {
                 let events = match daemon.store().events_after(after, BACKFILL + 1) {
                     Ok(events) => events,
@@ -827,7 +906,7 @@ fn subscribe(
                 (events.len() <= BACKFILL as usize).then(|| {
                     events
                         .iter()
-                        .map(|e| v1::notice::Body::Event(event(e)))
+                        .map(|e| Outgoing::Notice(v1::notice::Body::Event(event(e))))
                         .collect()
                 })
             }
@@ -837,11 +916,13 @@ fn subscribe(
     if topic == v1::Topic::Unspecified {
         return error(v1::ErrorCode::Invalid, "no topic");
     }
-    match daemon
-        .shared
-        .hub
-        .subscribe_with(connection, topic, outbound.clone(), backfill)
-    {
+    match daemon.shared.hub.subscribe_with(
+        connection,
+        topic,
+        Arc::clone(outbox),
+        columnar,
+        backfill,
+    ) {
         Ok(subscription) => v1::response::Result::Subscribed(v1::Subscribed { subscription }),
         Err(crate::hub::BackfillError::TooMuch) => error(
             v1::ErrorCode::Invalid,
