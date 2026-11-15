@@ -113,8 +113,9 @@
 <p>When a process connects to <code dir="auto">client.sock</code>, the daemon takes a pidfd for it from the kernel (<code dir="auto">SO_PEERPIDFD</code>, Linux 6.5) and checks, in this order:</p>
 <ol>
 <li>its effective or supplementary groups include <code dir="auto">snitchhiker-ui</code>;</li>
-<li>the executable it runs is one of <code dir="auto">trusted_clients</code>, compared by device and inode, so a different file at the same path doesn’t pass;</li>
+<li>the executable it runs is a trusted client, compared by device and inode, so a different file at the same path doesn’t pass;</li>
 <li>that file and every directory above it are owned by root and writable by nobody else;</li>
+<li>for a client registered with <code dir="auto">snitchhikerd trust-client</code>, the file still has the SHA-256 it was registered with (read once per version of the file, by its inode and change time);</li>
 <li>nothing is tracing it;</li>
 <li>it isn’t dumpable.</li>
 </ol>
@@ -193,6 +194,10 @@
 <tr>
 <td><code dir="auto">local-auth/same-user-cannot-attach-or-read-memory</code></td>
 <td>attaching to a client, or reading its memory</td>
+</tr>
+<tr>
+<td><code dir="auto">local-auth/registered-clients-are-pinned</code></td>
+<td>a registered client binary changed in place, and registering a binary that isn’t a setgid client</td>
 </tr>
 <tr>
 <td><code dir="auto">local-auth/client-refuses-a-fake-node</code></td>
