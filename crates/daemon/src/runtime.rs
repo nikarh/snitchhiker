@@ -114,6 +114,8 @@ pub struct Shared {
     pub namespaces: crate::namespaces::Namespaces,
     /// Alerts' webhook, if one is configured.
     pub webhook: crate::webhook::Webhook,
+    /// The blocklists rules name.
+    pub blocklists: crate::blocklists::Blocklists,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -147,7 +149,8 @@ impl Daemon {
             std::fs::create_dir_all(parent)?;
         }
         let store = Store::open(&config.database)?;
-        let (rules, mut agents) = compile(&config, &store)?;
+        let blocklists = load_blocklists(&config, &store)?;
+        let (rules, mut agents) = compile(&config, &store, &blocklists)?;
         info!(rules = rules.len(), "rules loaded");
         // Agents whose proposals wait, to expire them if the agent ends.
         agents.extend(waiting_agents(&store)?);
@@ -195,6 +198,7 @@ impl Daemon {
             contexts: crate::contexts::Contexts::default(),
             namespaces: crate::namespaces::Namespaces::default(),
             webhook: crate::webhook::Webhook::default(),
+            blocklists,
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -249,6 +253,7 @@ impl Daemon {
         self.spawn_prompt_timeouts()?;
         self.spawn_table_watch()?;
         self.spawn_agent_watch()?;
+        self.spawn_blocklist_refresh()?;
         self.watch_agents(agents);
         crate::router::Router::spawn(&self.shared)?;
         crate::namespaces::Namespaces::spawn(self)?;
@@ -468,6 +473,54 @@ impl Daemon {
         self.shared
             .alert_rules_changed
             .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Fetches blocklists when they are due.
+    fn spawn_blocklist_refresh(self: &Arc<Self>) -> std::io::Result<()> {
+        let daemon = Arc::clone(self);
+        thread::Builder::new()
+            .name("blocklists".to_owned())
+            .spawn(move || {
+                loop {
+                    let records = daemon.store().blocklists();
+                    let records = match records {
+                        Ok(records) => records,
+                        Err(error) => {
+                            error!(%error, "reading the blocklists; they are no longer refreshed");
+                            return;
+                        }
+                    };
+                    let now = now_ms();
+                    let due: Vec<_> = records
+                        .iter()
+                        .filter(|r| crate::blocklists::is_due(r, now))
+                        .cloned()
+                        .collect();
+                    if due.is_empty() {
+                        daemon
+                            .shared
+                            .blocklists
+                            .wait(crate::blocklists::next_due(&records), now);
+                        continue;
+                    }
+                    for mut record in due {
+                        daemon.refresh_blocklist(&mut record);
+                    }
+                }
+            })?;
+        Ok(())
+    }
+
+    /// Fetches a list now, records how it went and, when it changed, compiles the rules again.
+    pub fn refresh_blocklist(&self, record: &mut crate::blocklists::Record) {
+        let changed = self.shared.blocklists.fetch(record, now_ms());
+        let updated = self.store().update_blocklist(record);
+        if let Err(error) = updated {
+            warn!(%error, list = record.name, "recording a blocklist's fetch");
+        }
+        if changed && let Err(error) = self.reload_rules() {
+            warn!(%error, "compiling the rules with a changed blocklist");
+        }
     }
 
     /// Prompts nobody answered in time are decided by the policy's `on_timeout`.
@@ -883,7 +936,7 @@ impl Daemon {
     pub fn reload_rules(&self) -> Result<usize, Error> {
         let (rules, agents) = {
             let store = self.store.lock();
-            compile(&self.shared.config, &store)?
+            compile(&self.shared.config, &store, &self.shared.blocklists)?
         };
         self.watch_agents(agents);
         let count = rules.len();
@@ -934,6 +987,19 @@ impl Daemon {
     }
 }
 
+/// The blocklists as last fetched, next to the database.
+fn load_blocklists(config: &Config, store: &Store) -> Result<crate::blocklists::Blocklists, Error> {
+    Ok(crate::blocklists::Blocklists::load(
+        config
+            .database
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("/"))
+            .join("lists"),
+        config.blocklist_max_bytes,
+        &store.blocklists()?,
+    ))
+}
+
 /// The agents whose proposals wait for an answer.
 fn waiting_agents(store: &Store) -> Result<Vec<ProcessRef>, Error> {
     Ok(store
@@ -949,7 +1015,11 @@ fn waiting_agents(store: &Store) -> Result<Vec<ProcessRef>, Error> {
 
 /// The rules in effect: the stored ones, the System folder and the managed files; and the agents whose sessions
 /// rules are limited to.
-fn compile(config: &Config, store: &Store) -> Result<(RuleSet, HashSet<ProcessRef>), Error> {
+fn compile(
+    config: &Config,
+    store: &Store,
+    blocklists: &crate::blocklists::Blocklists,
+) -> Result<(RuleSet, HashSet<ProcessRef>), Error> {
     let managed = crate::managed::Managed::load(config.default_rules, &config.rules_dir)?;
     let mut folders = store.folders()?;
     folders.extend(managed.folders);
@@ -961,7 +1031,9 @@ fn compile(config: &Config, store: &Store) -> Result<(RuleSet, HashSet<ProcessRe
         .copied()
         .collect();
     rules.extend(managed.rules);
-    Ok((RuleSet::compile(&folders, &rules)?, agents))
+    let set = RuleSet::compile_with(&folders, &rules, &blocklists.lists())?;
+    blocklists.rules_compiled(&rules);
+    Ok((set, agents))
 }
 
 /// The daemon's table, as its configuration has it.
@@ -1375,6 +1447,9 @@ fn conclude(
     event.action = action;
     event.source = source;
     event.rule = rule;
+    if let Some(rule) = rule {
+        shared.blocklists.decided(rule);
+    }
     if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
         shared.events.try_send(event)
     {

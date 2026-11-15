@@ -102,6 +102,8 @@ pub enum Condition {
     VmHypervisor(Vec<String>),
     /// The name of a network namespace (`ip netns`).
     NetnsName(Vec<PatternSource>),
+    /// The destination is on one of these blocklists (by name): its host name or its address.
+    List(Vec<String>),
     /// The opposite of the inner condition.
     Not(Box<Condition>),
 }
@@ -176,6 +178,7 @@ pub fn allows_everything<'a>(
                     | Condition::VmName(_)
                     | Condition::VmUuid(_)
                     | Condition::NetnsName(_)
+                    | Condition::List(_)
             )
         })
 }

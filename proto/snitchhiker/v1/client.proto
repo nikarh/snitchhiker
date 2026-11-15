@@ -129,6 +129,10 @@ message Request {
     DecideApproval decide_approval = 59;
     SetDeviceMuted set_device_muted = 60;
     SetPushTarget set_push_target = 61;
+    ListBlocklists list_blocklists = 62;
+    PutBlocklist put_blocklist = 63;
+    DeleteBlocklist delete_blocklist = 64;
+    RefreshBlocklist refresh_blocklist = 65;
   }
 }
 
@@ -164,6 +168,7 @@ message Response {
     Pairing pairing = 40;
     DeviceList devices = 41;
     ApprovalList approvals = 42;
+    Blocklists blocklists = 43;
   }
 }
 
@@ -279,6 +284,8 @@ message Conditions {
   VmConditions vm = 13;
   // Names of network namespaces (`ip netns`).
   repeated string netns = 14;
+  // Blocklists, by name: the destination's name, a domain above it, or its address is on one of them.
+  repeated string list = 15;
 }
 
 // A container, as the node found it: its runtime and id from its cgroup, the rest from the runtime. Empty fields
@@ -1450,4 +1457,51 @@ message ApprovalList {
 message DecideApproval {
   uint64 id = 1;
   bool approve = 2;
+}
+
+// A blocklist rules can name (`list`): fetched from an https:// URL or read from a file on the node, on a schedule.
+message Blocklist {
+  string name = 1;
+  // An https:// URL, or an absolute path on the node.
+  string source = 2;
+  // How often it is fetched.
+  uint64 refresh_secs = 3;
+  // When its content last changed, and when it was last fetched (0: not yet).
+  uint64 updated_ms = 4;
+  uint64 checked_ms = 5;
+  string sha256 = 6;
+  uint64 bytes = 7;
+  // Domains and networks in it, and the lines that were neither.
+  uint64 entries = 8;
+  uint64 invalid = 9;
+  // Why the last fetch failed or was refused (the version before stays in use); empty when it worked.
+  string error = 10;
+  // Connections decided by rules naming it, since the daemon started.
+  uint64 matched = 11;
+  // The rules naming it.
+  repeated uint64 rules = 12;
+}
+
+message ListBlocklists {}
+
+message Blocklists {
+  repeated Blocklist lists = 1;
+}
+
+// Adds a list, or changes the source or schedule of the one with that name, and fetches it. Answered with the lists.
+message PutBlocklist {
+  string name = 1;
+  string source = 2;
+  // 0: daily. At least 900.
+  uint64 refresh_secs = 3;
+}
+
+// Rules naming it then match nothing through it.
+message DeleteBlocklist {
+  string name = 1;
+}
+
+// Fetches a list now. Answered with the lists.
+message RefreshBlocklist {
+  string name = 1;
 }

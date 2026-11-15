@@ -30,16 +30,20 @@ import snitchhiker.v1.AlertRule
 import snitchhiker.v1.ChainPolicy
 import snitchhiker.v1.Conditions
 import snitchhiker.v1.DeleteAlertRule
+import snitchhiker.v1.DeleteBlocklist
 import snitchhiker.v1.DeleteRule
 import snitchhiker.v1.GetPolicy
 import snitchhiker.v1.GetSystemFirewall
 import snitchhiker.v1.LintRules
 import snitchhiker.v1.ListAlertRules
+import snitchhiker.v1.ListBlocklists
 import snitchhiker.v1.ListRules
 import snitchhiker.v1.Mode
 import snitchhiker.v1.NodePolicy
 import snitchhiker.v1.Policy
 import snitchhiker.v1.PutAlertRule
+import snitchhiker.v1.PutBlocklist
+import snitchhiker.v1.RefreshBlocklist
 import snitchhiker.v1.Request
 import snitchhiker.v1.SetPolicy
 import snitchhiker.v1.SetSystemFirewall
@@ -326,6 +330,96 @@ fun LintPage(
                         TextButton(onClick = { act(Request(delete_rule = DeleteRule(id = rule.id))) }) { Text("Delete") }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Blocklists: lists of domains and addresses the node fetches on a schedule, named by rules' Blocklist condition. */
+@Composable
+fun BlocklistsPage(
+    session: NodeSession,
+    modifier: Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    var generation by remember { mutableIntStateOf(0) }
+    val lists = rememberRequest(session, generation, { Request(list_blocklists = ListBlocklists()) }) { it.blocklists?.lists }
+    var name by remember { mutableStateOf("") }
+    var source by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun act(request: Request) {
+        scope.launch {
+            busy = true
+            error = run(session, request)
+            busy = false
+            generation++
+        }
+    }
+    Page(modifier) {
+        item {
+            Muted(
+                "Lists of domains and addresses (hosts files, a domain per line, adblock ||domain^ rules, addresses and " +
+                    "networks), fetched over HTTPS every day. A rule with a list as its Blocklist condition decides what is on it.",
+            )
+        }
+        item { Problem(lists.error ?: error) }
+        if (lists.value?.isEmpty() == true) item { Muted("No blocklists yet.") }
+        items(lists.value.orEmpty()) { list ->
+            Item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(list.name, style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    TextButton(enabled = !busy, onClick = {
+                        act(Request(refresh_blocklist = RefreshBlocklist(name = list.name)))
+                    }) { Text("Fetch") }
+                    TextButton(enabled = !busy, onClick = {
+                        act(Request(delete_blocklist = DeleteBlocklist(name = list.name)))
+                    }) { Text("Remove") }
+                }
+                Muted(list.source)
+                Text(
+                    if (list.checked_ms == 0L) {
+                        "Not fetched yet"
+                    } else {
+                        "${list.entries} entries, ${list.bytes / 1000} kB; changed ${time(list.updated_ms).ifEmpty { "never" }}, " +
+                            "fetched ${time(list.checked_ms)}"
+                    },
+                )
+                if (list.error.isNotEmpty()) Problem("Last fetch: ${list.error}")
+                Muted(
+                    if (list.rules.isEmpty()) {
+                        "No rule names it yet."
+                    } else {
+                        "Named by ${list.rules.size} rule(s); decided ${list.matched} connections since the daemon started."
+                    },
+                )
+            }
+        }
+        item {
+            Item {
+                Text("Add a blocklist", style = MaterialTheme.typography.titleSmall)
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Name") },
+                    placeholder = { Text("ads") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = source,
+                    onValueChange = { source = it },
+                    label = { Text("URL") },
+                    placeholder = { Text("https://example.com/hosts.txt") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Button(enabled = !busy && name.isNotBlank() && source.isNotBlank(), onClick = {
+                    act(Request(put_blocklist = PutBlocklist(name = name.trim(), source = source.trim())))
+                    name = ""
+                    source = ""
+                }) { Text(if (busy) "Fetching…" else "Add") }
             }
         }
     }

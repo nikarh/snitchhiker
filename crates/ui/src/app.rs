@@ -42,6 +42,7 @@ pub enum Page {
     Status,
     Firewall,
     Devices,
+    Blocklists,
     Settings,
 }
 
@@ -70,6 +71,7 @@ pub struct App {
     live: Entity<crate::views::live::Live>,
     system: Entity<SystemPage>,
     devices: Entity<crate::views::devices::Devices>,
+    blocklists: Entity<crate::views::blocklists::Blocklists>,
     requests: mpsc::Sender<Request>,
 }
 
@@ -107,6 +109,9 @@ impl App {
         let system = cx.new(|cx| SystemPage::new(model.clone(), requests.clone(), cx));
         let devices =
             cx.new(|cx| crate::views::devices::Devices::new(model.clone(), requests.clone(), cx));
+        let blocklists = cx.new(|cx| {
+            crate::views::blocklists::Blocklists::new(model.clone(), requests.clone(), cx)
+        });
         let history = cx.new(|cx| History::new(model.clone(), requests.clone(), cx));
         let explorer = cx.new(|cx| Explorer::new(model.clone(), requests.clone(), cx));
         let connections = cx.new(|cx| {
@@ -166,6 +171,7 @@ impl App {
             live,
             system,
             devices,
+            blocklists,
             requests: own_requests,
         }
     }
@@ -344,6 +350,9 @@ impl App {
                 if page == Page::Devices {
                     app.devices.read(cx).refresh();
                 }
+                if page == Page::Blocklists {
+                    app.blocklists.read(cx).refresh();
+                }
                 cx.notify();
             }))
     }
@@ -397,6 +406,7 @@ impl App {
             Page::Live => self.live.clone().into_any_element(),
             Page::Firewall => self.system.clone().into_any_element(),
             Page::Devices => self.devices.clone().into_any_element(),
+            Page::Blocklists => self.blocklists.clone().into_any_element(),
         }
     }
 }
@@ -484,6 +494,12 @@ impl App {
                             Page::Devices,
                             "Devices".into(),
                             gpui_kit_assets::IconName::Smartphone,
+                            cx,
+                        ))
+                        .child(self.item(
+                            Page::Blocklists,
+                            "Blocklists".into(),
+                            IconName::CircleX,
                             cx,
                         ))
                         .child(self.item(

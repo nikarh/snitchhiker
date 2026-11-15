@@ -61,6 +61,7 @@ fun RuleEditor(
     var uid by remember { mutableStateOf(c.uid.joinToString(", ")) }
     var cmdline by remember { mutableStateOf(c.cmdline.joinToString(", ")) }
     var parent by remember { mutableStateOf(c.parent.joinToString(", ")) }
+    var lists by remember { mutableStateOf(c.list.joinToString(", ")) }
     var anyContext by remember { mutableStateOf(c.context == Context.CONTEXT_ANY) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -75,6 +76,7 @@ fun RuleEditor(
                 uid = list(uid).mapNotNull(String::toIntOrNull),
                 cmdline = list(cmdline),
                 parent = list(parent),
+                list = list(lists),
                 context = if (anyContext) Context.CONTEXT_ANY else Context.CONTEXT_UNSPECIFIED,
             )
         val edited =
@@ -133,6 +135,7 @@ fun RuleEditor(
                 field("User id", uid, "1000") { uid = it }
                 field("Command line", cmdline, "re:.*--flag.*") { cmdline = it }
                 field("Parent program", parent, "/usr/bin/sshd") { parent = it }
+                field("Blocklist", lists, "ads (a blocklist's name)") { lists = it }
                 FilterChip(selected = anyContext, onClick = { anyContext = !anyContext }, label = {
                     Text("Also in containers, VMs and other namespaces")
                 })

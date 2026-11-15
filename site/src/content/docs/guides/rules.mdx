@@ -47,6 +47,7 @@ All conditions of a rule must hold. A condition with several values holds when a
 | `protocol` | the IP protocol is | `tcp`, `udp`, `icmp`, `icmpv6`, `47` |
 | `context` | the process runs in that kind of namespace | `host`, `container`, `netns`, `any` |
 | `container.name`, `container.image`, `container.compose`, `container.label` | the container it runs in is that one | `web-1`, `glob:docker.io/library/node:*`, `shop/web`, `tier=front` |
+| `list` | the destination's name, a domain above it, or its address is on the [blocklist](/guides/blocklists/) | `ads`, `oisd` |
 | `app` | a stable identity of the program matches | reserved: not yet filled in, so it never matches today |
 
 A rule must have at least one condition: a rule matching every connection is refused. Use the [`no_match` policy](/reference/configuration/#no_match) for that.

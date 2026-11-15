@@ -386,6 +386,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::GetSystemFirewall(_)
             | Method::ListAlerts(_)
             | Method::ListAlertRules(_)
+            | Method::ListBlocklists(_)
     );
     let agents = matches!(
         method,
@@ -450,26 +451,21 @@ fn handle(
         Method::ListChanges(list) => list_changes(daemon, &list),
         Method::Undo(request) => undo(daemon, app, request),
         Method::Explore(explore) => self::explore(daemon, &explore),
-        Method::ListConnections(_) => match daemon.connections() {
-            Ok(connections) => R::Connections(v1::ConnectionList { connections }),
-            Err(e) => internal(e),
-        },
+        Method::ListConnections(_) => list_connections(daemon),
         Method::KillConnection(kill) => kill_connection(daemon, &kill),
         Method::LintRules(lint) => lint_rules(daemon, lint),
-        Method::GetPolicy(_) => match daemon.store().policy() {
-            Ok(overrides) => R::Policy(crate::policy::wire(
-                &daemon.shared.policy.load(),
-                &overrides,
-            )),
-            Err(e) => internal(e),
-        },
+        Method::GetPolicy(_) => get_policy(daemon),
         Method::SetPolicy(set) => set_policy(daemon, caller, app, &set),
         Method::ListTrustedClients(_) => trusted_clients(&daemon.shared.config),
         Method::ListAlerts(list) => list_alerts(daemon, &list),
         Method::AcknowledgeAlerts(ack) => acknowledge_alerts(daemon, app, &ack),
-        Method::ListAlertRules(_) => alert_rules(daemon),
-        Method::PutAlertRule(put) => put_alert_rule(daemon, &put),
-        Method::DeleteAlertRule(delete) => delete_alert_rule(daemon, delete.id),
+        method @ (Method::ListAlertRules(_)
+        | Method::PutAlertRule(_)
+        | Method::DeleteAlertRule(_)) => alert_rule_request(daemon, method),
+        method @ (Method::ListBlocklists(_)
+        | Method::PutBlocklist(_)
+        | Method::DeleteBlocklist(_)
+        | Method::RefreshBlocklist(_)) => blocklist_request(daemon, method),
         Method::GetSystemFirewall(_) => get_system_firewall(daemon),
         Method::SetSystemFirewall(set) => set_system_firewall(daemon, caller, app, &set),
         method @ (Method::CheckConnection(_)
@@ -845,6 +841,33 @@ fn acknowledge_alerts(
     }
 }
 
+fn list_connections(daemon: &Daemon) -> v1::response::Result {
+    match daemon.connections() {
+        Ok(connections) => v1::response::Result::Connections(v1::ConnectionList { connections }),
+        Err(e) => internal(e),
+    }
+}
+
+fn get_policy(daemon: &Daemon) -> v1::response::Result {
+    let overrides = daemon.store().policy();
+    match overrides {
+        Ok(overrides) => v1::response::Result::Policy(crate::policy::wire(
+            &daemon.shared.policy.load(),
+            &overrides,
+        )),
+        Err(e) => internal(e),
+    }
+}
+
+fn alert_rule_request(daemon: &Daemon, method: v1::request::Method) -> v1::response::Result {
+    use v1::request::Method;
+    match method {
+        Method::PutAlertRule(put) => put_alert_rule(daemon, &put),
+        Method::DeleteAlertRule(delete) => delete_alert_rule(daemon, delete.id),
+        _ => alert_rules(daemon),
+    }
+}
+
 fn alert_rules(daemon: &Daemon) -> v1::response::Result {
     match daemon.store().alert_rules() {
         Ok(rules) => v1::response::Result::AlertRules(v1::AlertRules {
@@ -886,6 +909,113 @@ fn put_alert_rule(daemon: &Daemon, put: &v1::PutAlertRule) -> v1::response::Resu
         }
         Err(e) => internal(e),
     }
+}
+
+fn blocklist_request(daemon: &Daemon, method: v1::request::Method) -> v1::response::Result {
+    use v1::request::Method;
+    match method {
+        Method::PutBlocklist(put) => put_blocklist(daemon, &put),
+        Method::DeleteBlocklist(delete) => delete_blocklist(daemon, &delete.name),
+        Method::RefreshBlocklist(refresh) => refresh_blocklist(daemon, &refresh.name),
+        _ => blocklists(daemon),
+    }
+}
+
+fn blocklists(daemon: &Daemon) -> v1::response::Result {
+    let (records, rules) = {
+        let store = daemon.store();
+        match (store.blocklists(), store.rules()) {
+            (Ok(records), Ok(rules)) => (records, rules),
+            (Err(e), _) | (_, Err(e)) => return internal(e),
+        }
+    };
+    let lists = &daemon.shared.blocklists;
+    v1::response::Result::Blocklists(v1::Blocklists {
+        lists: records
+            .iter()
+            .map(|record| {
+                let naming = rules
+                    .iter()
+                    .filter(|r| crate::blocklists::names(&r.conditions).any(|n| n == record.name))
+                    .map(|r| r.id)
+                    .collect();
+                lists.wire(record, naming)
+            })
+            .collect(),
+    })
+}
+
+fn put_blocklist(daemon: &Daemon, put: &v1::PutBlocklist) -> v1::response::Result {
+    if let Err(e) = crate::blocklists::check(&put.name, &put.source) {
+        return error(v1::ErrorCode::Invalid, e);
+    }
+    let refresh_secs = match put.refresh_secs {
+        0 => crate::blocklists::DEFAULT_REFRESH_SECS,
+        secs if secs < crate::blocklists::MIN_REFRESH_SECS => {
+            return error(
+                v1::ErrorCode::Invalid,
+                format!(
+                    "a list is fetched at most every {} seconds",
+                    crate::blocklists::MIN_REFRESH_SECS
+                ),
+            );
+        }
+        secs => secs,
+    };
+    let existing = daemon.store().blocklists();
+    let mut record = match existing {
+        Ok(records) => records
+            .into_iter()
+            .find(|r| r.name == put.name)
+            .unwrap_or_default(),
+        Err(e) => return internal(e),
+    };
+    // Another source: fetched from scratch.
+    if record.source != put.source {
+        record = crate::blocklists::Record::default();
+    }
+    record.name.clone_from(&put.name);
+    record.source.clone_from(&put.source);
+    record.refresh_secs = refresh_secs;
+    let stored = daemon.store().put_blocklist(&record);
+    match stored {
+        Ok(id) => record.id = id,
+        Err(e) => return internal(e),
+    }
+    daemon.refresh_blocklist(&mut record);
+    daemon.shared.blocklists.changed();
+    blocklists(daemon)
+}
+
+fn delete_blocklist(daemon: &Daemon, name: &str) -> v1::response::Result {
+    let records = daemon.store().blocklists();
+    let Some(record) = records
+        .ok()
+        .and_then(|r| r.into_iter().find(|r| r.name == name))
+    else {
+        return error(v1::ErrorCode::NotFound, format!("no blocklist {name}"));
+    };
+    let deleted = daemon.store().delete_blocklist(name);
+    if let Err(e) = deleted {
+        return internal(e);
+    }
+    daemon.shared.blocklists.removed(&record);
+    if let Err(e) = daemon.reload_rules() {
+        return internal(e);
+    }
+    blocklists(daemon)
+}
+
+fn refresh_blocklist(daemon: &Daemon, name: &str) -> v1::response::Result {
+    let records = daemon.store().blocklists();
+    let Some(mut record) = records
+        .ok()
+        .and_then(|r| r.into_iter().find(|r| r.name == name))
+    else {
+        return error(v1::ErrorCode::NotFound, format!("no blocklist {name}"));
+    };
+    daemon.refresh_blocklist(&mut record);
+    blocklists(daemon)
 }
 
 /// A trial lasts at least this long (time to confirm) and at most this long.

@@ -150,6 +150,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::alerts_reach_the_webhook_signed,
     ),
     (
+        "daemon/blocklists-block-what-is-on-them",
+        daemon::blocklists_block_what_is_on_them,
+    ),
+    (
         "daemon/monitor-records-but-never-blocks",
         daemon::monitor_records_but_never_blocks,
     ),

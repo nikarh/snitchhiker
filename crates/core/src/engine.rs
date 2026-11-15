@@ -11,9 +11,11 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use ipnet::IpNet;
 
+use crate::blocklist::Blocklist;
 use crate::destination::{ALIASES, HostPattern, Network};
 use crate::pattern::{Pattern, PatternError};
 use crate::rule::{
@@ -48,6 +50,9 @@ pub struct Facts<'a> {
     /// Unix time in milliseconds, for expiring rules.
     pub now_ms: u64,
 }
+
+/// Blocklists by name, for [`RuleSet::compile_with`].
+pub type Lists = HashMap<Box<str>, Arc<Blocklist>>;
 
 /// The outcome for a connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +103,8 @@ enum Compiled {
     VmUuid(Vec<String>),
     VmHypervisor(Vec<String>),
     NetnsName(Vec<Pattern>),
+    /// The lists that exist (one not read yet matches nothing).
+    List(Vec<Arc<Blocklist>>),
     Not(Box<Compiled>),
 }
 
@@ -160,6 +167,15 @@ const MAX_INDEXED_PORTS: usize = 64;
 impl RuleSet {
     /// Compiles the rules that apply: enabled, in enabled folders, with their folders' scopes.
     pub fn compile(folders: &[Folder], rules: &[Rule]) -> Result<Self, CompileError> {
+        Self::compile_with(folders, rules, &Lists::new())
+    }
+
+    /// [`RuleSet::compile`], with the blocklists `list` conditions name.
+    pub fn compile_with(
+        folders: &[Folder],
+        rules: &[Rule],
+        lists: &Lists,
+    ) -> Result<Self, CompileError> {
         let folder_by_id: HashMap<FolderId, &Folder> = folders.iter().map(|f| (f.id, f)).collect();
         let mut set = Self::default();
         for rule in rules {
@@ -182,7 +198,7 @@ impl RuleSet {
                     }
                     has_context = true;
                 }
-                conditions.push(compile_condition(condition).map_err(|error| {
+                conditions.push(compile_condition(condition, lists).map_err(|error| {
                     CompileError::Pattern {
                         rule: rule.id,
                         error,
@@ -365,6 +381,9 @@ fn condition_matches(condition: &Compiled, facts: &Facts<'_>) -> bool {
             .vm
             .is_some_and(|vm| names.iter().any(|n| n == &vm.hypervisor)),
         Compiled::NetnsName(patterns) => facts.netns.is_some_and(|name| any(patterns, name)),
+        Compiled::List(lists) => lists.iter().any(|list| {
+            list.has_address(facts.address) || facts.hosts.iter().any(|h| list.has_host(h))
+        }),
         Compiled::Not(inner) => !condition_matches(inner, facts),
     }
 }
@@ -395,7 +414,7 @@ fn folder_chain<'a>(
     Ok(Some(scopes))
 }
 
-fn compile_condition(condition: &Condition) -> Result<Compiled, PatternError> {
+fn compile_condition(condition: &Condition, lists: &Lists) -> Result<Compiled, PatternError> {
     let patterns =
         |sources: &[crate::pattern::PatternSource]| -> Result<Vec<Pattern>, PatternError> {
             sources.iter().map(Pattern::compile).collect()
@@ -433,7 +452,13 @@ fn compile_condition(condition: &Condition) -> Result<Compiled, PatternError> {
         Condition::VmUuid(uuids) => Compiled::VmUuid(uuids.clone()),
         Condition::VmHypervisor(names) => Compiled::VmHypervisor(names.clone()),
         Condition::NetnsName(p) => Compiled::NetnsName(patterns(p)?),
-        Condition::Not(inner) => Compiled::Not(Box::new(compile_condition(inner)?)),
+        Condition::List(names) => Compiled::List(
+            names
+                .iter()
+                .filter_map(|name| lists.get(name.as_str()).cloned())
+                .collect(),
+        ),
+        Condition::Not(inner) => Compiled::Not(Box::new(compile_condition(inner, lists)?)),
     })
 }
 
@@ -469,6 +494,8 @@ fn specificity(condition: &Compiled) -> u32 {
         | Compiled::NetnsName(p) => p.iter().map(Pattern::specificity).min().unwrap_or(0) * 5,
         Compiled::ContainerId(_) | Compiled::VmUuid(_) => 50,
         Compiled::ContainerLabel(_) => 20,
+        // Like a domain and everything under it.
+        Compiled::List(_) => 3,
         Compiled::ContainerRuntime(_) | Compiled::ContainerOwner(_) | Compiled::VmHypervisor(_) => {
             2
         }
@@ -583,6 +610,37 @@ mod tests {
         assert_eq!(
             set.decide(&facts("/usr/bin/wget", &["example.com"], 443)),
             None
+        );
+    }
+
+    #[test]
+    fn blocklists_match_names_and_addresses() {
+        let lists = Lists::from([(
+            Box::from("ads"),
+            Arc::new(Blocklist::parse("tracker.example\n198.51.100.0/24\n").list),
+        )]);
+        let rules = [rule(
+            1,
+            Action::Deny,
+            vec![Condition::List(vec![
+                "ads".to_owned(),
+                "missing".to_owned(),
+            ])],
+        )];
+        let set = RuleSet::compile_with(&[], &rules, &lists).unwrap();
+        // By the name, and by the address.
+        let mut elsewhere = facts("/usr/bin/curl", &["a.tracker.example"], 443);
+        elsewhere.address = "192.0.2.1".parse().unwrap();
+        assert!(set.decide(&elsewhere).is_some());
+        assert!(set.decide(&facts("/usr/bin/curl", &[], 443)).is_some());
+        elsewhere.hosts = names(&["example.org"]);
+        assert!(set.decide(&elsewhere).is_none());
+        // Without the lists, nothing is on them.
+        assert!(
+            RuleSet::compile(&[], &rules)
+                .unwrap()
+                .decide(&facts("/usr/bin/curl", &[], 443))
+                .is_none()
         );
     }
 

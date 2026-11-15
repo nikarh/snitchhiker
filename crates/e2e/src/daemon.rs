@@ -1059,6 +1059,67 @@ fn webhook_server() -> Result<(u16, Hooked), String> {
     Ok((hook_port, received))
 }
 
+/// A blocklist read from a file blocks what is on it through a rule naming it; a version that isn't a list is refused
+/// and the one before stays; a new version applies once fetched.
+pub fn blocklists_block_what_is_on_them() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let _ = std::fs::create_dir_all(DIR);
+    let source = format!("{DIR}/blocklist.txt");
+    let write = |text: &str| std::fs::write(&source, text).map_err(|e| e.to_string());
+    write("# a test list\n0.0.0.0 ads.example\n127.0.0.1\n")?;
+    let daemon = Running::start("blocklists", "mode = \"enforce\"\nno_match = \"allow\"\n")?;
+    check(
+        mallory_connects(port)?,
+        "connections are allowed before any list",
+        "",
+    )?;
+    let added = daemon.cli(&["lists", "add", "test", &source])?;
+    check(added.contains("2 entries"), "the list wasn't read", &added)?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "deny",
+        "--list",
+        "test",
+        "--name",
+        "on the list",
+    ])?;
+    check(
+        !mallory_connects(port)?,
+        "an address on the list was let through",
+        "",
+    )?;
+    // An error page instead of a list: refused, and the list before stays in use.
+    write("<html>\n<body>Not found</body>\n</html>\n")?;
+    let refused = daemon.cli(&["lists", "refresh", "test"])?;
+    check(
+        refused.contains("no entries"),
+        "a page that isn't a list was taken",
+        &refused,
+    )?;
+    check(
+        !mallory_connects(port)?,
+        "a refused fetch dropped the list",
+        "",
+    )?;
+    let listed = daemon.cli(&["lists"])?;
+    check(
+        listed.contains("named by rule") && !listed.contains("decided 0 connections"),
+        "the list's use isn't shown",
+        &listed,
+    )?;
+    // A new version without the address: let through again.
+    write("ads.example\n192.0.2.1\n")?;
+    daemon.cli(&["lists", "refresh", "test"])?;
+    check(
+        mallory_connects(port)?,
+        "the list's new version didn't apply",
+        "",
+    )?;
+    daemon.cli(&["lists", "rm", "test"])?;
+    Ok(())
+}
+
 /// Alerts reach the webhook as JSON, signed with the secret: HMAC-SHA256 of the body.
 pub fn alerts_reach_the_webhook_signed() -> Result<(), String> {
     let (_target, port) = listener()?;

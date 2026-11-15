@@ -26,3 +26,4 @@ escalate_after_secs = 20
 push_gateway = ""
 offline_after_secs = 120
 alert_webhook = ""
+blocklist_max_bytes = 67108864

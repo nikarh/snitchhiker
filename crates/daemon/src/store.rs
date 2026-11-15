@@ -247,6 +247,13 @@ DROP TABLE rollups;
 ALTER TABLE rollups_new RENAME TO rollups;
 INSERT INTO rollups_by SELECT 5, hour, 0, action, sum(count), sum(bytes_out), sum(bytes_in) FROM rollups GROUP BY 2, 4;
 ",
+    r"
+CREATE TABLE blocklists (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    list TEXT NOT NULL
+);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`, the busiest
@@ -371,6 +378,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("alerts.prune", "DELETE FROM alerts WHERE time_ms < ?1"),
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
+    ("blocklists.all", "SELECT id, name, list FROM blocklists ORDER BY id"),
+    (
+        "blocklists.put",
+        "INSERT INTO blocklists (name, list) VALUES (?1, ?2)
+         ON CONFLICT (name) DO UPDATE SET list = excluded.list RETURNING id",
+    ),
+    ("blocklists.delete", "DELETE FROM blocklists WHERE name = ?1"),
+    ("blocklists.update", "UPDATE blocklists SET list = ?2 WHERE name = ?1"),
     (
         "devices.all",
         "SELECT id, name, role, paired_ms, last_seen_ms, muted, push FROM devices ORDER BY rowid",
@@ -1242,7 +1257,7 @@ impl Store {
 
 /// Tables small enough that scanning them is fine (and SQLite may choose to).
 #[cfg(test)]
-const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules", "devices"];
+const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules", "devices", "blocklists"];
 
 /// Statements that group what an index range yields, and so sort it: the Explorer's, over the rollups of a range of
 /// hours. Their cost is the rollup rows of those hours (the variety of the traffic), not the size of the history; the
@@ -2065,6 +2080,56 @@ impl Store {
             .connection
             .prepare_cached(sql("alert_rules.delete")?)?
             .execute(params![db_id(id)])?
+            > 0)
+    }
+
+    pub fn blocklists(&self) -> Result<Vec<crate::blocklists::Record>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("blocklists.all")?)?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut lists = Vec::new();
+        for row in rows {
+            let (id, name, text) = row?;
+            let mut record: crate::blocklists::Record =
+                serde_json::from_str(&text).map_err(|e| Error::Corrupt {
+                    what: "a blocklist",
+                    error: e.to_string(),
+                })?;
+            record.id = id_of(id);
+            record.name = name;
+            lists.push(record);
+        }
+        Ok(lists)
+    }
+
+    /// Adds the list, or replaces the one with its name; returns its id.
+    pub fn put_blocklist(&self, record: &crate::blocklists::Record) -> Result<u64, Error> {
+        let id: i64 = self
+            .connection
+            .prepare_cached(sql("blocklists.put")?)?
+            .query_row(params![record.name, json(record)], |row| row.get(0))?;
+        Ok(id_of(id))
+    }
+
+    /// Records how a list's fetch went; false when it was removed meanwhile.
+    pub fn update_blocklist(&self, record: &crate::blocklists::Record) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("blocklists.update")?)?
+            .execute(params![record.name, json(record)])?
+            > 0)
+    }
+
+    pub fn delete_blocklist(&self, name: &str) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("blocklists.delete")?)?
+            .execute(params![name])?
             > 0)
     }
 

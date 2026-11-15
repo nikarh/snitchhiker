@@ -101,6 +101,7 @@ pub fn conditions(spec: &Conditions) -> v1::Conditions {
             hypervisor: spec.vm.hypervisor.clone(),
         }),
         netns: spec.netns.clone(),
+        list: spec.list.clone(),
     }
 }
 
@@ -138,6 +139,7 @@ pub fn conditions_from(wire: &v1::Conditions) -> Conditions {
                 hypervisor: vm.hypervisor.clone(),
             }),
         netns: wire.netns.clone(),
+        list: wire.list.clone(),
     }
 }
 

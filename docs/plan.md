@@ -1977,7 +1977,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
         counting-allocator test on deciding.)*
   - [ ] Foreign-table test (60k-range interval set, churning) on latency, ingestion and RSS.
 - [ ] **System firewall and defaults**
-  - [ ] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files).
+  - [ ] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files). *(Blocklists: files and URLs, M8.)*
 - [ ] **CLI (admin socket only in M1)**
   - [ ] `status`, `rules ls/add/rm/enable/disable/import/export`, `events --follow/--query`, `stats`, `explain`,
         `policy`, `learn`.
@@ -2265,8 +2265,8 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 - [ ] **Agent envelopes and muting** (from M4)
   - [ ] Pre-authorized envelopes (a dangerous action to configure), auto-approval inside them with an audit log, their
         editor; muting proposals of a process tree.
-- [ ] **Blocklists from URLs**
-  - [ ] Refresh schedule, integrity (size limits, format checks), stats per list.
+- [x] **Blocklists from URLs**
+  - [x] Refresh schedule, integrity (size limits, format checks), stats per list.
 - [ ] **Performance pass**
   - [ ] Benches in CI with regression thresholds, a 10M-event dataset, memory caps in daemon and clients.
 - [ ] **Docs completeness**

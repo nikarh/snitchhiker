@@ -40,7 +40,7 @@ impl SearchableListItem for FolderItem {
 }
 
 /// The condition fields, in the order shown: (key, label, placeholder).
-const FIELDS: [(&str, &str, &str); 8] = [
+const FIELDS: [(&str, &str, &str); 9] = [
     ("exe", "Program", "/usr/bin/curl, glob:{home}/.cargo/bin/*"),
     ("host", "Host", "example.com, *.example.org, re:..."),
     ("net", "Network", "192.0.2.0/24, lan, loopback"),
@@ -49,6 +49,7 @@ const FIELDS: [(&str, &str, &str); 8] = [
     ("uid", "User id", "1000"),
     ("cmdline", "Command line", "re:.*--flag.*"),
     ("parent", "Parent program", "/usr/bin/sshd"),
+    ("list", "Blocklist", "ads (a blocklist's name)"),
 ];
 
 pub struct RuleEditor {
@@ -77,6 +78,7 @@ fn values(conditions: &v1::Conditions, key: &str) -> String {
             .join(", "),
         "cmdline" => conditions.cmdline.join(", "),
         "parent" => conditions.parent.join(", "),
+        "list" => conditions.list.join(", "),
         _ => String::new(),
     }
 }
@@ -160,6 +162,7 @@ impl RuleEditor {
                 "uid" => conditions.uid = values.iter().filter_map(|v| v.parse().ok()).collect(),
                 "cmdline" => conditions.cmdline = values,
                 "parent" => conditions.parent = values,
+                "list" => conditions.list = values,
                 _ => {}
             }
         }

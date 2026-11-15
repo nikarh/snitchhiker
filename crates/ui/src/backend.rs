@@ -90,6 +90,10 @@ pub enum Request {
     Decide(v1::DecideProposal),
     /// The paired devices.
     Devices,
+    Blocklists,
+    PutBlocklist(v1::PutBlocklist),
+    DeleteBlocklist(String),
+    RefreshBlocklist(String),
     StartPairing(v1::Role),
     RemoveDevice(String),
     MuteDevice {
@@ -160,6 +164,7 @@ pub enum Update {
     /// A proposal made or changed.
     Proposal(Box<v1::Proposal>),
     Devices(v1::DeviceList),
+    Blocklists(v1::Blocklists),
     /// A pairing started: its link.
     Pairing(v1::Pairing),
     /// A remote device asks for a dangerous action.
@@ -327,6 +332,36 @@ fn serve_requests(
 }
 
 /// The node's method for a request.
+fn device_method(request: &Request) -> v1::request::Method {
+    use v1::request::Method;
+    match request {
+        Request::StartPairing(role) => Method::StartPairing(v1::StartPairing {
+            name: String::new(),
+            role: (*role).into(),
+        }),
+        Request::RemoveDevice(id) => Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }),
+        Request::MuteDevice { id, muted } => Method::SetDeviceMuted(v1::SetDeviceMuted {
+            id: id.clone(),
+            muted: *muted,
+        }),
+        _ => Method::ListDevices(v1::ListDevices {}),
+    }
+}
+
+fn blocklist_method(request: &Request) -> v1::request::Method {
+    use v1::request::Method;
+    match request {
+        Request::PutBlocklist(put) => Method::PutBlocklist(put.clone()),
+        Request::DeleteBlocklist(name) => {
+            Method::DeleteBlocklist(v1::DeleteBlocklist { name: name.clone() })
+        }
+        Request::RefreshBlocklist(name) => {
+            Method::RefreshBlocklist(v1::RefreshBlocklist { name: name.clone() })
+        }
+        _ => Method::ListBlocklists(v1::ListBlocklists {}),
+    }
+}
+
 fn method(request: &Request) -> v1::request::Method {
     use v1::request::Method;
     match request {
@@ -412,15 +447,13 @@ fn method(request: &Request) -> v1::request::Method {
         }),
         Request::Decide(decide) => Method::DecideProposal(decide.clone()),
         Request::Devices => Method::ListDevices(v1::ListDevices {}),
-        Request::StartPairing(role) => Method::StartPairing(v1::StartPairing {
-            name: String::new(),
-            role: (*role).into(),
-        }),
-        Request::RemoveDevice(id) => Method::RemoveDevice(v1::RemoveDevice { id: id.clone() }),
-        Request::MuteDevice { id, muted } => Method::SetDeviceMuted(v1::SetDeviceMuted {
-            id: id.clone(),
-            muted: *muted,
-        }),
+        Request::Blocklists
+        | Request::PutBlocklist(_)
+        | Request::DeleteBlocklist(_)
+        | Request::RefreshBlocklist(_) => blocklist_method(request),
+        Request::StartPairing(_) | Request::RemoveDevice(_) | Request::MuteDevice { .. } => {
+            device_method(request)
+        }
         Request::DecideApproval { id, approve } => Method::DecideApproval(v1::DecideApproval {
             id: *id,
             approve: *approve,
@@ -450,6 +483,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Proposals(list) => Some(Update::Proposals(list.proposals)),
         R::Proposal(proposal) => Some(Update::Proposal(proposal)),
         R::Devices(list) => Some(Update::Devices(list)),
+        R::Blocklists(lists) => Some(Update::Blocklists(lists)),
         R::Pairing(pairing) => Some(Update::Pairing(pairing)),
         // Done after unpairing: list them again.
         R::Done(_) if matches!(request, Request::RemoveDevice(_)) => None,

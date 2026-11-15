@@ -68,6 +68,7 @@ private val pages =
         "History",
         "Rules check",
         "Alert rules",
+        "Blocklists",
         "Firewall",
         "Devices",
         "Status",
@@ -98,6 +99,22 @@ fun MorePage(
 
         "Connections" -> {
             ConnectionsPage(session, modifier)
+        }
+
+        "Live" -> {
+            LivePage(session, modifier)
+        }
+
+        "Rules check" -> {
+            LintPage(session, modifier)
+        }
+
+        "Alert rules" -> {
+            AlertRulesPage(session, modifier)
+        }
+
+        "Blocklists" -> {
+            BlocklistsPage(session, modifier)
         }
 
         "History" -> {

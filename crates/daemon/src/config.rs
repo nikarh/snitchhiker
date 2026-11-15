@@ -121,6 +121,8 @@ pub struct Config {
     pub alert_webhook: String,
     /// A file with a secret that signs each webhook delivery (HMAC-SHA256 of the body, `X-Snitchhiker-Signature`).
     pub alert_webhook_secret_file: Option<PathBuf>,
+    /// The largest blocklist fetched, in bytes: a larger one is refused.
+    pub blocklist_max_bytes: u64,
 }
 
 /// Who is notified of prompts.
@@ -170,6 +172,7 @@ impl Default for Config {
             offline_after_secs: 120,
             alert_webhook: String::new(),
             alert_webhook_secret_file: None,
+            blocklist_max_bytes: 64 << 20,
         }
     }
 }

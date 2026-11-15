@@ -55,6 +55,7 @@ Commands:
                                                       in that container only (patterns: glob:..., re:...)
                                     --vm <name>       in that VM only
                                     --netns <name>    in that named network namespace only (ip netns)
+                                    --list <name>     the destination is on that blocklist (see `lists`)
   rules rm <id>                   Delete a rule
   rules enable <id>, rules disable <id>
   rules move <id> <folder>        Move a rule to a folder (0: the top level)
@@ -94,7 +95,13 @@ Commands:
                                   Raise an alert when n connections the query matches come within the window;
                                   --first-program counts only programs never seen before
   alerts rules rm <id>            Delete an alert rule
-  folders                         List the folders
+  lists                           The blocklists: their sources, entries, last fetch and what they decided
+  lists add <name> <https://url | /path> [--every <n>[s|m|h|d]]
+                                  Add a blocklist (or change one's source), fetched now and then every day (or as
+                                  given, at least 15m). Hosts files, a domain per line, adblock ||domain^ rules,
+                                  addresses and CIDRs; rules name it with --list <name>
+  lists rm <name>                 Delete a blocklist (rules naming it then match nothing through it)
+  lists refresh <name>            Fetch a blocklist now
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
   explore [--by <program|host|port|user|container>] [--hours <n>] [--where <dimension>=<value>] [--bytes]
@@ -215,6 +222,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         }
         Some("alerts") => alerts(args, version),
         Some("folders") => folders(args, version),
+        Some("lists") => lists(args, version),
         Some("explore") => explore(args, version),
         Some("contexts") => contexts(args, version),
         Some("history") => history(args, version),
@@ -354,6 +362,123 @@ fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
 }
 
 /// `alerts` and its subcommands.
+fn lists(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let command = args.subcommand()?;
+    let method = match command.as_deref() {
+        None | Some("list") => Method::ListBlocklists(v1::ListBlocklists {}),
+        Some("add") => {
+            let every: Option<String> = args.opt_value_from_str("--every")?;
+            let refresh_secs = every.as_deref().map_or(Ok(0), |every| {
+                parse_interval(every).ok_or_else(|| {
+                    Error::Usage(format!(
+                        "--every {every}: a number of seconds, or with m, h or d"
+                    ))
+                })
+            })?;
+            Method::PutBlocklist(v1::PutBlocklist {
+                name: args.free_from_str()?,
+                source: args.free_from_str()?,
+                refresh_secs,
+            })
+        }
+        Some("rm") => Method::DeleteBlocklist(v1::DeleteBlocklist {
+            name: args.free_from_str()?,
+        }),
+        Some("refresh") => Method::RefreshBlocklist(v1::RefreshBlocklist {
+            name: args.free_from_str()?,
+        }),
+        Some(other) => return Err(Error::Usage(format!("unknown lists command {other}"))),
+    };
+    reject_rest(args)?;
+    match connect(version)?.call(method)? {
+        v1::response::Result::Blocklists(lists) => {
+            out(&format_blocklists(&lists, crate::runtime::now_ms()))
+        }
+        _ => Err(unexpected()),
+    }
+}
+
+/// `90`, `15m`, `12h`, `1d`, in seconds.
+fn parse_interval(text: &str) -> Option<u64> {
+    let (number, unit) = match text.char_indices().last()? {
+        (i, 's') => (text.get(..i)?, 1),
+        (i, 'm') => (text.get(..i)?, 60),
+        (i, 'h') => (text.get(..i)?, 3600),
+        (i, 'd') => (text.get(..i)?, 86_400),
+        _ => (text, 1),
+    };
+    number.parse::<u64>().ok()?.checked_mul(unit)
+}
+
+/// How long ago `then_ms` was, roughly.
+fn ago(then_ms: u64, now_ms: u64) -> String {
+    let secs = now_ms.saturating_sub(then_ms) / 1000;
+    match secs {
+        0..60 => "just now".to_owned(),
+        60..3600 => format!("{} min ago", secs / 60),
+        3600..86_400 => format!("{} h ago", secs / 3600),
+        _ => format!("{} days ago", secs / 86_400),
+    }
+}
+
+fn format_blocklists(lists: &v1::Blocklists, now_ms: u64) -> String {
+    let mut text = String::new();
+    if lists.lists.is_empty() {
+        text.push_str("no blocklists\n");
+    }
+    for list in &lists.lists {
+        let _ = writeln!(text, "{}  {}", list.name, list.source);
+        let fetched = if list.checked_ms == 0 {
+            "not fetched yet".to_owned()
+        } else {
+            format!(
+                "{} entries ({} kB{}), changed {}, fetched {}, every {}",
+                list.entries,
+                list.bytes / 1000,
+                if list.invalid > 0 {
+                    format!(", {} lines skipped", list.invalid)
+                } else {
+                    String::new()
+                },
+                if list.updated_ms == 0 {
+                    "never".to_owned()
+                } else {
+                    ago(list.updated_ms, now_ms)
+                },
+                ago(list.checked_ms, now_ms),
+                match list.refresh_secs {
+                    s if s % 86_400 == 0 => format!("{} d", s / 86_400),
+                    s if s % 3600 == 0 => format!("{} h", s / 3600),
+                    s => format!("{} min", s / 60),
+                },
+            )
+        };
+        let _ = writeln!(text, "    {fetched}");
+        if !list.error.is_empty() {
+            let _ = writeln!(text, "    last fetch: {}", list.error);
+        }
+        let _ = writeln!(
+            text,
+            "    named by {}; decided {} connections since the daemon started",
+            match list.rules.as_slice() {
+                [] => "no rule".to_owned(),
+                rules => format!(
+                    "rule{} {}",
+                    if rules.len() == 1 { "" } else { "s" },
+                    rules
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            },
+            list.matched,
+        );
+    }
+    text
+}
+
 fn alerts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;
     let all = args.contains("--all");
@@ -1365,6 +1490,7 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
             ..Default::default()
         },
         netns: args.values_from_str("--netns")?,
+        list: args.values_from_str("--list")?,
         ..Conditions::default()
     };
     Ok(RuleSpec {

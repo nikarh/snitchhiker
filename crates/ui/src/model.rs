@@ -268,6 +268,8 @@ pub struct Model {
     pub proposals: BTreeMap<u64, v1::Proposal>,
     /// The paired devices, as last listed.
     pub devices: Option<v1::DeviceList>,
+    /// The blocklists, as last listed.
+    pub blocklists: Option<v1::Blocklists>,
     /// The pairing started last, until it is dismissed.
     pub pairing: Option<v1::Pairing>,
     /// Remote devices' dangerous actions waiting for an approval here.
@@ -343,6 +345,9 @@ impl Model {
             }
             Update::Explanation(explanation) => {
                 self.explanation = Some(*explanation);
+            }
+            Update::Blocklists(lists) => {
+                self.blocklists = Some(lists);
             }
             _ => {}
         }
@@ -497,6 +502,7 @@ impl Model {
             | Update::CacheSize(_)
             | Update::TrustedClients(_)
             | Update::Lint(_)
+            | Update::Blocklists(_)
             | Update::Explanation(_)) => self.apply_settings(update),
             update @ (Update::Proposals(_)
             | Update::Proposal(_)

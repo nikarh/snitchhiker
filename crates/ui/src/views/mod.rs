@@ -1,6 +1,7 @@
 //! The app's pages.
 
 pub mod alerts;
+pub mod blocklists;
 pub mod connections;
 pub mod devices;
 pub mod editor;

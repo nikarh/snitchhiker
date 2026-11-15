@@ -56,6 +56,9 @@ pub struct Conditions {
     /// Names of network namespaces (`ip netns`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub netns: Vec<String>,
+    /// Blocklists, by name: the destination's name or address is on one of them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub list: Vec<String>,
 }
 
 /// A container's identity, as keys of `container`.
@@ -319,6 +322,9 @@ impl Conditions {
         if !self.netns.is_empty() {
             conditions.push(Condition::NetnsName(patterns(&self.netns)));
         }
+        if !self.list.is_empty() {
+            conditions.push(Condition::List(self.list.clone()));
+        }
         Ok(())
     }
 
@@ -374,6 +380,7 @@ impl Conditions {
                 Condition::VmUuid(u) => spec.vm.uuid.extend(u.iter().cloned()),
                 Condition::VmHypervisor(h) => spec.vm.hypervisor.extend(h.iter().cloned()),
                 Condition::NetnsName(p) => spec.netns.extend(p.iter().map(pattern_text)),
+                Condition::List(names) => spec.list.extend(names.iter().cloned()),
                 Condition::Not(_) => {}
             }
         }

@@ -175,6 +175,10 @@ The first NFQUEUE queue number (default `0`) and how many queues there are (1 to
 
 The SQLite database with the rules and the history. Default `/var/lib/snitchhiker/state.db`.
 
+### `blocklist_max_bytes`
+
+The largest [blocklist](/guides/blocklists/) fetched, in bytes: a larger one is refused and the version before stays in use. Default `67108864` (64 MiB). Lists are kept in `lists/` next to the database.
+
 ### `retention_days`
 
 How long connection history is kept. Default `30`.
