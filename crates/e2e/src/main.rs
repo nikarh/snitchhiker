@@ -82,6 +82,14 @@ const SCENARIOS: &[Scenario] = &[
         "daemon/service-starts-ready-and-stops",
         daemon::service_starts_ready_and_stops,
     ),
+    (
+        "daemon/loopback-is-allowed-by-default",
+        daemon::loopback_is_allowed_by_default,
+    ),
+    (
+        "daemon/managed-rules-apply-and-are-locked",
+        daemon::managed_rules_apply_and_are_locked,
+    ),
     ("escape/tcp-fast-open", escape::tcp_fast_open),
     ("escape/udp-sendto", escape::udp_sendto),
     ("escape/ipv6-and-mapped-ipv4", escape::ipv6_and_mapped_ipv4),

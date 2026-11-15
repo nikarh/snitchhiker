@@ -29,6 +29,8 @@ case "${SNITCHHIKER_VM_DISTRO:-arch}" in
     e2e/vm.sh node ssh 'sudo apt-get install -y /tmp/snitchhiker.deb >/dev/null'
     ;;
 esac
+# Copies an earlier version of this script left (a kept VM) would shadow the package's.
+e2e/vm.sh node ssh 'sudo rm -f /usr/local/bin/snitchhikerd /usr/local/bin/snitchhiker'
 e2e/vm.sh node put "target/${dir}/snitchhiker-e2e" /tmp/snitchhiker-e2e
 e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-e2e /usr/local/bin/'
 

@@ -24,9 +24,17 @@ impl Running {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let config = format!("{dir}/daemon.toml");
+        // The scenarios probe 127.0.0.1, which the System folder allows: it is off unless a scenario says otherwise.
+        let defaults = if settings.contains("default_rules") {
+            ""
+        } else {
+            "default_rules = false\n"
+        };
         std::fs::write(
             &config,
-            format!("database = \"{dir}/state.db\"\nqueues = 2\n{settings}"),
+            format!(
+                "database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\nqueues = 2\n{defaults}{settings}"
+            ),
         )
         .map_err(|e| e.to_string())?;
         let _ = std::fs::remove_file(PIDFILE);
@@ -270,5 +278,57 @@ pub fn service_starts_ready_and_stops() -> Result<(), String> {
         after.contains("ActiveState=inactive"),
         "the service didn't stop",
         &after,
+    )
+}
+
+pub fn loopback_is_allowed_by_default() -> Result<(), String> {
+    let mut daemon = Running::start(
+        "defaults",
+        "mode = \"enforce\"\nno_match = \"deny\"\ndefault_rules = true\n",
+    )?;
+    let (_listener, port) = listener()?;
+    let connected = mallory_connects(port)?;
+    let rules = daemon.cli(&["rules"])?;
+    daemon.stop()?;
+    check(
+        connected,
+        "loopback isn't allowed by the System folder",
+        &rules,
+    )?;
+    check(
+        rules.contains("(locked) Loopback"),
+        "the default rule isn't listed as locked",
+        &rules,
+    )
+}
+
+pub fn managed_rules_apply_and_are_locked() -> Result<(), String> {
+    let (_listener, port) = listener()?;
+    let mut daemon = Running::start("managed", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let rules_dir = format!("{DIR}/managed/rules.d");
+    std::fs::create_dir_all(&rules_dir).map_err(|e| e.to_string())?;
+    std::fs::write(
+        format!("{rules_dir}/baseline.toml"),
+        format!(
+            "[folder]\nname = \"Baseline\"\n\n[[rule]]\nname = \"python to the test port\"\naction = \"allow\"\nexe = [\"glob:/usr/bin/python3*\"]\nport = [\"{port}\"]\n"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    run("pkill", &["-HUP", "-x", "snitchhikerd"])?;
+    thread::sleep(Duration::from_millis(300));
+    let connected = mallory_connects(port)?;
+    let rules = daemon.cli(&["rules"])?;
+    let removal = daemon.cli(&["rules", "rm", &((1_u64 << 62) | 1).to_string()]);
+    daemon.stop()?;
+    check(connected, "a managed rule didn't apply", &rules)?;
+    check(
+        rules.contains("(locked) python to the test port"),
+        "the managed rule isn't listed as locked",
+        &rules,
+    )?;
+    check(
+        removal.is_err(),
+        "a managed rule could be deleted",
+        &format!("{removal:?}"),
     )
 }
