@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -35,6 +36,53 @@ object Notifications {
         )
     }
 
+    private fun status(node: NodeInfo): String = "status:${node.id}"
+
+    /** Posts a notification, when the app may (from Android 13 the user allows it). */
+    private fun post(
+        context: Context,
+        tag: String,
+        id: Int,
+        notification: android.app.Notification,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        NotificationManagerCompat.from(context).notify(tag, id, notification)
+    }
+
+    /** A node stopped answering: how it went, if it said. */
+    fun offline(
+        context: Context,
+        node: NodeInfo,
+        stopping: String?,
+    ) {
+        val notification =
+            NotificationCompat
+                .Builder(context, ALERTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("${node.name} is offline")
+                .setContentText(stopping?.let { "It said: $it" } ?: "It stopped answering without a word.")
+                .build()
+        post(context, status(node), 0, notification)
+    }
+
+    fun online(
+        context: Context,
+        node: NodeInfo,
+    ) {
+        val notification =
+            NotificationCompat
+                .Builder(context, ALERTS)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle("${node.name} is back online")
+                .setTimeoutAfter(60_000)
+                .build()
+        post(context, status(node), 0, notification)
+    }
+
     /** One notification per prompt, across nodes. */
     private fun tag(node: NodeInfo): String = "prompt:${node.id}"
 
@@ -58,11 +106,6 @@ object Notifications {
         node: NodeInfo,
         prompt: Prompt,
     ) {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            return
-        }
         val program = prompt.exe.substringAfterLast('/').ifEmpty { "An unknown program" }
         val destination =
             prompt.hosts.firstOrNull()
@@ -97,6 +140,6 @@ object Notifications {
                 .addAction(0, "Allow", PromptActions.intent(context, node, prompt.id, PromptActions.ALLOW))
                 .addAction(0, "Deny", PromptActions.intent(context, node, prompt.id, PromptActions.DENY))
                 .build()
-        NotificationManagerCompat.from(context).notify(tag(node), prompt.id.toInt(), notification)
+        post(context, tag(node), prompt.id.toInt(), notification)
     }
 }

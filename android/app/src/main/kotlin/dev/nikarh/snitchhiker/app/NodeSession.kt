@@ -39,6 +39,9 @@ class NodeSession(
         job =
             scope.launch(Dispatchers.IO) {
                 var backoff = BACKOFF_MIN_MS
+                // Since when the node hasn't answered (it was connected before), and whether that was told.
+                var offlineSince: Long? = null
+                var told = false
                 while (isActive) {
                     try {
                         val key = DeviceKey.get(context)
@@ -46,6 +49,9 @@ class NodeSession(
                         client = connected
                         // The subscriptions send what waits now: the lists start again from that.
                         mutableState.update { NodeState(connected = true, openAlerts = it.openAlerts) }
+                        if (told) Notifications.online(context, info)
+                        offlineSince = null
+                        told = false
                         backoff = BACKOFF_MIN_MS
                         refreshStatus()
                         connected.notices(TOPICS).collect { notice ->
@@ -60,6 +66,12 @@ class NodeSession(
                     }
                     client?.close()
                     client = null
+                    val now = System.currentTimeMillis()
+                    val since = offlineSince ?: now.also { offlineSince = it }
+                    if (!told && now - since >= OFFLINE_AFTER_MS) {
+                        Notifications.offline(context, info, mutableState.value.stopping)
+                        told = true
+                    }
                     delay(backoff)
                     backoff = (backoff * 2).coerceAtMost(BACKOFF_MAX_MS)
                 }
@@ -86,5 +98,8 @@ class NodeSession(
             listOf(Topic.TOPIC_PROMPTS, Topic.TOPIC_ALERTS, Topic.TOPIC_PROPOSALS, Topic.TOPIC_APPROVALS, Topic.TOPIC_RULES)
         const val BACKOFF_MIN_MS = 1_000L
         const val BACKOFF_MAX_MS = 30_000L
+
+        /** How long a node may not answer before it is reported offline. */
+        const val OFFLINE_AFTER_MS = 120_000L
     }
 }

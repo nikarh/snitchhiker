@@ -19,6 +19,8 @@ data class NodeState(
     val openAlerts: Int = 0,
     /** Bumped when the node's rules changed: views list them again. */
     val rulesVersion: Int = 0,
+    /** Why the node said it was stopping, if it did (its connection ends next). */
+    val stopping: String? = null,
 ) {
     val pendingProposals: Int get() = proposals.values.count { it.state == ProposalState.PROPOSAL_STATE_PENDING }
 
@@ -33,6 +35,7 @@ data class NodeState(
             notice.alert != null -> copy(openAlerts = openAlerts + if (notice.alert.acknowledged) 0 else 1)
             notice.alerts_changed != null -> copy(openAlerts = notice.alerts_changed.open_)
             notice.rules_changed != null -> copy(rulesVersion = rulesVersion + 1)
+            notice.stopping != null -> copy(stopping = notice.stopping.reason)
             else -> this
         }
 }

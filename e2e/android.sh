@@ -2,7 +2,8 @@
 # The Android app end to end: the app in an emulator (scripts/android-emulator.sh), the node in the e2e VM
 # (e2e/vm.sh), and a relay between them on this machine's loopback (unprivileged; both reach it at 10.0.2.2 through
 # their user-mode networks). The app pairs by a link, a connection no rule decides on the node prompts the phone in
-# the background, and Allow on the notification makes the suggested rule.
+# the background, and Allow on the notification makes the suggested rule. The node stopped, the phone says it is
+# offline, with the node's reason; started, that it is back.
 #
 #   e2e/android.sh
 #
@@ -101,4 +102,30 @@ else
   fail allowed-from-the-notification "no notification for the prompt" "$(adb shell dumpsys notification --noredact | grep -E 'android.title' | head)"
 fi
 adb shell cmd statusbar collapse
+
+# The node stopped: within the offline threshold (two minutes) the phone says so, with the node's own reason; started
+# again, it says it is back.
+notifications() { adb shell dumpsys notification --noredact | grep -E 'android\.(title|text)=' ; }
+e2e/vm.sh node ssh 'sudo systemctl stop snitchhikerd' > /dev/null
+for _ in $(seq 40); do
+  sleep 5
+  notifications | grep -q "is offline" && break
+done
+out=$(notifications)
+if grep -q "snitchhiker-e2e is offline" <<< "${out}" && grep -q "the daemon was stopped" <<< "${out}"; then
+  pass offline-with-the-nodes-reason
+else
+  fail offline-with-the-nodes-reason "no offline notification, or without the node's reason" "${out}"
+fi
+e2e/vm.sh node ssh 'sudo systemctl start snitchhikerd' > /dev/null
+for _ in $(seq 20); do
+  sleep 3
+  notifications | grep -q "is back online" && break
+done
+out=$(notifications)
+if grep -q "snitchhiker-e2e is back online" <<< "${out}"; then
+  pass back-online
+else
+  fail back-online "no notification that the node is back" "${out}"
+fi
 exit "${failed}"
