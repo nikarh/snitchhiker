@@ -18,6 +18,8 @@ permissions:
   actions: write
   # Reading a PR's check runs (implicit on public repositories, not on private ones).
   checks: read
+  # And its commit's combined status (commits/<sha>/status).
+  statuses: read
 
 concurrency:
   group: auto-merge
