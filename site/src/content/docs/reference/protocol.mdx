@@ -82,12 +82,21 @@ Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 | Topic | Notices |
 | --- | --- |
 | `TOPIC_PROMPTS` | `Prompt` as each opens, `PromptResolved` as each is answered (by anyone) or times out |
-| `TOPIC_EVENTS` | `ConnectionEvent` for every connection as it is decided |
+| `TOPIC_EVENTS` | `ConnectionEvent` for every connection as it is recorded, with its `seq` |
 | `TOPIC_RULES` | `RulesChanged`: list the rules again |
 
 A subscription to `TOPIC_PROMPTS` is also what makes a node ask: with no subscriber, `no_client` decides instead of a prompt.
 
-Each connection has a bounded queue of outgoing frames. A client that doesn't read fast enough misses notices rather than slowing the node down; it can list again (`ListPrompts`, `ListEvents`) to catch up.
+### Resuming
+
+A client that loses its connection resumes where it was:
+
+- **Events.** It subscribes with `after` set to the `seq` of the last event it saw. The node first sends the stored events after it, oldest first, then the live ones, with nothing in between lost. At most 4000 are sent this way; further behind, the answer is `ERROR_CODE_INVALID`, and the client pages with `ListEvents` before subscribing from the newest.
+- **Prompts.** Subscribing sends a `Prompt` for each prompt waiting, then the new ones.
+
+Around the moment of subscribing, an event or a prompt may arrive twice: clients ignore events whose `seq` they have seen and prompts whose `id` they know.
+
+Each connection has a bounded queue of outgoing frames. A client that doesn't read fast enough misses notices rather than slowing the node down. The next notice it gets has `missed` set, and the client resumes as above, or lists prompts and rules again.
 
 ## Versioning
 

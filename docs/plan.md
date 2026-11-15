@@ -2008,7 +2008,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
 - [ ] **API server**
   - [x] `client.sock` (group) and `admin.sock` (root).
   - [x] Every M1 capability exposed as RPC.
-  - [ ] Subscriptions with sequence numbers and resume.
+  - [x] Subscriptions with sequence numbers and resume.
 - [ ] **Local auth**
   - [x] Peer verification ([§4.2](#42-local-client-authentication-identity-from-the-kernel-no-secrets-on-disk) items 1–4).
         For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
