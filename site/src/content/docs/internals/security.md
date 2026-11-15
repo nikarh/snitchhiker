@@ -89,10 +89,17 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `local-auth/connection-ends-with-its-process` | keeping a client's connection after the client exits, by holding its socket |
 | `step-up/allow-everything-needs-authorization` | adding an allow-everything rule from a client without polkit's authorization |
 | `local-auth/client-refuses-a-fake-node` | posing as the daemon to a client, with a socket of one's own |
+| `tamper/admin-socket-refuses-ordinary-users` | the command line run by an ordinary user |
+| `tamper/disguised-clients-are-refused` | a hard link to the client binary, and the client run inside a user namespace |
+| `tamper/configuration-state-and-runtime-are-root-only` | writing the configuration, rule files, sockets or state; reading the history or the client registry |
+| `tamper/the-service-cannot-be-stopped-or-changed` | stopping, killing, masking, disabling or overriding the service |
+| `tamper/the-daemon-cannot-be-signalled-or-traced` | signalling or tracing the daemon, reading its memory, descriptors or environment |
+| `tamper/bpf-programs-and-maps-are-out-of-reach` | listing the eBPF programs, reading their maps |
+| `tamper/connecting-while-rules-reload` | connecting hundreds of times while the rules are reloaded every 20 ms |
 
 ## The daemon itself
 
-The daemon runs as root with only the capabilities it needs, sees the system read-only apart from its own directories, and can't gain privileges ([The service](/install/linux/#the-service)). With `fail = "closed"`, its table stays in place when it stops or crashes, and systemd restarts it, so nothing new gets out undecided meanwhile.
+The daemon runs as root with only the capabilities it needs, sees the system read-only apart from its own directories, and can't gain privileges ([The service](/install/linux/#the-service)). Everything it creates, the database with the history and the audit trail first, is readable by root alone, wherever the configuration puts it. With `fail = "closed"`, its table stays in place when it stops or crashes, and systemd restarts it, so nothing new gets out undecided meanwhile.
 
 ## Reporting a vulnerability
 

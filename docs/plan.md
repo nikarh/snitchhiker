@@ -2033,6 +2033,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
 - [ ] **Escape suite, control plane** ([§12.5](#125-escape-and-tamper-suite))
   - [ ] The `desktop` topology; every "disabling the firewall or changing rules" attempt, with positive controls
         through a trusted test client; results generate the docs' attacker table. Required on every PR from here on.
+        Done for what exists (`tamper/*`, `local-auth/*`, `step-up/*`); left: the genuine desktop app (M3), agents
+        (M4), remote (M5); the docs' table is written by hand until the generators land.
 - [ ] **Docs site** ([§10.7](#107-documentation-site))
   - [x] `site/` scaffold, `docs.yml` and `docs-publish.sh` from barbican, versions, link checking. Served from
         nikarh.github.io/snitchhiker/, no custom domain.
