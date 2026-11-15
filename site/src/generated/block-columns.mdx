@@ -1,0 +1,19 @@
+{/* Generated from Column in crates/proto/src/columns.rs by crates/daemon/tests/docs.rs. */}
+
+| Id | Column | Width | Holds |
+| --- | --- | --- | --- |
+| 1 | `Seq` | 4 | u32: the event's seq minus the base seq |
+| 2 | `Time` | 4 | u32: its time minus the base time, in ms |
+| 3 | `Exe` | 4 | u32: the executable's string id |
+| 4 | `Host` | 4 | u32: the host name's string id; 0 for none |
+| 5 | `Uid` | 4 | u32: the user id |
+| 6 | `Pid` | 4 | u32: the process id |
+| 7 | `Address` | 16 | 16 bytes: the destination, IPv6 or IPv4 mapped into IPv6 |
+| 8 | `Port` | 2 | u16: the destination port |
+| 9 | `Protocol` | 1 | u8: the IP protocol number |
+| 10 | `Context` | 1 | u8: a `Context` number |
+| 11 | `Action` | 1 | u8: an `Action` number |
+| 12 | `Source` | 1 | u8: a `Source` number |
+| 13 | `Rule` | 8 | u64: the deciding rule's id; 0 for none |
+| 14 | `BytesOut` | 8 | u64: bytes sent |
+| 15 | `BytesIn` | 8 | u64: bytes received |

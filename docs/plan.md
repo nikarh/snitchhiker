@@ -2001,9 +2001,10 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Conformance vectors in `proto/vectors/`, decoded in CI; the protocol specification page written alongside
         the code, not after it.
   - [x] Framing, version negotiation, limits.
-  - [ ] Columnar bulk blocks with zero-copy decoding, per-node string dictionary, streaming zstd, batched live
-        events ([§11.5](#115-efficient-wire-format)).
-  - [ ] Spike: benchmark the columnar blocks against FlatBuffers and rkyv on size, encode and decode cost.
+  - [x] Columnar bulk blocks with zero-copy decoding, per-node string dictionary, streaming zstd, batched live
+        events ([§11.5](#115-efficient-wire-format)). Streaming zstd comes with the remote transport (M5).
+  - [x] Spike: benchmark the columnar blocks against FlatBuffers and rkyv on size, encode and decode cost
+        ([decision 0007](decisions/0007-wire-format.md)).
   - [x] `buf breaking` (or an equivalent) in CI.
 - [ ] **API server**
   - [x] `client.sock` (group) and `admin.sock` (root).

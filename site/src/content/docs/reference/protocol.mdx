@@ -6,6 +6,7 @@ sidebar:
 ---
 
 import ProtoSchema from '../../../components/ProtoSchema.astro';
+import BlockColumns from '../../../generated/block-columns.mdx';
 
 Every client of a node, the command line included, speaks one protocol: length-prefixed [Protocol Buffers](https://protobuf.dev) messages over a stream. This page specifies it; the [schema](#schema) at the end is the source of truth for every message and field.
 
@@ -98,6 +99,31 @@ Around the moment of subscribing, an event or a prompt may arrive twice: clients
 
 Each connection has a bounded queue of outgoing frames. A client that doesn't read fast enough misses notices rather than slowing the node down. The next notice it gets has `missed` set, and the client resumes as above, or lists prompts and rules again.
 
+## Columnar blocks
+
+Bulk event data (a page of history, live events) can travel as one columnar block instead of one `ConnectionEvent` per event: `ListEvents` with `columnar` answers with an `EventBlock`, and a subscription to `TOPIC_EVENTS` with `columnar` gets an `EventBlock` notice per batch the node records (about every 100 ms; a backfill is one block). In the [benchmark](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0007-wire-format.md) a block is about a third smaller than the same events as messages, and an order of magnitude faster to read: the columns are arrays of fixed-width little-endian values, read in place, without decoding each event.
+
+```text
+offset  size   field
+     0     4   magic "SNEB"
+     4     2   format version (1)
+     6     2   columns in the directory (n)
+     8     4   rows
+    12     4   reserved, 0
+    16     8   base seq (i64)
+    24     8   base time (u64, Unix ms)
+    32   8×n   directory: per column its id (u16), the width of one value (u16), its offset from the block's start (u32)
+     …         the columns, each rows × width bytes
+```
+
+All numbers are little-endian, and nothing needs alignment. A reader finds columns by id and skips ids it doesn't know, so later formats can add columns; a known column with another width is an error. The columns of format 1:
+
+<BlockColumns />
+
+**Strings travel once.** Blocks refer to programs and host names by the node's interned string ids, stable for its epoch. The `dictionary` of an `EventBlock` holds the ids it uses that this connection hasn't been sent before, with their strings: a client keeps one dictionary per node and adds to it from every block. The node decides a block's dictionary as it queues the block, so a client never receives an id before its string.
+
+Remote connections will also compress bulk data with zstd, in streaming mode; local sockets don't. Why blocks rather than FlatBuffers or rkyv: [decision 0007](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0007-wire-format.md).
+
 ## Versioning
 
 The protocol has a major and a minor version.
@@ -113,7 +139,7 @@ Version 1.0 is the current version. CI lints the schema and checks every change 
 
 [`proto/vectors/v1/`](https://github.com/nikarh/snitchhiker/tree/main/proto/vectors) holds frames for checking an implementation of the protocol: each is a message in protobuf text format (`.textproto`, naming its type on its first line) and the frame as sent, in hex (`.hex`). An implementation must decode every frame to its message, and encode every message to exactly its frame, apart from the vectors marked `# decode-only`. Those carry what a newer peer may send, an unknown field and an unknown kind of frame, which a decoder must skip.
 
-`00-preamble.hex` is the preamble. Frames, once published, never change: a change to how an existing message encodes is a breaking change.
+`00-preamble.hex` is the preamble, and `blocks/` holds columnar blocks in hex with their rows as text. Frames and blocks, once published, never change: a change to how an existing one encodes is a breaking change.
 
 ## Schema
 
