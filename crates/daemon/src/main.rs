@@ -99,6 +99,7 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
 
     info!(version = VERSION, "starting");
     let daemon = Daemon::start(config)?;
+    snitchhiker_daemon::api::spawn(&daemon).map_err(snitchhiker_daemon::runtime::Error::from)?;
     write_pidfile();
     // The table is in place: from now on no new connection gets out undecided.
     snitchhiker_daemon::notify::notify("READY=1");
@@ -110,13 +111,16 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
         }
     }
     snitchhiker_daemon::notify::notify("STOPPING=1");
-    let _ = std::fs::remove_file(cli::PIDFILE);
+    let _ = std::fs::remove_file(PIDFILE);
     daemon.stop();
     Ok(())
 }
 
+/// Where the daemon writes its pid (for `systemctl reload` and scripts).
+const PIDFILE: &str = "/run/snitchhiker/snitchhikerd.pid";
+
 fn write_pidfile() {
-    let path = Path::new(cli::PIDFILE);
+    let path = Path::new(PIDFILE);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }

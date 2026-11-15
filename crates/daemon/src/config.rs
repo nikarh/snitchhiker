@@ -18,6 +18,18 @@ pub enum Mode {
     Monitor,
 }
 
+/// What happens to a connection no rule decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Policy {
+    Allow,
+    Deny,
+    Reject,
+    /// Hold it and ask the connected clients; `no_client` decides when nobody listens, `on_timeout` when nobody
+    /// answers in time.
+    Ask,
+}
+
 /// What happens to new connections while the daemon isn't running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -34,7 +46,16 @@ pub enum Fail {
 pub struct Config {
     pub mode: Mode,
     /// What happens to a connection no rule decides.
-    pub no_match: Action,
+    pub no_match: Policy,
+    /// With `no_match = "ask"`: what happens when no client is listening for prompts.
+    pub no_client: Action,
+    /// With `no_match = "ask"`: how long a prompt waits for an answer, and what happens then.
+    pub prompt_timeout_secs: u64,
+    pub on_timeout: Action,
+    /// The group the client binaries are setgid to, and the client socket belongs to.
+    pub client_group: String,
+    /// The client binaries (desktop app, MCP server) allowed on the client socket.
+    pub trusted_clients: Vec<PathBuf>,
     pub fail: Fail,
     /// NFQUEUE queues, one deciding thread each.
     pub queues: u16,
@@ -56,7 +77,12 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mode: Mode::Enforce,
-            no_match: Action::Deny,
+            no_match: Policy::Deny,
+            no_client: Action::Deny,
+            prompt_timeout_secs: 30,
+            on_timeout: Action::Deny,
+            client_group: "snitchhiker-ui".to_owned(),
+            trusted_clients: vec![PathBuf::from("/usr/bin/snitchhiker-ui")],
             fail: Fail::Closed,
             queues: 4,
             queue: 0,
@@ -116,6 +142,11 @@ impl Config {
             path: PathBuf::new(),
             source: Box::new(e),
         })?;
+        if config.prompt_timeout_secs == 0 || config.prompt_timeout_secs > 3600 {
+            return Err(Error::Invalid(
+                "prompt_timeout_secs must be between 1 and 3600",
+            ));
+        }
         if config.queues == 0 || config.queues > 64 {
             return Err(Error::Invalid("queues must be between 1 and 64"));
         }
@@ -153,7 +184,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.mode, Mode::Monitor);
-        assert_eq!(config.no_match, Action::Allow);
+        assert_eq!(config.no_match, Policy::Allow);
         assert_eq!(config.fail, Fail::Open);
         assert_eq!((config.queue, config.queues), (10, 2));
         assert_eq!(config.retention_days, 7);

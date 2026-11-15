@@ -855,6 +855,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "psl"
+version = "2.1.255"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb40358efa8d957f3e793e45daedd2fef822c694e1e3a45b827b53de6175e724"
+dependencies = [
+ "psl-types",
+]
+
+[[package]]
+name = "psl-types"
+version = "2.0.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33cb294fe86a74cbcf50d4445b37da762029549ebeea341421c7c70370f86cac"
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1092,11 +1107,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
 
 [[package]]
+name = "snitchhiker-client"
+version = "0.1.0"
+dependencies = [
+ "snitchhiker-proto",
+ "thiserror",
+]
+
+[[package]]
 name = "snitchhiker-core"
 version = "0.1.0"
 dependencies = [
  "allocation-counter",
  "ipnet",
+ "psl",
  "regex",
  "serde",
  "serde_json",
@@ -1116,9 +1140,11 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "snitchhiker-client",
  "snitchhiker-core",
  "snitchhiker-ebpf",
  "snitchhiker-netfilter",
+ "snitchhiker-proto",
  "thiserror",
  "toml",
  "tracing",
@@ -1130,9 +1156,11 @@ name = "snitchhiker-e2e"
 version = "0.1.0"
 dependencies = [
  "hickory-proto",
+ "snitchhiker-client",
  "snitchhiker-daemon",
  "snitchhiker-ebpf",
  "snitchhiker-netfilter",
+ "snitchhiker-proto",
 ]
 
 [[package]]

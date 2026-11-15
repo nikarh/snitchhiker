@@ -89,6 +89,10 @@ pub enum Source {
     Policy = 2,
     /// Monitor mode: let through whatever a rule or the policy said.
     Monitor = 3,
+    /// A client answered a prompt.
+    Prompt = 4,
+    /// Nobody answered a prompt in time.
+    Timeout = 5,
 }
 
 /// A connection to record.
@@ -123,6 +127,14 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
     ),
     ("rules.delete", "DELETE FROM rules WHERE id = ?1"),
+    (
+        "rules.set_enabled",
+        "UPDATE rules SET enabled = ?2, updated_ms = ?3 WHERE id = ?1",
+    ),
+    (
+        "rules.delete_until_restart",
+        "DELETE FROM rules WHERE expiry = '{\"kind\":\"until-restart\"}'",
+    ),
     (
         "folders.insert",
         "INSERT INTO folders (parent, name, enabled, scope) VALUES (?1, ?2, ?3, ?4)",
@@ -347,6 +359,25 @@ impl Store {
             db_id(now_ms),
         ])?;
         Ok(id_of(self.connection.last_insert_rowid()))
+    }
+
+    /// Switches a rule on or off; whether it exists.
+    pub fn set_rule_enabled(
+        &mut self,
+        id: RuleId,
+        enabled: bool,
+        now_ms: u64,
+    ) -> Result<bool, Error> {
+        let mut statement = self.connection.prepare_cached(sql("rules.set_enabled")?)?;
+        Ok(statement.execute(params![db_id(id), enabled, db_id(now_ms)])? > 0)
+    }
+
+    /// Deletes the rules that only applied until the daemon restarted.
+    pub fn delete_until_restart(&mut self) -> Result<usize, Error> {
+        let mut statement = self
+            .connection
+            .prepare_cached(sql("rules.delete_until_restart")?)?;
+        Ok(statement.execute([])?)
     }
 
     pub fn delete_rule(&mut self, id: RuleId) -> Result<bool, Error> {

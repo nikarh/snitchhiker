@@ -181,6 +181,26 @@ fn context_of(pid: u32, host: HostNamespaces) -> ContextKind {
     }
 }
 
+/// The name of `uid`, from the password database.
+#[must_use]
+pub fn user_of(uid: u32) -> Option<String> {
+    let passwd = fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let mut fields = line.split(':');
+        let name = fields.next()?;
+        let entry_uid: u32 = fields.nth(1)?.parse().ok()?;
+        (entry_uid == uid).then(|| name.to_owned())
+    })
+}
+
+/// Whether a process's executable can be replaced by someone other than root: it belongs to another user, or its
+/// group or others may write it.
+#[must_use]
+pub fn writable_by_others(pid: u32) -> bool {
+    fs::metadata(format!("/proc/{pid}/exe"))
+        .is_ok_and(|meta| meta.uid() != 0 || meta.mode() & 0o022 != 0)
+}
+
 /// The home directory of `uid`, from the password database.
 #[must_use]
 pub fn home_of(uid: u32) -> Option<String> {

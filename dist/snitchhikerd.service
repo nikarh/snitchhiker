@@ -25,9 +25,10 @@ StateDirectory=snitchhiker
 StateDirectoryMode=0700
 
 # Snitchhiker runs as root with only the capabilities it needs: managing the firewall (NET_ADMIN), loading and
-# attaching its eBPF programs (BPF, PERFMON, SYS_RESOURCE for locked memory on older kernels), and reading every
-# process's /proc entries (SYS_PTRACE, DAC_READ_SEARCH). It writes only its state and runtime directories.
-CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+# attaching its eBPF programs (BPF, PERFMON, SYS_RESOURCE for locked memory on older kernels), reading every
+# process's /proc entries (SYS_PTRACE, DAC_READ_SEARCH), and giving the client socket to the client group (CHOWN).
+# It writes only its state and runtime directories.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH CAP_CHOWN
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only

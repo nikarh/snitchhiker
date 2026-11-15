@@ -23,9 +23,14 @@ use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use snitchhiker_netfilter::sockdiag::{SockDiag, SocketId};
 use tracing::{error, info, warn};
 
-use crate::config::{Config, Fail, Mode};
+use snitchhiker_core::rule::{Expiry, Rule, RuleId, Tier};
+use snitchhiker_proto::{convert, v1};
+
+use crate::config::{Config, Fail, Mode, Policy};
 use crate::dns::{Names, parse_answer};
+use crate::hub::Hub;
 use crate::process::{HostNamespaces, ProcessCache};
+use crate::prompts::{Broker, Held, Hold, NewPrompt, Pending, PromptKey};
 use crate::store::{Event, Source, Store};
 
 /// Events waiting for the writer; beyond this they are dropped (and counted).
@@ -45,8 +50,8 @@ const PRUNE_CHUNK: u32 = 10_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("netlink: {0}")]
-    Netlink(#[from] std::io::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
     #[error("eBPF: {0}")]
     Ebpf(#[from] snitchhiker_ebpf::Error),
     #[error("store: {0}")]
@@ -55,6 +60,17 @@ pub enum Error {
     Rules(#[from] snitchhiker_core::engine::CompileError),
     #[error("managed rules: {0}")]
     Managed(#[from] crate::managed::Error),
+}
+
+/// Why an answer to a prompt was refused.
+#[derive(Debug, thiserror::Error)]
+pub enum AnswerError {
+    #[error("no such prompt (answered already, or timed out)")]
+    NotFound,
+    #[error("{0}")]
+    Invalid(String),
+    #[error(transparent)]
+    Runtime(#[from] Error),
 }
 
 /// What the deciding threads share.
@@ -70,9 +86,11 @@ pub struct Shared {
     /// The executable recorded for connections whose process isn't known.
     unknown: Arc<str>,
     pub decided: AtomicU64,
+    pub hub: Arc<Hub>,
+    pub broker: Broker,
 }
 
-/// The daemon, running.
+/// The daemon, running. Shared by the signal handler and the API's threads.
 pub struct Daemon {
     pub shared: Arc<Shared>,
     store: Arc<Mutex<Store>>,
@@ -82,7 +100,7 @@ pub struct Daemon {
 impl Daemon {
     /// Opens the store, compiles the rules, installs the table, loads the attribution programs and starts the
     /// deciding threads and the writer.
-    pub fn start(config: Config) -> Result<Self, Error> {
+    pub fn start(config: Config) -> Result<Arc<Self>, Error> {
         if let Some(parent) = config.database.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -101,8 +119,19 @@ impl Daemon {
         install(&table)?;
         info!(queues = config.queues, mode = ?config.mode, "table installed");
 
+        // Until-restart rules from before don't apply any more.
+        let mut store = store;
+        store.delete_until_restart()?;
         let (sender, receiver) = sync_channel(EVENT_QUEUE);
         let store = Arc::new(Mutex::new(store));
+        let mut queues = Vec::with_capacity(usize::from(config.queues));
+        let mut writers = Vec::with_capacity(usize::from(config.queues));
+        for offset in 0..config.queues {
+            let queue = Queue::bind(config.queue + offset)?;
+            writers.push(queue.verdict_writer()?);
+            queues.push(queue);
+        }
+        let broker = Broker::new(writers, Duration::from_secs(config.prompt_timeout_secs));
         let shared = Arc::new(Shared {
             rules: ArcSwap::from_pointee(rules),
             attribution,
@@ -113,16 +142,17 @@ impl Daemon {
             dropped_events: AtomicU64::new(0),
             unknown: Arc::from(""),
             decided: AtomicU64::new(0),
+            hub: Arc::new(Hub::default()),
+            broker,
             config,
         });
-        for offset in 0..shared.config.queues {
-            let number = shared.config.queue + offset;
-            let queue = Queue::bind(number)?;
+        for (offset, queue) in queues.into_iter().enumerate() {
+            let number = queue.number();
             let shared = Arc::clone(&shared);
             thread::Builder::new()
                 .name(format!("queue-{number}"))
                 .spawn(move || {
-                    if let Err(error) = decide_loop(&shared, queue) {
+                    if let Err(error) = decide_loop(&shared, queue, offset) {
                         error!(%error, queue = number, "deciding thread stopped");
                     }
                 })?;
@@ -146,11 +176,148 @@ impl Daemon {
                 .name("writer".to_owned())
                 .spawn(move || write_loop(&shared, &store, &receiver, retention))?;
         }
-        Ok(Self {
+        let daemon = Arc::new(Self {
             shared,
             store,
             table,
-        })
+        });
+        {
+            let daemon = Arc::clone(&daemon);
+            thread::Builder::new()
+                .name("prompt-timeouts".to_owned())
+                .spawn(move || {
+                    loop {
+                        for pending in daemon.shared.broker.wait_expired() {
+                            let action = daemon.shared.config.on_timeout;
+                            daemon.resolve(&pending, action, Source::Timeout, None, "", true);
+                        }
+                    }
+                })?;
+        }
+        Ok(daemon)
+    }
+
+    /// The daemon's version, with the suffix of development builds.
+    #[must_use]
+    pub fn version(&self) -> &'static str {
+        option_env!("SNITCHHIKER_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))
+    }
+
+    /// The store, for the API's reads and writes.
+    pub fn store(&self) -> std::sync::MutexGuard<'_, Store> {
+        self.store.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Answers a prompt: makes a rule of the chosen suggestion (or `conditions`) unless `duration` is once, then
+    /// decides every connection waiting on it. Returns the rule made, if any.
+    pub fn answer_prompt(
+        &self,
+        id: u64,
+        action: Action,
+        duration: v1::Duration,
+        suggestion: usize,
+        conditions: Option<&v1::Conditions>,
+        by: &str,
+    ) -> Result<Option<RuleId>, AnswerError> {
+        let now = now_ms();
+        let expiry = match duration {
+            v1::Duration::Once => None,
+            v1::Duration::UntilRestart => Some(Expiry::UntilRestart),
+            v1::Duration::Hour => Some(Expiry::At(now + 3_600_000)),
+            v1::Duration::HalfDay => Some(Expiry::At(now + 43_200_000)),
+            v1::Duration::Forever | v1::Duration::Unspecified => Some(Expiry::Never),
+        };
+        // The rule is checked before the prompt is taken: a refused answer leaves it waiting.
+        let rule = match expiry {
+            None => None,
+            Some(expiry) => Some(
+                self.shared
+                    .broker
+                    .peek(id, |pending| -> Result<Rule, AnswerError> {
+                        let (label, spec) = match conditions {
+                            Some(conditions) => (
+                                "Answer to a prompt".to_owned(),
+                                convert::conditions_from(conditions),
+                            ),
+                            None => pending
+                                .suggestions
+                                .get(suggestion)
+                                .map(|s| (s.label.clone(), s.conditions.clone()))
+                                .ok_or_else(|| {
+                                    AnswerError::Invalid(format!("no suggestion {suggestion}"))
+                                })?,
+                        };
+                        let conditions = spec
+                            .to_conditions()
+                            .map_err(|e| AnswerError::Invalid(e.to_string()))?;
+                        if conditions.is_empty() {
+                            return Err(AnswerError::Invalid(
+                                "the answer's rule has no conditions".to_owned(),
+                            ));
+                        }
+                        Ok(Rule {
+                            id: 0,
+                            folder: None,
+                            name: label,
+                            enabled: true,
+                            action,
+                            tier: Tier::Normal,
+                            expiry,
+                            log: true,
+                            notes: String::new(),
+                            conditions,
+                        })
+                    })
+                    .ok_or(AnswerError::NotFound)??,
+            ),
+        };
+        let pending = self.shared.broker.take(id).ok_or(AnswerError::NotFound)?;
+        let rule_id = match rule {
+            Some(rule) => {
+                let id = self.store().insert_rule(&rule, now).map_err(Error::from)?;
+                self.reload_rules()?;
+                Some(id)
+            }
+            None => None,
+        };
+        self.resolve(&pending, action, Source::Prompt, rule_id, by, false);
+        Ok(rule_id)
+    }
+
+    /// Decides a prompt's connections, records the decision, and tells the clients.
+    fn resolve(
+        &self,
+        pending: &Pending,
+        action: Action,
+        source: Source,
+        rule: Option<RuleId>,
+        by: &str,
+        timed_out: bool,
+    ) {
+        let verdict = if action == Action::Allow {
+            Verdict::Accept
+        } else {
+            Verdict::Drop
+        };
+        self.shared.broker.release(pending, verdict);
+        let mut event = pending.event.clone();
+        event.time_ms = now_ms();
+        event.action = action;
+        event.source = source;
+        event.rule = rule;
+        if self.shared.events.try_send(event).is_err() {
+            self.shared.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
+        self.shared.hub.publish(
+            v1::Topic::Prompts,
+            &v1::notice::Body::PromptResolved(v1::PromptResolved {
+                id: pending.prompt.id,
+                action: convert::action(action).into(),
+                by: by.to_owned(),
+                rule,
+                timed_out,
+            }),
+        );
     }
 
     /// Reads the rules again and swaps them in.
@@ -161,12 +328,16 @@ impl Daemon {
         };
         let count = rules.len();
         self.shared.rules.store(Arc::new(rules));
+        self.shared.hub.publish(
+            v1::Topic::Rules,
+            &v1::notice::Body::RulesChanged(v1::RulesChanged {}),
+        );
         Ok(count)
     }
 
     /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
     /// nothing new gets out until the daemon is back.
-    pub fn stop(self) {
+    pub fn stop(&self) {
         if self.shared.config.fail == Fail::Open
             && let Err(error) = remove(&self.table.name)
         {
@@ -242,7 +413,7 @@ fn dns_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
     }
 }
 
-fn decide_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
+fn decide_loop(shared: &Shared, mut queue: Queue, offset: usize) -> Result<(), Error> {
     let mut processes = ProcessCache::new(shared.host);
     let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
     let mut rejected: Vec<SocketId> = Vec::with_capacity(8);
@@ -251,8 +422,11 @@ fn decide_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
         verdicts.clear();
         rejected.clear();
         for packet in queue.receive()? {
-            let (verdict, reject) = decide(shared, &mut processes, &packet);
-            verdicts.push((packet.id, verdict));
+            let (verdict, reject) = decide(shared, &mut processes, &packet, offset);
+            // No verdict: the packet waits for a prompt's answer.
+            if let Some(verdict) = verdict {
+                verdicts.push((packet.id, verdict));
+            }
             rejected.extend(reject);
         }
         for &(id, verdict) in &verdicts {
@@ -292,16 +466,55 @@ fn context_code(context: ContextKind) -> u8 {
     }
 }
 
-/// The verdict for one packet, recording what happened, and the socket to close for a rejected connection.
+/// The history's record of a connection, before it is decided.
+fn undecided_event(facts: &Facts<'_>, exe: Arc<str>, pid: u32, cookie: Option<u64>) -> Event {
+    Event {
+        time_ms: facts.now_ms,
+        exe,
+        host: facts.hosts.first().cloned(),
+        uid: facts.uid,
+        pid,
+        protocol: facts.protocol,
+        address: facts.address,
+        port: facts.port,
+        context: context_code(facts.context),
+        action: Action::Deny,
+        source: Source::Policy,
+        rule: None,
+        cookie,
+    }
+}
+
+/// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
+/// listens for prompts.
+fn asks(shared: &Shared) -> bool {
+    shared.config.no_match == Policy::Ask
+        && shared.config.mode == Mode::Enforce
+        && shared.hub.has_subscribers(v1::Topic::Prompts)
+}
+
+/// What a policy does without asking (`ask` falls back to `no_client`).
+fn policy_action(policy: Policy, no_client: Action) -> Action {
+    match policy {
+        Policy::Allow => Action::Allow,
+        Policy::Deny => Action::Deny,
+        Policy::Reject => Action::Reject,
+        Policy::Ask => no_client,
+    }
+}
+
+/// The verdict for one packet (none: it is held for a prompt), recording what happened, and the socket to close for a
+/// rejected connection.
 fn decide(
     shared: &Shared,
     processes: &mut ProcessCache,
     queued: &Packet<'_>,
-) -> (Verdict, Option<SocketId>) {
+    queue: usize,
+) -> (Option<Verdict>, Option<SocketId>) {
     shared.decided.fetch_add(1, Ordering::Relaxed);
     let Some(headers) = packet::parse(queued.payload) else {
         // Not IPv4 or IPv6: nothing rules speak about.
-        return (Verdict::Accept, None);
+        return (Some(Verdict::Accept), None);
     };
     let key = FlowKey {
         netns: shared.netns,
@@ -340,11 +553,28 @@ fn decide(
         context: process.as_ref().map_or(ContextKind::Host, |p| p.context),
         now_ms: now,
     };
+    let exe = process
+        .as_ref()
+        .map_or_else(|| Arc::clone(&shared.unknown), |p| Arc::clone(&p.exe));
+    let mut event = undecided_event(&facts, exe, pid, owner.map(|o| o.cookie));
     let rules = shared.rules.load();
-    let decision = rules.decide(&facts);
-    let (action, source, rule) = match decision {
-        Some(decision) => (decision.action, Source::Rule, Some(decision.rule)),
-        None => (shared.config.no_match, Source::Policy, None),
+    let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
+        (decision.action, Source::Rule, Some(decision.rule))
+    } else {
+        if asks(shared) {
+            hold(
+                shared,
+                &facts,
+                &event,
+                Held {
+                    queue,
+                    id: queued.id,
+                },
+            );
+            return (None, None);
+        }
+        let action = policy_action(shared.config.no_match, shared.config.no_client);
+        (action, Source::Policy, None)
     };
     let (verdict, source) = match shared.config.mode {
         Mode::Monitor => (Verdict::Accept, Source::Monitor),
@@ -357,23 +587,9 @@ fn decide(
             source,
         ),
     };
-    let event = Event {
-        time_ms: now,
-        exe: process
-            .as_ref()
-            .map_or_else(|| Arc::clone(&shared.unknown), |p| Arc::clone(&p.exe)),
-        host: hosts.first().cloned(),
-        uid,
-        pid,
-        protocol: headers.protocol,
-        address: headers.destination,
-        port: headers.destination_port,
-        context: context_code(facts.context),
-        action,
-        source,
-        rule,
-        cookie: owner.map(|o| o.cookie),
-    };
+    event.action = action;
+    event.source = source;
+    event.rule = rule;
     if let Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) =
         shared.events.try_send(event)
     {
@@ -386,7 +602,63 @@ fn decide(
         remote: headers.destination,
         remote_port: headers.destination_port,
     });
-    (verdict, reject)
+    (Some(verdict), reject)
+}
+
+/// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open.
+fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) {
+    let destination = facts
+        .hosts
+        .first()
+        .map_or_else(|| facts.address.to_string(), ToString::to_string);
+    let key = PromptKey {
+        exe: Arc::clone(&event.exe),
+        uid: facts.uid,
+        destination,
+        port: facts.port,
+        protocol: facts.protocol,
+    };
+    let opened = shared.broker.hold(key, packet, facts.now_ms, || {
+        let suggestions = snitchhiker_core::suggest::suggestions(
+            facts.exe,
+            facts.home,
+            facts.hosts,
+            facts.address,
+            facts.port,
+            facts.protocol,
+        );
+        NewPrompt {
+            prompt: v1::Prompt {
+                exe: facts.exe.to_owned(),
+                cmdline: facts.cmdline.to_owned(),
+                uid: facts.uid,
+                user: crate::process::user_of(facts.uid).unwrap_or_default(),
+                pid: event.pid,
+                hosts: facts.hosts.iter().map(ToString::to_string).collect(),
+                address: convert::address(facts.address),
+                port: u32::from(facts.port),
+                protocol: u32::from(facts.protocol),
+                context: convert::context(facts.context).into(),
+                exe_writable: crate::process::writable_by_others(event.pid),
+                suggestions: suggestions
+                    .iter()
+                    .map(|s| v1::Suggestion {
+                        label: s.label.clone(),
+                        conditions: Some(convert::conditions(&s.conditions)),
+                        broad: s.broad,
+                    })
+                    .collect(),
+                ..v1::Prompt::default()
+            },
+            suggestions,
+            event: event.clone(),
+        }
+    });
+    if let Hold::Opened(prompt) = opened {
+        shared
+            .hub
+            .publish(v1::Topic::Prompts, &v1::notice::Body::Prompt(prompt));
+    }
 }
 
 fn write_loop(
