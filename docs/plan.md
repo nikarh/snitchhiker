@@ -1940,34 +1940,40 @@ the security model, and the GUI framework are proven before the bulk of feature 
 ### M1. Headless daemon MVP
 
 - [ ] **`core` crate**
-  - [ ] Rule and folder model, matchers, compiled index, precedence, explain.
+  - [x] Rule and folder model, matchers, compiled index, precedence, explain. Plus the rule file format
+        (`spec`), used by managed files and later by import/export.
   - [ ] Path generalisation and app-identity types.
   - [ ] Query language parser (rules subset).
   - [ ] proptest suites.
 - [ ] **Interception**
   - [ ] nftables table lifecycle: create, verify, restore on change (netlink monitor), remove on stop.
-  - [ ] NFQUEUE workers with fanout, preallocated buffers, in-place parsing, verdicts, reject via `SOCK_DESTROY`,
+  - [x] NFQUEUE workers with fanout, preallocated buffers, in-place parsing, verdicts, reject via `SOCK_DESTROY`,
         own-mark bypass.
   - [ ] Runtime set changes through direct nfnetlink batches to our table only; table-filtered event subscription
         ([§11.3](#113-never-pay-for-what-isnt-ours)).
-  - [ ] Fail-open and fail-closed policy wiring.
+  - [x] Fail-open and fail-closed policy wiring.
 - [ ] **Attribution**
-  - [ ] eBPF connect/sendmsg programs, process exec/exit cache, `/proc` + `SOCK_DIAG` fallback.
+  - [ ] eBPF connect/sendmsg programs, process exec/exit cache, `/proc` + `SOCK_DIAG` fallback. *(Done: the
+        programs, recording the process's start time; the process cache keyed by it. Remaining: exec/exit events,
+        the `SOCK_DIAG` fallback.)*
   - [ ] Process facts: app identity (pacman/dpkg/rpm owner lookups, Flatpak, Snap, AppImage, Nix, systemd unit),
         writable check, sha256 on demand.
-  - [ ] Context detection, basic: (netns, tuple) keys; cgroup and mount namespace mark a connection as
+  - [x] Context detection, basic: (netns, tuple) keys; cgroup and mount namespace mark a connection as
         `container`/`vm`/`netns`; host-only default for rules. Full identity comes in [M7](#m7-containers-vms-and-network-namespaces).
 - [ ] **DNS**
-  - [ ] UDP/53 answer sniffing, the resolved varlink monitor, getaddrinfo uprobes, the TTL'd map.
+  - [ ] UDP/53 answer sniffing, the resolved varlink monitor, getaddrinfo uprobes, the TTL'd map. *(Done: sniffing,
+        only answers to queries the asker really sent, names per process and per address, kept at least 10 minutes.
+        Remaining: the resolved monitor, uprobes.)*
 - [ ] **Store**
   - [ ] Schema and migrations, interned dictionaries, the writer thread, events, rollups maintained at write time,
         fixed-window totals, retention, keyset queries, FTS5 trigram search.
-  - [ ] Statement registry with the `EXPLAIN QUERY PLAN` gate.
+  - [x] Statement registry with the `EXPLAIN QUERY PLAN` gate.
   - [ ] eBPF byte counters → events and rollups.
 - [ ] **Policy and config**
-  - [ ] `daemon.toml`, policy object, monitor/enforce/disabled modes, managed `rules.d`.
+  - [x] `daemon.toml`, policy object, monitor/enforce/disabled modes, managed `rules.d`.
 - [ ] **Performance gates** ([§11](#11-performance-and-data-efficiency))
-  - [ ] Counting allocator test on the decision loop; criterion benches with thresholds in CI.
+  - [ ] Counting allocator test on the decision loop; criterion benches with thresholds in CI. *(Done: the
+        counting-allocator test on deciding.)*
   - [ ] Foreign-table test (60k-range interval set, churning) on latency, ingestion and RSS.
 - [ ] **System firewall and defaults**
   - [ ] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files).
@@ -1975,11 +1981,12 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] `status`, `rules ls/add/rm/enable/disable/import/export`, `events --follow/--query`, `stats`, `explain`,
         `policy`, `learn`.
 - [ ] **Packaging**
-  - [ ] systemd unit (hardened), sysusers, tmpfiles, a PKGBUILD for local testing.
+  - [x] systemd unit (hardened), sysusers, tmpfiles, a PKGBUILD for local testing. *(nfpm builds .deb and Arch
+        packages; the VM tests install them.)*
 - [ ] **Integration tests**
   - [ ] The enforcement and attribution suite in VMs ([§12.4](#124-end-to-end-suites-in-vms)): verdicts,
         attribution, DNS, fail modes, boot ordering; the kernel and distro matrix.
-  - [ ] Escape suite, first part ([§12.5](#125-escape-and-tamper-suite)): getting packets out without a rule, and
+  - [x] Escape suite, first part ([§12.5](#125-escape-and-tamper-suite)): getting packets out without a rule, and
         being mistaken for an allowed app.
 - **DoD:** on an AWS instance and on the workstation, the daemon runs in monitor mode and records attributed
   connections with hosts and bytes. `learn` produces rules, and enforce mode applies them, all from the CLI.
