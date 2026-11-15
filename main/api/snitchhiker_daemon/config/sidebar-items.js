@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PATH"],"enum":["Error","Fail","Mode","Policy","StepUp"],"struct":["Config"]};
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PATH"],"enum":["Error","Fail","Mode","Policy","Routing","StepUp"],"struct":["Config"]};
