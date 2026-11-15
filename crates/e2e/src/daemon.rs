@@ -13,13 +13,13 @@ const DIR: &str = "/tmp/snitchhiker-daemon-test";
 const PIDFILE: &str = "/run/snitchhiker/snitchhikerd.pid";
 
 /// A daemon started with its own configuration and database; stopped (and its table removed) when dropped.
-struct Running {
+pub struct Running {
     child: Option<Child>,
     config: String,
 }
 
 impl Running {
-    fn start(name: &str, settings: &str) -> Result<Self, String> {
+    pub fn start(name: &str, settings: &str) -> Result<Self, String> {
         let dir = format!("{DIR}/{name}");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -53,14 +53,14 @@ impl Running {
         Ok(running)
     }
 
-    fn cli(&self, args: &[&str]) -> Result<String, String> {
+    pub fn cli(&self, args: &[&str]) -> Result<String, String> {
         let mut all = vec!["--config", &self.config];
         all.extend_from_slice(args);
         run("snitchhiker", &all)
     }
 
     /// Stops the daemon with SIGTERM and waits for it.
-    fn stop(&mut self) -> Result<(), String> {
+    pub fn stop(&mut self) -> Result<(), String> {
         if let Some(mut child) = self.child.take() {
             let pid = child.id().to_string();
             run("kill", &["-TERM", &pid])?;

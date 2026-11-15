@@ -10,6 +10,7 @@ use std::time::Instant;
 mod attribution;
 mod daemon;
 mod local_auth;
+mod names;
 mod nftables;
 mod queue;
 mod util;
@@ -74,6 +75,14 @@ const SCENARIOS: &[Scenario] = &[
     (
         "daemon/fail-open-removes-the-table",
         daemon::fail_open_removes_the_table,
+    ),
+    (
+        "names/host-rules-match-resolved-names",
+        names::host_rules_match_resolved_names,
+    ),
+    (
+        "names/unsolicited-answers-teach-nothing",
+        names::unsolicited_answers_teach_nothing,
     ),
 ];
 
