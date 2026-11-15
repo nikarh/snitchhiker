@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["list_devices","remove_device","start","start_pairing"],"struct":["Remote"]};
