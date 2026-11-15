@@ -40,6 +40,9 @@ pub struct Config {
     pub queues: u16,
     /// The first queue number.
     pub queue: u16,
+    /// Learn the names of addresses from the DNS answers processes receive (on the queue after the deciding ones),
+    /// so rules can name hosts.
+    pub learn_dns: bool,
     pub database: PathBuf,
     /// How long connection history is kept.
     pub retention_days: u32,
@@ -53,6 +56,7 @@ impl Default for Config {
             fail: Fail::Closed,
             queues: 4,
             queue: 0,
+            learn_dns: true,
             database: PathBuf::from("/var/lib/snitchhiker/state.db"),
             retention_days: 30,
         }
@@ -109,10 +113,20 @@ impl Config {
         if config.queues == 0 || config.queues > 64 {
             return Err(Error::Invalid("queues must be between 1 and 64"));
         }
-        if config.queue.checked_add(config.queues).is_none() {
+        if config
+            .queue
+            .checked_add(config.queues)
+            .is_none_or(|end| end == u16::MAX)
+        {
             return Err(Error::Invalid("queue + queues must fit in 16 bits"));
         }
         Ok(config)
+    }
+
+    /// The queue DNS answers go to, when learned.
+    #[must_use]
+    pub fn dns_queue(&self) -> Option<u16> {
+        self.learn_dns.then_some(self.queue + self.queues)
     }
 }
 

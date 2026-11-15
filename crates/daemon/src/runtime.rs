@@ -7,7 +7,7 @@
 use std::os::unix::fs::MetadataExt as _;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError, sync_channel};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -22,6 +22,7 @@ use snitchhiker_netfilter::queue::{Packet, Queue, Verdict};
 use tracing::{error, info, warn};
 
 use crate::config::{Config, Fail, Mode};
+use crate::dns::{Names, parse_answer};
 use crate::process::{HostNamespaces, ProcessCache};
 use crate::store::{Event, Source, Store};
 
@@ -31,6 +32,9 @@ const EVENT_QUEUE: usize = 65_536;
 const BATCH: usize = 1024;
 /// How long the writer waits to fill a batch.
 const BATCH_WAIT: Duration = Duration::from_millis(100);
+/// How much of a DNS answer is copied: a whole UDP answer, as large as resolvers send without EDNS tricks.
+const DNS_COPY: u32 = 4096;
+const DNS_PORT: u16 = 53;
 /// How often old history is pruned, and how many rows per chunk.
 const PRUNE_EVERY: Duration = Duration::from_secs(600);
 const PRUNE_CHUNK: u32 = 10_000;
@@ -52,6 +56,7 @@ pub struct Shared {
     pub config: Config,
     pub rules: ArcSwap<RuleSet>,
     attribution: Attribution,
+    names: RwLock<Names>,
     netns: u32,
     host: HostNamespaces,
     events: SyncSender<Event>,
@@ -82,6 +87,7 @@ impl Daemon {
             queue: config.queue,
             queues: config.queues,
             bypass: config.fail == Fail::Open,
+            dns_queue: config.dns_queue(),
             ..Table::default()
         };
         install(&table)?;
@@ -92,6 +98,7 @@ impl Daemon {
         let shared = Arc::new(Shared {
             rules: ArcSwap::from_pointee(rules),
             attribution,
+            names: RwLock::new(Names::default()),
             netns: u32::try_from(std::fs::metadata("/proc/self/ns/net")?.ino()).unwrap_or(0),
             host: HostNamespaces::read()?,
             events: sender,
@@ -108,6 +115,17 @@ impl Daemon {
                 .spawn(move || {
                     if let Err(error) = decide_loop(&shared, queue) {
                         error!(%error, queue = number, "deciding thread stopped");
+                    }
+                })?;
+        }
+        if let Some(number) = shared.config.dns_queue() {
+            let queue = Queue::bind_copying(number, DNS_COPY)?;
+            let shared = Arc::clone(&shared);
+            thread::Builder::new()
+                .name("dns".to_owned())
+                .spawn(move || {
+                    if let Err(error) = dns_loop(&shared, queue) {
+                        error!(%error, "learning names stopped");
                     }
                 })?;
         }
@@ -166,6 +184,44 @@ fn remove(name: &str) -> std::io::Result<()> {
     socket.transact(&writer, batch.first, batch.last)
 }
 
+/// Learns names from DNS answers: only those to sockets that sent a query to that resolver, and remembered for the
+/// process that sent it. Every packet passes; this queue only observes.
+fn dns_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
+    let mut ids: Vec<u32> = Vec::with_capacity(64);
+    loop {
+        ids.clear();
+        for queued in queue.receive()? {
+            ids.push(queued.id);
+            let Some(headers) = packet::parse(queued.payload) else {
+                continue;
+            };
+            let Some(answer) = packet::udp_payload(queued.payload, &headers).and_then(parse_answer)
+            else {
+                continue;
+            };
+            let query = FlowKey {
+                netns: shared.netns,
+                protocol: packet::IPPROTO_UDP,
+                source_port: headers.destination_port,
+                destination: headers.source,
+                destination_port: DNS_PORT,
+            };
+            // An answer nobody asked for teaches nothing.
+            let Some(asker) = shared.attribution.owner(&query) else {
+                continue;
+            };
+            shared
+                .names
+                .write()
+                .unwrap_or_else(PoisonError::into_inner)
+                .learn(asker.pid, &answer, now_ms());
+        }
+        for &id in &ids {
+            queue.verdict(id, Verdict::Accept)?;
+        }
+    }
+}
+
 fn decide_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
     let mut processes = ProcessCache::new(shared.host);
     let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
@@ -220,6 +276,12 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         .or(owner.map(|o| o.uid))
         .or(queued.uid)
         .unwrap_or(u32::MAX);
+    let pid = owner.map_or(0, |o| o.pid);
+    let hosts = shared
+        .names
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| p.exe.as_str()),
@@ -228,7 +290,7 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
         uid,
         home: process.as_ref().and_then(|p| p.home.as_deref()),
-        hosts: &[],
+        hosts: &hosts,
         address: headers.destination,
         port: headers.destination_port,
         protocol: headers.protocol,
@@ -257,9 +319,9 @@ fn decide(shared: &Shared, processes: &mut ProcessCache, queued: &Packet<'_>) ->
         exe: process
             .as_ref()
             .map_or_else(|| Arc::from(""), |p| Arc::from(p.exe.as_str())),
-        host: None,
+        host: hosts.first().cloned(),
         uid,
-        pid: owner.map_or(0, |o| o.pid),
+        pid,
         protocol: headers.protocol,
         address: headers.destination,
         port: headers.destination_port,

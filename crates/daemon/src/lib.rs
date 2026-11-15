@@ -3,6 +3,7 @@
 
 pub mod cli;
 pub mod config;
+pub mod dns;
 pub mod peer;
 pub mod process;
 pub mod runtime;
