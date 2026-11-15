@@ -3,4 +3,5 @@
 
 pub mod netlink;
 pub mod nftables;
+pub mod packet;
 pub mod queue;
