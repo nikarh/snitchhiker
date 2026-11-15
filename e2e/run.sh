@@ -22,7 +22,10 @@ mise x nfpm -- scripts/package.sh x86_64 "target/${dir}/snitchhikerd" target/e2e
 case "${SNITCHHIKER_VM_DISTRO:-arch}" in
   arch)
     e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
-    e2e/vm.sh node ssh 'sudo pacman -U --noconfirm /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+    # A pacman interrupted when the image was provisioned can leave its lock behind: once no pacman runs, a lock is
+    # stale.
+    e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
+      sudo pacman -U --noconfirm /tmp/snitchhiker.pkg.tar.zst >/dev/null'
     ;;
   debian)
     e2e/vm.sh node put target/e2e-packages/snitchhiker_amd64.deb /tmp/snitchhiker.deb
