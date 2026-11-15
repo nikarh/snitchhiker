@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Snitchhiker
+GenericName=Application firewall
+Comment=Answer prompts, and see and change what the firewall allows
+Exec=snitchhiker-ui
+Icon=snitchhiker
+Terminal=false
+Categories=Network;Security;System;
+Keywords=firewall;network;opensnitch;
+StartupNotify=false

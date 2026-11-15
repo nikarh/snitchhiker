@@ -1,0 +1,73 @@
+# nfpm config of the desktop app's packages, built by scripts/package.sh from a release binary of snitchhiker-ui.
+name: snitchhiker-ui
+arch: ${SNITCHHIKER_ARCH}
+version: ${SNITCHHIKER_VERSION}
+version_schema: none
+release: 1
+section: net
+priority: optional
+maintainer: Nikolay Arhipov <nikarh@users.noreply.github.com>
+description: Desktop app of the Snitchhiker application firewall
+homepage: https://github.com/nikarh/snitchhiker
+license: MIT OR Apache-2.0
+
+overrides:
+  deb:
+    depends:
+      - snitchhiker (= ${SNITCHHIKER_VERSION})
+      - libc6 (>= 2.35)
+      - libfontconfig1
+      - libfreetype6
+      - libpng16-16
+      - libxcb1
+      - libxkbcommon0
+      - libxkbcommon-x11-0
+      - libwayland-client0
+      - libvulkan1
+    recommends:
+      - mesa-vulkan-drivers
+    scripts:
+      postinstall: dist/packaging/deb/ui-postinst
+      preremove: dist/packaging/deb/ui-prerm
+  archlinux:
+    depends:
+      - snitchhiker=${SNITCHHIKER_VERSION}
+      - glibc
+      - fontconfig
+      - freetype2
+      - libpng
+      - libxcb
+      - libxkbcommon
+      - libxkbcommon-x11
+      - wayland
+      - vulkan-icd-loader
+    scripts:
+      postinstall: dist/packaging/arch/ui-post-install.sh
+      preremove: dist/packaging/arch/ui-pre-remove.sh
+
+archlinux:
+  packager: Nikolay Arhipov <nikarh@users.noreply.github.com>
+  scripts:
+    postupgrade: dist/packaging/arch/ui-post-install.sh
+
+contents:
+  - src: target/package/snitchhiker-ui
+    dst: /usr/bin/snitchhiker-ui
+    file_info:
+      mode: 0755
+  - src: dist/ui/snitchhiker.desktop
+    dst: /usr/share/applications/snitchhiker.desktop
+    file_info:
+      mode: 0644
+  - src: dist/ui/snitchhiker.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/snitchhiker.svg
+    file_info:
+      mode: 0644
+  - src: dist/ui/snitchhiker-ui.service
+    dst: /usr/lib/systemd/user/snitchhiker-ui.service
+    file_info:
+      mode: 0644
+  - src: LICENSE-MIT
+    dst: /usr/share/licenses/snitchhiker-ui/LICENSE-MIT
+  - src: LICENSE-APACHE
+    dst: /usr/share/licenses/snitchhiker-ui/LICENSE-APACHE

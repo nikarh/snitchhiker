@@ -1,0 +1,15 @@
+# Starts the desktop app with the graphical session, so prompts are answered from the start:
+#   systemctl --user enable snitchhiker-ui
+[Unit]
+Description=Snitchhiker desktop app
+Documentation=https://github.com/nikarh/snitchhiker
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=/usr/bin/snitchhiker-ui
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=graphical-session.target
