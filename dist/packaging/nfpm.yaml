@@ -1,0 +1,58 @@
+# nfpm config of the .deb and Arch Linux packages, built by scripts/package.sh from a release binary. That script
+# sets the variables and stages the files in target/package.
+name: snitchhiker
+arch: ${SNITCHHIKER_ARCH}
+version: ${SNITCHHIKER_VERSION}
+# Taken as is: scripts/package.sh makes it a valid deb or Arch version.
+version_schema: none
+release: 1
+section: net
+priority: optional
+maintainer: Nikolay Arhipov <nikarh@users.noreply.github.com>
+description: Interactive application firewall for Linux, with desktop and Android apps
+homepage: https://github.com/nikarh/snitchhiker
+license: MIT OR Apache-2.0
+
+overrides:
+  deb:
+    depends:
+      - libc6 (>= 2.35)
+      - systemd
+    scripts:
+      postinstall: dist/packaging/deb/postinst
+      preremove: dist/packaging/deb/prerm
+  archlinux:
+    depends:
+      - glibc
+      - systemd
+
+contents:
+  - src: target/package/snitchhikerd
+    dst: /usr/bin/snitchhikerd
+    file_info:
+      mode: 0755
+  - src: snitchhikerd
+    dst: /usr/bin/snitchhiker
+    type: symlink
+  - src: dist/snitchhikerd.service
+    dst: /usr/lib/systemd/system/snitchhikerd.service
+    file_info:
+      mode: 0644
+  - src: dist/snitchhiker.sysusers
+    dst: /usr/lib/sysusers.d/snitchhiker.conf
+    file_info:
+      mode: 0644
+  - src: dist/daemon.toml
+    dst: /etc/snitchhiker/daemon.toml
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: README.md
+    dst: /usr/share/doc/snitchhiker/README.md
+  - src: LICENSE-MIT
+    dst: /usr/share/licenses/snitchhiker/LICENSE-MIT
+  - src: LICENSE-APACHE
+    dst: /usr/share/licenses/snitchhiker/LICENSE-APACHE
+
+archlinux:
+  packager: Nikolay Arhipov <nikarh@users.noreply.github.com>

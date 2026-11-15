@@ -1,0 +1,50 @@
+[Unit]
+Description=Snitchhiker: interactive application firewall
+Documentation=https://github.com/nikarh/snitchhiker
+# The table is in place, and the daemon reports itself ready, before the network comes up: with fail = closed, no
+# new connection gets out undecided, at boot or ever.
+Wants=network-pre.target
+Before=network-pre.target
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target
+Conflicts=shutdown.target
+# Keep trying for as long as it takes: with fail = closed nothing new gets out while it is down.
+StartLimitIntervalSec=0
+
+[Service]
+Type=notify
+# Settings are in /etc/snitchhiker/daemon.toml: change them there, then restart. SIGHUP reloads the rules.
+ExecStart=/usr/bin/snitchhikerd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=1s
+RuntimeDirectory=snitchhiker
+RuntimeDirectoryMode=0755
+StateDirectory=snitchhiker
+StateDirectoryMode=0700
+
+# Snitchhiker runs as root with only the capabilities it needs: managing the firewall (NET_ADMIN), loading and
+# attaching its eBPF programs (BPF, PERFMON, SYS_RESOURCE for locked memory on older kernels), and reading every
+# process's /proc entries (SYS_PTRACE, DAC_READ_SEARCH). It writes only its state and runtime directories.
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_BPF CAP_PERFMON CAP_SYS_RESOURCE CAP_SYS_PTRACE CAP_DAC_READ_SEARCH
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

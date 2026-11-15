@@ -1,0 +1,3 @@
+# The client group: the desktop app is installed setgid to it, and the daemon's client socket belongs to it. Users
+# are never members: having it is what tells the daemon a process is the desktop app.
+g snitchhiker-ui - -

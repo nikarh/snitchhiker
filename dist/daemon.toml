@@ -1,0 +1,24 @@
+# Snitchhiker daemon settings. Only root can change them; clients (the desktop and Android apps) can't.
+# After a change: systemctl restart snitchhikerd.
+
+# enforce: rules and no_match decide. monitor: everything passes, and what would have happened is recorded
+# (`snitchhiker events`), to learn what a machine does before enforcing. Packages start in monitor mode.
+mode = "monitor"
+
+# What happens to a connection no rule decides: allow, deny (dropped; the program times out) or reject (dropped,
+# and the program's socket closed at once).
+no_match = "deny"
+
+# While the daemon isn't running: closed (nothing new gets out; the table stays when it stops) or open (everything
+# passes; the table is removed when it stops). On servers reached over the network, open is the safer choice.
+fail = "closed"
+
+# NFQUEUE queues, one deciding thread each, starting at queue number `queue`.
+#queues = 4
+#queue = 0
+
+# Learn the names of addresses from the DNS answers processes receive, so rules can name hosts.
+#learn_dns = true
+
+#database = "/var/lib/snitchhiker/state.db"
+#retention_days = 30

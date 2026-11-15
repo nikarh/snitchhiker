@@ -5,6 +5,7 @@
 [tools]
 git-cliff = "2.14.2"
 cargo-deny = "0.20.2"
+nfpm = "2.49.0"
 
 [tasks.fmt]
 description = "Format the Rust code"
@@ -34,6 +35,11 @@ depends = ["ci", "deny"]
 [tasks.build]
 description = "Release build of the binaries"
 run = "cargo build --locked --release"
+
+[tasks.package]
+description = "Build the .deb and Arch packages of a release build into out/"
+depends = ["build"]
+run = "scripts/package.sh x86_64 target/release/snitchhikerd out"
 
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from the commits"
