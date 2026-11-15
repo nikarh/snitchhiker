@@ -9,6 +9,8 @@ It starts **off**, with OpenSnitch's defaults ready to use: ICMP and ICMPv6 echo
 
 ## Turning it on
 
+![The Firewall page: on, inbound dropped but for SSH](../../../assets/screenshots/firewall-light.png)
+
 In the desktop app, the **Firewall** page: switch it on, set **Inbound** to *Drop* to keep out what no rule lets in, add rules, then **Apply**. Changes are made to a draft and applied together; the node checks them and the kernel installs them in one transaction, so a mistake never leaves the machine half filtered.
 
 With a drop policy, three rules are always added first, as OpenSnitch does: replies to the machine's own connections (and related traffic), the loopback interface, and ICMPv6 (neighbour discovery: IPv6 stops working without it).

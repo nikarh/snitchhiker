@@ -5,6 +5,8 @@ description: What the node tells you about itself, and alert rules that watch th
 
 An alert is something worth looking at that doesn't need an answer now, unlike a prompt. Alerts are kept until the history's [retention](/reference/configuration/#retention_days), shown on the desktop app's **Alerts** page (with a desktop notification as they come), logged to the journal, and **acknowledged** once for every client: acknowledging on one device clears them everywhere.
 
+![The Alerts page: alerts not acknowledged, and the alert rules](../../../assets/screenshots/alerts-light.png)
+
 ## What the node raises by itself
 
 | Alert | When |

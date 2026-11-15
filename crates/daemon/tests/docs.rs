@@ -100,3 +100,37 @@ fn every_setting_is_documented() {
         "settings missing from the configuration page: {missing:?}"
     );
 }
+
+/// Every screenshot a page shows exists (`scripts/screenshots.sh` takes them), so a page never shows a broken image.
+#[test]
+fn every_screenshot_shown_exists() {
+    fn pages(dir: &Path, found: &mut Vec<PathBuf>) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pages(&path, found);
+            } else if path.extension().is_some_and(|e| e == "md" || e == "mdx") {
+                found.push(path);
+            }
+        }
+    }
+    let mut found = Vec::new();
+    pages(&site().join("src/content/docs"), &mut found);
+    let mut missing = Vec::new();
+    for page in found {
+        let text = fs::read_to_string(&page).unwrap();
+        for (at, _) in text.match_indices("assets/screenshots/") {
+            let name: String = text[at + "assets/screenshots/".len()..]
+                .chars()
+                .take_while(|c| !matches!(c, ')' | '"' | '\'' | ' '))
+                .collect();
+            if !site().join("src/assets/screenshots").join(&name).exists() {
+                missing.push(format!("{}: {name}", page.display()));
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "screenshots shown but not taken (scripts/screenshots.sh): {missing:?}"
+    );
+}

@@ -7,7 +7,15 @@ sidebar:
 
 With `no_match = "ask"` in the [configuration](/reference/configuration/#no_match), a connection no rule decides isn't dropped or let through: its first packet is held while the connected clients are asked. The answer decides it, and can leave a rule behind so the question isn't asked again.
 
-The desktop and Android apps will be the usual way to answer. Today the [command line](/reference/cli/#prompts) does it.
+The desktop app is the usual way to answer (the Android app will be too); the [command line](/reference/cli/#prompts) can as well.
+
+## In the desktop app
+
+![The Prompts page: a connection waiting, with the rules it could leave](../../../assets/screenshots/prompts-light.png)
+
+A prompt shows on the **Prompts** page, as a desktop notification (*Allow once*, *Deny*, or a click to open the app) and as a count on the tray icon. The card offers the rules below, narrowest first and chosen; pick one, a duration, and *Allow*, *Deny* or *Reject*. The buttons arm only after a moment, and only in the focused window, so a key or click meant for another window can't answer a prompt that just appeared.
+
+A notification's actions decide only the connections waiting, once: no rule is made from outside the app's window.
 
 ## When the daemon asks
 
