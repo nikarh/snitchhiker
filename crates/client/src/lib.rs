@@ -1,11 +1,18 @@
 //! A blocking client of a Snitchhiker node over its local sockets: the handshake, requests (answered by id) and
 //! subscription notices (queued while a request waits for its answer).
+//!
+//! Before saying anything, a client checks it is talking to the node: the socket is in a directory only root can
+//! change, and the process serving it runs as root. A process that bound a socket somewhere else, or got one into a
+//! directory it may write, can't pose as the node to answer the client's requests or feed it prompts.
 
 use std::collections::VecDeque;
 use std::io::{BufReader, BufWriter, Write as _};
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::Duration;
+
+use nix::sys::socket::{getsockopt, sockopt};
 
 use snitchhiker_proto::{MINOR, frame, v1};
 
@@ -21,11 +28,40 @@ pub enum Error {
     Refused(String),
     #[error("the node answered something unexpected: {0}")]
     Protocol(&'static str),
+    #[error("not a Snitchhiker node's socket: {0}")]
+    NotTheNode(String),
     #[error("{message}")]
     Remote {
         code: v1::ErrorCode,
         message: String,
     },
+}
+
+/// The socket and every directory above it belong to root, and no one else may write to those directories: no other
+/// user can have put the socket there, or swap it for theirs.
+fn only_root_can_change(path: &Path) -> Result<(), Error> {
+    const GROUP_OR_OTHER_WRITE: u32 = 0o022;
+    for (index, entry) in path.ancestors().enumerate() {
+        if entry.as_os_str().is_empty() {
+            continue;
+        }
+        let meta = std::fs::symlink_metadata(entry)
+            .map_err(|e| Error::NotTheNode(format!("{}: {e}", entry.display())))?;
+        if meta.uid() != 0 {
+            return Err(Error::NotTheNode(format!(
+                "{} doesn't belong to root",
+                entry.display()
+            )));
+        }
+        // The socket's own mode says who may connect, not who may replace it.
+        if index > 0 && meta.mode() & GROUP_OR_OTHER_WRITE != 0 {
+            return Err(Error::NotTheNode(format!(
+                "others than root may write to {}",
+                entry.display()
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub struct Client {
@@ -40,7 +76,17 @@ pub struct Client {
 impl Client {
     /// Connects to the node's socket at `path`, introducing itself as `app` (`cli`, `desktop`, ...) at `version`.
     pub fn connect(path: &Path, app: &str, version: &str) -> Result<Self, Error> {
+        only_root_can_change(path)?;
         let stream = UnixStream::connect(path)?;
+        let peer = getsockopt(&stream, sockopt::PeerCredentials)
+            .map_err(|e| Error::Io(std::io::Error::from(e)))?;
+        if peer.uid() != 0 {
+            return Err(Error::NotTheNode(format!(
+                "{} is served by uid {}, not root",
+                path.display(),
+                peer.uid()
+            )));
+        }
         let mut writer = BufWriter::new(stream.try_clone()?);
         let mut reader = BufReader::new(stream);
         let mut buffer = Vec::new();
@@ -140,5 +186,25 @@ impl Client {
             v1::response::Result::Subscribed(subscribed) => Ok(subscribed.subscription),
             _ => Err(Error::Protocol("not a subscription")),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_socket_outside_roots_directories_is_not_the_node() {
+        let dir = std::env::temp_dir().join(format!("snitchhiker-client-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("client.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let result = Client::connect(&path, "test", "0");
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(
+            matches!(result, Err(Error::NotTheNode(_))),
+            "{:?}",
+            result.err()
+        );
     }
 }

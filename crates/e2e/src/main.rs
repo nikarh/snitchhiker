@@ -70,6 +70,10 @@ const SCENARIOS: &[Scenario] = &[
         "local-auth/daemon-client-socket",
         local_auth::daemon_client_socket,
     ),
+    (
+        "local-auth/client-refuses-a-fake-node",
+        local_auth::client_refuses_a_fake_node,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/monitor-records-but-never-blocks",

@@ -259,3 +259,40 @@ pub fn same_user_cannot_attach_or_read_memory() -> Result<(), String> {
         &attach_text,
     )
 }
+
+/// A fake node: mallory serves a socket from a directory of their own. The client refuses it before saying anything.
+pub fn client_refuses_a_fake_node() -> Result<(), String> {
+    let _ = serve("fake-node-setup", 0o660)?;
+    let dir = "/tmp/mallory-node";
+    let socket = format!("{dir}/client.sock");
+    let mut server = Command::new("runuser")
+        .args([
+            "-u",
+            "mallory",
+            "--",
+            "python3",
+            "-c",
+            &format!(
+                "import os, socket\nos.makedirs('{dir}', exist_ok=True)\ns = socket.socket(socket.AF_UNIX)\n\
+                 s.settimeout(10)\ns.bind('{socket}')\nos.chmod('{socket}', 0o666)\ns.listen()\n\
+                 print('ready', flush=True)\nc, _ = s.accept()\nprint('accepted', flush=True)"
+            ),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut lines = BufReader::new(server.stdout.take().ok_or("no stdout")?).lines();
+    let ready = lines.next().and_then(Result::ok).unwrap_or_default();
+    let (ok, text) = as_mallory(CLIENT, &["--protocol-client", &socket])?;
+    // runuser waits for its child rather than handing over to it: end the server itself.
+    let _ = run("pkill", &["-u", "mallory", "-f", "mallory-node"]);
+    let _ = server.wait();
+    let _ = std::fs::remove_dir_all(dir);
+    check(ready == "ready", "the fake node didn't start", &ready)?;
+    check(
+        !ok && text.contains("not a Snitchhiker node's socket"),
+        "the client talked to a fake node",
+        &text,
+    )
+}
