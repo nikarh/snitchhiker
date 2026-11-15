@@ -13,7 +13,7 @@ snitchhiker <command> [options]
 
 ## `status`
 
-The daemon's version, mode and policy, and its counters: rules in effect, connections decided since it started, history entries dropped because the database couldn't keep up, prompts waiting, and connected clients.
+The daemon's version, mode and policy, and its counters: rules in effect, connections decided since it started, history entries dropped because the database couldn't keep up, prompts waiting, and connected clients (this command's own connection included).
 
 ## `rules`
 

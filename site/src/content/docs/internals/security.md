@@ -44,6 +44,8 @@ When a process connects to `client.sock`, the daemon takes a pidfd for it from t
 
 Then it checks the pidfd still refers to a live process, so the process can't have exited and its pid been reused while it was being checked. A process that fails any check gets a refusal and the connection closes.
 
+**The session is the process's.** The daemon keeps the pidfd and ends the connection when that process exits, even if another process holds the socket by then (passed on, or inherited by a child). A client's rights don't outlive it.
+
 **Clients check the daemon too.** Before sending anything, a client (the command line included) checks that the socket and every directory above it belong to root and that no one else may write to those directories, and that the process serving the socket runs as root. A socket some other process bound elsewhere can't pose as the daemon to feed a client false prompts or collect its answers.
 
 ## Facts a process can't fake
@@ -76,6 +78,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `local-auth/traced-client-refused` | a client started under a tracer |
 | `local-auth/same-user-cannot-attach-or-read-memory` | attaching to a client, or reading its memory |
 | `local-auth/registered-clients-are-pinned` | a registered client binary changed in place, and registering a binary that isn't a setgid client |
+| `local-auth/connection-ends-with-its-process` | keeping a client's connection after the client exits, by holding its socket |
 | `local-auth/client-refuses-a-fake-node` | posing as the daemon to a client, with a socket of one's own |
 
 ## The daemon itself

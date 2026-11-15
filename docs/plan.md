@@ -2014,7 +2014,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
         For item 4 the client checks the socket's directories and that its server runs as root; the daemon's
         executable isn't checked, since only root runs as uid 0 and root is out of scope.
   - [x] Trusted-client registry and the `trust-client` command.
-  - [ ] Session lifecycle bound to the pidfd and logind session.
+  - [ ] Session lifecycle bound to the pidfd and logind session. The pidfd part is done (a connection ends with
+        its client's process); the logind session comes with presence in prompt routing.
 - [ ] **Step-up**
   - [ ] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions.
 - [ ] **Prompt broker**
