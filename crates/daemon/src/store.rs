@@ -249,7 +249,8 @@ INSERT INTO rollups_by SELECT 5, hour, 0, action, sum(count), sum(bytes_out), su
 ",
 ];
 
-/// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`.
+/// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`, the busiest
+/// first by connections; `explore_bytes!` by bytes.
 macro_rules! explore {
     ($group:literal, $filter:literal) => {
         (
@@ -259,6 +260,21 @@ macro_rules! explore {
                         sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
                  FROM rollups WHERE hour >= ?1 AND hour < ?2 AND ", $filter, " = ?4
                  GROUP BY ", $group, " ORDER BY sum(count) DESC LIMIT ?3"
+            ),
+        )
+    };
+}
+
+/// [`explore!`], the busiest by bytes sent and received: the top talkers.
+macro_rules! explore_bytes {
+    ($group:literal, $filter:literal) => {
+        (
+            concat!("explore.", $group, ".", $filter, ".bytes"),
+            concat!(
+                "SELECT ", $group, ", sum(CASE WHEN action = 1 THEN count ELSE 0 END),
+                        sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
+                 FROM rollups WHERE hour >= ?1 AND hour < ?2 AND ", $filter, " = ?4
+                 GROUP BY ", $group, " ORDER BY sum(bytes_out) + sum(bytes_in) DESC LIMIT ?3"
             ),
         )
     };
@@ -575,6 +591,13 @@ pub const STATEMENTS: &[(&str, &str)] = &[
          FROM rollups_by WHERE dimension = ?4 AND hour >= ?1 AND hour < ?2
          GROUP BY key ORDER BY sum(count) DESC LIMIT ?3",
     ),
+    (
+        "explore.by.bytes",
+        "SELECT key, sum(CASE WHEN action = 1 THEN count ELSE 0 END),
+                sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
+         FROM rollups_by WHERE dimension = ?4 AND hour >= ?1 AND hour < ?2
+         GROUP BY key ORDER BY sum(bytes_out) + sum(bytes_in) DESC LIMIT ?3",
+    ),
     // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
     (
         "events.by_cookie",
@@ -606,6 +629,26 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     explore!("container", "host"),
     explore!("container", "port"),
     explore!("container", "uid"),
+    explore_bytes!("exe", "host"),
+    explore_bytes!("exe", "port"),
+    explore_bytes!("exe", "uid"),
+    explore_bytes!("host", "exe"),
+    explore_bytes!("host", "port"),
+    explore_bytes!("host", "uid"),
+    explore_bytes!("port", "exe"),
+    explore_bytes!("port", "host"),
+    explore_bytes!("port", "uid"),
+    explore_bytes!("uid", "exe"),
+    explore_bytes!("uid", "host"),
+    explore_bytes!("uid", "port"),
+    explore_bytes!("exe", "container"),
+    explore_bytes!("host", "container"),
+    explore_bytes!("port", "container"),
+    explore_bytes!("uid", "container"),
+    explore_bytes!("container", "exe"),
+    explore_bytes!("container", "host"),
+    explore_bytes!("container", "port"),
+    explore_bytes!("container", "uid"),
     (
         "events.prune",
         "DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE time_ms < ?1 ORDER BY time_ms LIMIT ?2)",
@@ -2273,12 +2316,17 @@ impl Store {
         to_hour: u64,
         group: Dimension,
         filter: Option<(Dimension, i64)>,
-        limit: u32,
+        (limit, by_bytes): (u32, bool),
     ) -> Result<Vec<Explored>, Error> {
         let name = match (group, filter.map(|(d, _)| d)) {
             (_, None) => "explore.by".to_owned(),
             (g, Some(f)) if g != f => format!("explore.{}.{}", g.column(), f.column()),
             _ => return Ok(Vec::new()),
+        };
+        let name = if by_bytes {
+            format!("{name}.bytes")
+        } else {
+            name
         };
         let statement_sql = STATEMENTS
             .iter()
@@ -2654,7 +2702,7 @@ mod tests {
         // Counted again: only the difference reaches the rollup.
         store.record_bytes(&[(7, 600, 9000)]).unwrap();
         let by_exe = store
-            .explore(0, u64::MAX / HOUR_MS, Dimension::Exe, None, 10)
+            .explore(0, u64::MAX / HOUR_MS, Dimension::Exe, None, (10, false))
             .unwrap();
         let curl_id = i64::from(recorded[0].exe);
         let curl_row = by_exe.iter().find(|r| r.key == curl_id).unwrap();
@@ -2669,7 +2717,7 @@ mod tests {
                 u64::MAX / HOUR_MS,
                 Dimension::Host,
                 Some((Dimension::Exe, wget_id)),
-                10,
+                (10, false),
             )
             .unwrap();
         assert_eq!(hosts.len(), 1);
@@ -2706,7 +2754,7 @@ mod tests {
         }
         let started = std::time::Instant::now();
         let by_program = store
-            .explore(0, month / HOUR_MS + 1, Dimension::Exe, None, 1000)
+            .explore(0, month / HOUR_MS + 1, Dimension::Exe, None, (1000, false))
             .unwrap();
         let grouped = started.elapsed();
         let program = by_program[0].key;
@@ -2717,7 +2765,7 @@ mod tests {
                 month / HOUR_MS + 1,
                 Dimension::Host,
                 Some((Dimension::Exe, program)),
-                100,
+                (100, false),
             )
             .unwrap();
         let drilled = started.elapsed();

@@ -730,6 +730,8 @@ message Explore {
   optional ExploreFilter filter = 4;
   // At most this many groups, busiest first.
   uint32 limit = 5;
+  // Busiest by connections (default), or by bytes sent and received: the top talkers.
+  bool by_bytes = 6;
 }
 
 message ExploreRow {

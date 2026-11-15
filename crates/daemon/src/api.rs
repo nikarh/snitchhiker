@@ -1855,7 +1855,7 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
         explore.to_ms.div_ceil(HOUR_MS),
         group,
         filter,
-        explore.limit.clamp(1, 1000),
+        (explore.limit.clamp(1, 1000), explore.by_bytes),
     );
     let rows = match rows {
         Ok(rows) => rows,

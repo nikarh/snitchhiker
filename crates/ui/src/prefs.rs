@@ -25,6 +25,22 @@ pub struct Prefs {
     /// The Events table's columns hidden, by key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub events_hidden: Vec<String>,
+    /// The Explorer's saved views.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub explorer_views: Vec<ExplorerView>,
+}
+
+/// A saved Explorer view: what it groups by, over how long, drilled into what, and how it orders.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplorerView {
+    pub name: String,
+    /// A protocol `Dimension` number.
+    pub group: i32,
+    pub hours: u64,
+    /// The dimension and value drilled into.
+    pub filter: Option<(i32, String)>,
+    #[serde(default)]
+    pub by_bytes: bool,
 }
 
 impl Global for Prefs {}

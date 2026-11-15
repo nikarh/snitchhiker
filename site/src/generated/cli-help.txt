@@ -60,10 +60,12 @@ Commands:
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
-  explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+  explore [--by <program|host|port|user|container>] [--hours <n>] [--where <dimension>=<value>] [--bytes]
+          [--compare]
                                   Connections of the last n hours (default 24), allowed and blocked, and their bytes,
-                                  grouped by program (default), host, port or user, busiest first; --where narrows
-                                  them to one program, host, port or user
+                                  grouped by program (default), host, port, user or container, busiest first (by
+                                  bytes with --bytes: the top talkers); --where narrows them to one program, host,
+                                  port or user; --compare adds the period before, and marks what is new
   contexts [<name>] [--hours <n>] The containers, VMs and named network namespaces connections came from in the last n
                                   hours (default 24), with what they did; with a name (a container's, a Compose
                                   service, a VM's, a namespace's), its programs and the hosts they reached

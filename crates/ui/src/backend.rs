@@ -49,6 +49,8 @@ pub enum Request {
         change: u64,
     },
     Explore(v1::Explore),
+    /// The same, for the period before, to compare with.
+    ExploreBefore(v1::Explore),
     Connections,
     Kill(v1::KillConnection),
     /// Why event `seq` is decided as it is.
@@ -126,6 +128,8 @@ pub enum Update {
     Changes(Vec<v1::Change>),
     /// The Explorer's groups.
     Explored(Vec<v1::ExploreRow>),
+    /// Its groups in the period before.
+    ExploredBefore(Vec<v1::ExploreRow>),
     /// The live connections.
     Connections(Vec<v1::LiveConnection>),
     /// Why an event is decided as it is.
@@ -368,7 +372,9 @@ fn method(request: &Request) -> v1::request::Method {
             limit: 500,
         }),
         Request::Undo { change } => Method::Undo(v1::Undo { change: *change }),
-        Request::Explore(explore) => Method::Explore(explore.clone()),
+        Request::Explore(explore) | Request::ExploreBefore(explore) => {
+            Method::Explore(explore.clone())
+        }
         Request::Connections => Method::ListConnections(v1::ListConnections {}),
         Request::Kill(kill) => Method::KillConnection(kill.clone()),
         Request::Explain { seq } => Method::Explain(v1::Explain { seq: *seq }),
@@ -429,6 +435,9 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Status(status) => Some(Update::Status(status)),
         R::Rules(rules) => Some(Update::Rules(rules)),
         R::Changes(page) => Some(Update::Changes(page.changes)),
+        R::Explored(page) if matches!(request, Request::ExploreBefore(_)) => {
+            Some(Update::ExploredBefore(page.rows))
+        }
         R::Explored(page) => Some(Update::Explored(page.rows)),
         R::Connections(list) => Some(Update::Connections(list.connections)),
         R::Explanation(explanation) => Some(Update::Explanation(explanation)),

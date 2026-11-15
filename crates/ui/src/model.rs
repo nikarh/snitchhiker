@@ -245,6 +245,8 @@ pub struct Model {
     pub changes: Vec<v1::Change>,
     /// The Explorer's groups, as last asked.
     pub explored: Vec<v1::ExploreRow>,
+    /// The same groups in the period before, when comparing.
+    pub explored_before: Option<Vec<v1::ExploreRow>>,
     /// The live connections, as last listed.
     pub connections: Vec<v1::LiveConnection>,
     /// The last explanation the node sent.
@@ -476,6 +478,10 @@ impl Model {
             }
             Update::Explored(rows) => {
                 self.explored = rows;
+                Changed::Status
+            }
+            Update::ExploredBefore(rows) => {
+                self.explored_before = Some(rows);
                 Changed::Status
             }
             Update::Connections(connections) => {

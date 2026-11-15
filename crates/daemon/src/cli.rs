@@ -97,10 +97,12 @@ Commands:
   folders                         List the folders
   folders add <name> [--parent <id>], folders rm <id>
                                   Add a folder; delete one with the folders and rules in it
-  explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+  explore [--by <program|host|port|user|container>] [--hours <n>] [--where <dimension>=<value>] [--bytes]
+          [--compare]
                                   Connections of the last n hours (default 24), allowed and blocked, and their bytes,
-                                  grouped by program (default), host, port or user, busiest first; --where narrows
-                                  them to one program, host, port or user
+                                  grouped by program (default), host, port, user or container, busiest first (by
+                                  bytes with --bytes: the top talkers); --where narrows them to one program, host,
+                                  port or user; --compare adds the period before, and marks what is new
   contexts [<name>] [--hours <n>] The containers, VMs and named network namespaces connections came from in the last n
                                   hours (default 24), with what they did; with a name (a container's, a Compose
                                   service, a VM's, a namespace's), its programs and the hosts they reached
@@ -784,6 +786,8 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         .unwrap_or_else(|| "program".to_owned());
     let hours: u64 = args.opt_value_from_str("--hours")?.unwrap_or(24);
     let filter: Option<String> = args.opt_value_from_str("--where")?;
+    let by_bytes = args.contains("--bytes");
+    let compare = args.contains("--compare");
     reject_rest(args)?;
     let dimension = |name: &str| match name {
         "program" => Ok(v1::Dimension::Program),
@@ -811,37 +815,70 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
     let mut client = connect(version)?;
-    match client.call(Method::Explore(v1::Explore {
-        from_ms: now.saturating_sub(hours * 3_600_000),
-        to_ms: now,
-        group_by: dimension(&by)?.into(),
-        filter,
-        limit: 50,
-    }))? {
-        v1::response::Result::Explored(page) => {
-            let mut text = format!(
-                "{:>9} {:>9} {:>11} {:>11}  {by}\n",
-                "allowed", "blocked", "sent", "received"
-            );
-            for row in &page.rows {
-                let _ = writeln!(
-                    text,
-                    "{:>9} {:>9} {:>11} {:>11}  {}",
-                    row.allowed,
-                    row.blocked,
-                    row.bytes_out,
-                    row.bytes_in,
-                    if row.key.is_empty() {
-                        "(no name)"
-                    } else {
-                        &row.key
-                    }
-                );
-            }
-            out(&text)
+    let group = dimension(&by)?;
+    let span = hours * 3_600_000;
+    let mut explore = |from_ms: u64, to_ms: u64| -> Result<Vec<v1::ExploreRow>, Error> {
+        match client.call(Method::Explore(v1::Explore {
+            from_ms,
+            to_ms,
+            group_by: group.into(),
+            filter: filter.clone(),
+            limit: 50,
+            by_bytes,
+        }))? {
+            v1::response::Result::Explored(page) => Ok(page.rows),
+            _ => Err(unexpected()),
         }
-        _ => Err(unexpected()),
+    };
+    let rows = explore(now.saturating_sub(span), now)?;
+    // The period before, as long: what changed, and what is new.
+    let before = if compare {
+        Some(explore(
+            now.saturating_sub(2 * span),
+            now.saturating_sub(span),
+        )?)
+    } else {
+        None
+    };
+    let shown = |key: &str| {
+        if group == v1::Dimension::Container {
+            if key.is_empty() {
+                return "(the host)".to_owned();
+            }
+            let c = snitchhiker_core::context::Container::from_key(key);
+            return format!("[{}] {}", c.runtime, c.label());
+        }
+        if key.is_empty() {
+            "(no name)".to_owned()
+        } else {
+            key.to_owned()
+        }
+    };
+    let mut text = format!(
+        "{:>9} {:>9} {:>11} {:>11}",
+        "allowed", "blocked", "sent", "received"
+    );
+    if before.is_some() {
+        let _ = write!(text, " {:>12}", "before");
     }
+    let _ = writeln!(text, "  {by}");
+    for row in &rows {
+        let _ = write!(
+            text,
+            "{:>9} {:>9} {:>11} {:>11}",
+            row.allowed, row.blocked, row.bytes_out, row.bytes_in
+        );
+        if let Some(before) = &before {
+            let was = before.iter().find(|b| b.key == row.key);
+            let _ = write!(
+                text,
+                " {:>12}",
+                was.map_or_else(|| "new".to_owned(), |b| (b.allowed + b.blocked).to_string())
+            );
+        }
+        let _ = writeln!(text, "  {}", shown(&row.key));
+    }
+    out(&text)
 }
 
 /// `contexts`.
@@ -865,6 +902,7 @@ fn contexts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> 
                     value,
                 }),
                 limit: 200,
+                by_bytes: false,
             }))? {
                 v1::response::Result::Explored(page) => Ok(page.rows),
                 _ => Err(unexpected()),

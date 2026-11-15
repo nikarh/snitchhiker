@@ -13,10 +13,16 @@ A row drills down: a program's row shows where it connected, a host's row which 
 
 The node answers from hourly totals it keeps as connections are recorded, so a month of a million connections groups in tens of milliseconds, as fast as an hour does. The totals go with the history after its [retention](/reference/configuration/#retention_days).
 
+**Container** groups by the container, VM or named namespace connections came from (the **Containers & VMs** page starts there); a container drills into its programs and hosts.
+
+**By bytes** orders the groups by what they sent and received: the top talkers. **Compare with before** adds the period just before, as long: each group's count then, or **new** for a group that wasn't there. **Views** saves the view as it is (grouping, range, drill-down, order) to come back to.
+
 From the command line, `snitchhiker explore` gives the same groups:
 
 ```bash
 sudo snitchhiker explore --by host --hours 168 --where program=/usr/bin/curl
+sudo snitchhiker explore --by program --bytes --compare    # the top talkers of the day, and what's new
+sudo snitchhiker contexts shop/web                          # a Compose service's programs and hosts
 ```
 
 ## Live, Events and Explain

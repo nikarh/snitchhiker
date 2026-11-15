@@ -60,6 +60,10 @@ pub struct Explorer {
     hours: u64,
     /// The group drilled into: its dimension and value.
     filter: Option<(v1::Dimension, String)>,
+    /// Busiest by bytes rather than by connections: the top talkers.
+    by_bytes: bool,
+    /// The period before shown alongside: what changed, and what is new.
+    compare: bool,
 }
 
 fn name(dimension: v1::Dimension) -> &'static str {
@@ -90,6 +94,8 @@ impl Explorer {
             group: v1::Dimension::Program,
             hours: 24,
             filter: None,
+            by_bytes: false,
+            compare: false,
         }
     }
 
@@ -104,9 +110,10 @@ impl Explorer {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX));
-        let _ = self.requests.send(Request::Explore(v1::Explore {
-            from_ms: now.saturating_sub(self.hours * 3_600_000),
-            to_ms: now,
+        let span = self.hours * 3_600_000;
+        let explore = |from_ms: u64, to_ms: u64| v1::Explore {
+            from_ms,
+            to_ms,
             group_by: self.group.into(),
             filter: self
                 .filter
@@ -116,7 +123,17 @@ impl Explorer {
                     value: value.clone(),
                 }),
             limit: LIMIT,
-        }));
+            by_bytes: self.by_bytes,
+        };
+        let _ = self
+            .requests
+            .send(Request::Explore(explore(now.saturating_sub(span), now)));
+        if self.compare {
+            let _ = self.requests.send(Request::ExploreBefore(explore(
+                now.saturating_sub(2 * span),
+                now.saturating_sub(span),
+            )));
+        }
     }
 
     fn choice<T: Copy + PartialEq + 'static>(
@@ -166,13 +183,33 @@ impl Explorer {
                 cx,
             ));
         }
+        let options = h_flex()
+            .gap_1()
+            .child(Self::choice(
+                "by-bytes".to_owned(),
+                "By bytes",
+                self.by_bytes,
+                !self.by_bytes,
+                |e, on| e.by_bytes = on,
+                cx,
+            ))
+            .child(Self::choice(
+                "compare".to_owned(),
+                "Compare with before",
+                self.compare,
+                !self.compare,
+                |e, on| e.compare = on,
+                cx,
+            ));
         let model = self.model.clone();
         let group = name(self.group);
         h_flex()
             .gap_4()
             .child(dimensions)
             .child(ranges)
+            .child(options)
             .child(div().flex_1())
+            .child(self.views(cx))
             .child(
                 Button::new("explorer-csv")
                     .small()
@@ -234,6 +271,181 @@ impl Explorer {
             .child(div().w(px(90.)).text_right().child("Blocked"))
             .child(div().w(px(90.)).text_right().child("Sent"))
             .child(div().w(px(90.)).text_right().child("Received"))
+            .when(self.compare, |row| {
+                row.child(div().w(px(110.)).text_right().child("Before"))
+            })
+            .into_any_element()
+    }
+}
+
+impl Explorer {
+    /// A group's row: its key, its bar, its counts and bytes, and the period before when comparing.
+    fn row(
+        &self,
+        index: usize,
+        row: &v1::ExploreRow,
+        total: u64,
+        before: Option<&Vec<v1::ExploreRow>>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme().clone();
+        let key = row.key.clone();
+        let group = self.group;
+        let width = |count: u64| {
+            px(240. * f32::from(u16::try_from(count * 1000 / total).unwrap_or(1000)) / 1000.)
+        };
+        let line = h_flex()
+            .id(SharedString::from(format!("group-row-{index}")))
+            .gap_3()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .hover(|style| style.bg(theme.muted))
+            .cursor_pointer()
+            .on_click(cx.listener(move |explorer, _, _, cx| {
+                explorer.filter = Some((group, key.clone()));
+                explorer.group = next(group);
+                explorer.query();
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .w(px(420.))
+                    .flex_none()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(shown(group, &row.key)),
+            )
+            .child(
+                h_flex()
+                    .w(px(240.))
+                    .flex_none()
+                    .h(px(10.))
+                    .child(div().h_full().w(width(row.allowed)).bg(theme.success))
+                    .child(div().h_full().w(width(row.blocked)).bg(theme.danger)),
+            )
+            .child(div().w(px(90.)).text_right().child(row.allowed.to_string()))
+            .child(
+                div()
+                    .w(px(90.))
+                    .text_right()
+                    .text_color(theme.danger)
+                    .child(row.blocked.to_string()),
+            )
+            .child(
+                div()
+                    .w(px(90.))
+                    .text_right()
+                    .text_color(theme.muted_foreground)
+                    .child(bytes(row.bytes_out)),
+            )
+            .child(
+                div()
+                    .w(px(90.))
+                    .text_right()
+                    .text_color(theme.muted_foreground)
+                    .child(bytes(row.bytes_in)),
+            )
+            // The period before: its count, or that the group is new in this one.
+            .when_some(before, |line, before| {
+                let was = before.iter().find(|b| b.key == row.key);
+                line.child(div().w(px(110.)).text_right().child(match was {
+                    Some(was) => (was.allowed + was.blocked).to_string(),
+                    None => "new".to_owned(),
+                }))
+            });
+        line.into_any_element()
+    }
+}
+
+impl Explorer {
+    /// The view as it is now, to save: named after what it shows.
+    fn view(&self) -> crate::prefs::ExplorerView {
+        let range = RANGES
+            .iter()
+            .find(|(h, _)| *h == self.hours)
+            .map_or("", |(_, label)| *label);
+        let mut label = format!("{} · {range}", name(self.group));
+        if let Some((dimension, value)) = &self.filter {
+            label = format!("{label} · {}", shown(*dimension, value));
+        }
+        if self.by_bytes {
+            label.push_str(" · by bytes");
+        }
+        crate::prefs::ExplorerView {
+            name: label,
+            group: self.group.into(),
+            hours: self.hours,
+            filter: self
+                .filter
+                .as_ref()
+                .map(|(d, v)| (i32::from(*d), v.clone())),
+            by_bytes: self.by_bytes,
+        }
+    }
+
+    fn apply(&mut self, view: &crate::prefs::ExplorerView) {
+        self.group = v1::Dimension::try_from(view.group).unwrap_or(v1::Dimension::Program);
+        self.hours = view.hours;
+        self.filter = view.filter.as_ref().map(|(d, v)| {
+            (
+                v1::Dimension::try_from(*d).unwrap_or(v1::Dimension::Program),
+                v.clone(),
+            )
+        });
+        self.by_bytes = view.by_bytes;
+    }
+
+    /// The saved views: applying one, saving this one, forgetting them.
+    fn views(&self, cx: &mut Context<Self>) -> AnyElement {
+        use gpui_component::menu::{DropdownMenu as _, PopupMenuItem};
+        let explorer = cx.entity();
+        let current = self.view();
+        Button::new("explorer-views")
+            .small()
+            .label("Views")
+            .dropdown_menu(move |mut menu, _, cx| {
+                let saved = cx
+                    .try_global::<crate::prefs::Prefs>()
+                    .map_or_else(Vec::new, |p| p.explorer_views.clone());
+                for view in saved {
+                    let explorer = explorer.clone();
+                    menu = menu.item(PopupMenuItem::new(view.name.clone()).on_click(
+                        move |_, _, cx| {
+                            explorer.update(cx, |explorer, cx| {
+                                explorer.apply(&view);
+                                explorer.query();
+                                cx.notify();
+                            });
+                        },
+                    ));
+                }
+                let current = current.clone();
+                menu.separator()
+                    .item(
+                        PopupMenuItem::new("Save this view").on_click(move |_, _, cx| {
+                            let mut prefs = cx
+                                .try_global::<crate::prefs::Prefs>()
+                                .cloned()
+                                .unwrap_or_default();
+                            prefs.explorer_views.retain(|v| v.name != current.name);
+                            prefs.explorer_views.push(current.clone());
+                            prefs.save();
+                            cx.set_global(prefs);
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("Forget the saved views").on_click(|_, _, cx| {
+                            let mut prefs = cx
+                                .try_global::<crate::prefs::Prefs>()
+                                .cloned()
+                                .unwrap_or_default();
+                            prefs.explorer_views.clear();
+                            prefs.save();
+                            cx.set_global(prefs);
+                        }),
+                    )
+            })
             .into_any_element()
     }
 }
@@ -242,6 +454,10 @@ impl Render for Explorer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let rows = self.model.read(cx).explored.clone();
+        let before = self
+            .compare
+            .then(|| self.model.read(cx).explored_before.clone())
+            .flatten();
         let total: u64 = rows
             .iter()
             .map(|r| r.allowed + r.blocked)
@@ -252,65 +468,7 @@ impl Render for Explorer {
         let crumbs = self.crumbs(cx);
         let mut list = v_flex().gap_1();
         for (index, row) in rows.iter().enumerate() {
-            let key = row.key.clone();
-            let group = self.group;
-            let width = |count: u64| {
-                px(240. * f32::from(u16::try_from(count * 1000 / total).unwrap_or(1000)) / 1000.)
-            };
-            list = list.child(
-                h_flex()
-                    .id(SharedString::from(format!("group-row-{index}")))
-                    .gap_3()
-                    .px_2()
-                    .py_1()
-                    .rounded_sm()
-                    .hover(|style| style.bg(theme.muted))
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |explorer, _, _, cx| {
-                        explorer.filter = Some((group, key.clone()));
-                        explorer.group = next(group);
-                        explorer.query();
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .w(px(420.))
-                            .flex_none()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .child(shown(group, &row.key)),
-                    )
-                    .child(
-                        h_flex()
-                            .w(px(240.))
-                            .flex_none()
-                            .h(px(10.))
-                            .child(div().h_full().w(width(row.allowed)).bg(theme.success))
-                            .child(div().h_full().w(width(row.blocked)).bg(theme.danger)),
-                    )
-                    .child(div().w(px(90.)).text_right().child(row.allowed.to_string()))
-                    .child(
-                        div()
-                            .w(px(90.))
-                            .text_right()
-                            .text_color(theme.danger)
-                            .child(row.blocked.to_string()),
-                    )
-                    .child(
-                        div()
-                            .w(px(90.))
-                            .text_right()
-                            .text_color(theme.muted_foreground)
-                            .child(bytes(row.bytes_out)),
-                    )
-                    .child(
-                        div()
-                            .w(px(90.))
-                            .text_right()
-                            .text_color(theme.muted_foreground)
-                            .child(bytes(row.bytes_in)),
-                    ),
-            );
+            list = list.child(self.row(index, row, total, before.as_ref(), cx));
         }
         if rows.is_empty() {
             list = list.child(
