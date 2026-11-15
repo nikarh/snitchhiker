@@ -195,3 +195,43 @@ pub fn fail_open_removes_the_table() -> Result<(), String> {
         &tables,
     )
 }
+
+pub fn reject_fails_at_once() -> Result<(), String> {
+    let mut daemon = Running::start("reject", "mode = \"enforce\"\nno_match = \"allow\"\n")?;
+    let (_listener, port) = listener()?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "reject",
+        "--exe",
+        "glob:/usr/bin/python3*",
+        "--port",
+        &port.to_string(),
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let script = format!(
+        "import socket, time\nt = time.monotonic()\ntry:\n    socket.create_connection(('127.0.0.1', {port}), timeout=5)\n    print('connected')\nexcept OSError as e:\n    print('failed after', round(time.monotonic() - t, 2), 'errno', e.errno)"
+    );
+    let output = Command::new("runuser")
+        .args(["-u", "mallory", "--", "python3", "-c", &script])
+        .output()
+        .map_err(|e| e.to_string())?;
+    daemon.stop()?;
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let seconds: f64 = text
+        .split_whitespace()
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(f64::MAX);
+    check(
+        !text.contains("connected"),
+        "a rejected connection went through",
+        &text,
+    )?;
+    // ECONNABORTED is 103.
+    check(
+        seconds < 1.0 && text.contains("errno 103"),
+        "a rejected connection didn't fail at once with ECONNABORTED",
+        &text,
+    )
+}

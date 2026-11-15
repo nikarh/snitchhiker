@@ -76,6 +76,7 @@ const SCENARIOS: &[Scenario] = &[
         "daemon/fail-open-removes-the-table",
         daemon::fail_open_removes_the_table,
     ),
+    ("daemon/reject-fails-at-once", daemon::reject_fails_at_once),
     (
         "names/host-rules-match-resolved-names",
         names::host_rules_match_resolved_names,
