@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["STATEMENTS"],"enum":["Error","Source","StringKind","UndoError"],"struct":["AuditEntry","Batch","Change","Event","Recorded","Store","StoredEvent","Undecided"]};
+window.SIDEBAR_ITEMS = {"constant":["HOUR_MS","STATEMENTS"],"enum":["Dimension","Error","Source","StringKind","UndoError"],"struct":["AuditEntry","Batch","Change","Event","Explored","Recorded","Store","StoredEvent","Undecided"]};
