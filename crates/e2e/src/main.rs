@@ -274,6 +274,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::a_named_namespaces_traffic_is_decided_inside_it,
     ),
     (
+        "containers/a-vm-on-a-bridge-is-decided-by-its-name",
+        containers::a_vm_on_a_bridge_is_decided_by_its_name,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

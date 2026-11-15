@@ -290,6 +290,7 @@ pub fn in_context(
     base: Vec<Suggestion>,
     context: crate::rule::ContextKind,
     container: Option<&crate::context::Container>,
+    vm: Option<&crate::context::Vm>,
 ) -> Vec<Suggestion> {
     use crate::rule::ContextKind;
     let within = |suggestion: &Suggestion, who: &str, apply: &dyn Fn(&mut Conditions)| {
@@ -304,7 +305,18 @@ pub fn in_context(
     match (context, container) {
         (ContextKind::Host | ContextKind::Any, _) => base,
         (ContextKind::Container, Some(c)) => container_suggestions(&base, c)
-            .unwrap_or_else(|| in_context(base, ContextKind::Container, None)),
+            .unwrap_or_else(|| in_context(base, ContextKind::Container, None, None)),
+        // A VM is named by its name: its traffic has no program to name.
+        (ContextKind::Vm, _) if vm.is_some_and(|vm| !vm.name.is_empty()) => {
+            let name = vm.map_or_default(|vm| vm.name.clone());
+            base.iter()
+                .map(|s| {
+                    within(s, &name, &|conditions| {
+                        conditions.vm.name = vec![name.clone()];
+                    })
+                })
+                .collect()
+        }
         (kind, _) => {
             let name = match kind {
                 ContextKind::Vm => "a VM",
@@ -436,7 +448,7 @@ mod context_tests {
             compose: Some("shop/web".to_owned()),
             ..crate::context::Container::default()
         };
-        let all = in_context(base.clone(), ContextKind::Container, Some(&web));
+        let all = in_context(base.clone(), ContextKind::Container, Some(&web), None);
         assert_eq!(all[0].label, "in shop/web: node → api.example.com:443");
         assert_eq!(
             all[0].conditions.container.compose,
@@ -456,8 +468,21 @@ mod context_tests {
         // Every one is limited to containers.
         assert!(all.iter().all(|s| !s.conditions.container.is_empty()));
         // The host keeps its own.
-        assert_eq!(in_context(base.clone(), ContextKind::Host, None), base);
-        let netns = in_context(base, ContextKind::Netns, None);
+        assert_eq!(
+            in_context(base.clone(), ContextKind::Host, None, None),
+            base
+        );
+        let vm = crate::context::Vm {
+            hypervisor: "qemu".to_owned(),
+            name: "web".to_owned(),
+            uuid: String::new(),
+        };
+        assert!(
+            in_context(base.clone(), ContextKind::Vm, None, Some(&vm))
+                .iter()
+                .all(|s| s.conditions.vm.name == ["web"])
+        );
+        let netns = in_context(base, ContextKind::Netns, None, None);
         assert!(
             netns
                 .iter()

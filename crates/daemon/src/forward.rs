@@ -18,12 +18,12 @@ use snitchhiker_netfilter::route::{Link, Route};
 use tracing::debug;
 
 /// Who sent a forwarded packet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Sender {
     /// A network namespace (a container's), by its inode.
     Netns(u32),
-    /// A tap interface (a VM's), by its index.
-    Tap(u32),
+    /// A tap interface (a VM's), by its name.
+    Tap(std::sync::Arc<str>),
 }
 
 /// The lookups, cached per deciding thread.
@@ -61,7 +61,7 @@ impl Senders {
             link
         };
         match link.kind.as_deref() {
-            Some("tun") => Some(Sender::Tap(port)),
+            Some("tun") => Some(Sender::Tap(std::sync::Arc::from(link.name.as_str()))),
             Some("veth") => {
                 let id = link.peer_netns_id?;
                 if fresh || !self.namespaces.contains_key(&id) {

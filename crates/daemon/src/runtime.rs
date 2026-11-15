@@ -1177,21 +1177,34 @@ fn forwarded_owner(
     senders: &mut crate::forward::Senders,
     queued: &Packet<'_>,
     key: &FlowKey,
-) -> Option<snitchhiker_ebpf::FlowOwner> {
+) -> Owner {
     let (Some(bridge), Some(mac)) = (queued.in_interface, queued.source_mac) else {
         debug!(in_interface = ?queued.in_interface, mac = ?queued.source_mac, "a forwarded packet without its sender's link");
-        return None;
+        return Owner::Unknown;
     };
     for fresh in [false, true] {
         let sender = senders.sender(bridge, mac, fresh);
         debug!(bridge, ?mac, ?sender, fresh, "a forwarded packet's sender");
-        if let Some(crate::forward::Sender::Netns(netns)) = sender
-            && let Some(owner) = shared.attribution.owner(&FlowKey { netns, ..*key })
-        {
-            return Some(owner);
+        match sender {
+            Some(crate::forward::Sender::Netns(netns)) => {
+                if let Some(owner) = shared.attribution.owner(&FlowKey { netns, ..*key }) {
+                    return Owner::Process(owner);
+                }
+            }
+            Some(crate::forward::Sender::Tap(tap)) => return Owner::Tap(tap),
+            None => {}
         }
     }
-    None
+    Owner::Unknown
+}
+
+/// Who sent a queued packet.
+enum Owner {
+    /// The process that opened its flow.
+    Process(snitchhiker_ebpf::FlowOwner),
+    /// A VM, through this tap.
+    Tap(Arc<str>),
+    Unknown,
 }
 
 /// Who opened a queued packet's flow: on this host, or, for a forwarded packet, in its sender's namespace.
@@ -1200,11 +1213,14 @@ fn owner_of(
     senders: &mut crate::forward::Senders,
     queued: &Packet<'_>,
     key: &FlowKey,
-) -> Option<snitchhiker_ebpf::FlowOwner> {
+) -> Owner {
     if queued.hook == NF_INET_FORWARD {
         forwarded_owner(shared, senders, queued, key)
     } else {
-        shared.attribution.owner(key)
+        shared
+            .attribution
+            .owner(key)
+            .map_or(Owner::Unknown, Owner::Process)
     }
 }
 
@@ -1227,7 +1243,11 @@ pub(crate) fn decide(
         destination: headers.destination,
         destination_port: headers.destination_port,
     };
-    let owner = owner_of(shared, senders, queued, &key);
+    let (owner, vm) = match owner_of(shared, senders, queued, &key) {
+        Owner::Process(owner) => (Some(owner), None),
+        Owner::Tap(tap) => (None, shared.contexts.vm_on_tap(&tap)),
+        Owner::Unknown => (None, None),
+    };
     // The daemon's own traffic (its remote endpoint: the relay, devices) is never decided, as marked packets aren't
     // queued: its sockets come from a library that can't mark them, but the kernel names their process.
     if owner.is_some_and(|o| o.pid == std::process::id()) {
@@ -1246,7 +1266,11 @@ pub(crate) fn decide(
         .unwrap_or_else(PoisonError::into_inner)
         .lookup(pid, headers.destination, now);
     let empty: &[String] = &[];
-    let (context, container, helper) = context_of(shared, owner, process.as_deref());
+    let (context, container, helper) = if vm.is_some() {
+        (ContextKind::Vm, None, false)
+    } else {
+        context_of(shared, owner, process.as_deref())
+    };
     // A helper's connection for a namespace decided inside was decided there already, with its program: deciding it
     // again here, knowing less, could only contradict that. Until then, the daemon starts deciding inside.
     if helper && let Some((pid, inode)) = container.as_ref().and_then(|c| c.served) {
@@ -1276,7 +1300,7 @@ pub(crate) fn decide(
         context,
         now_ms: now,
         container: container.as_deref().map(|c| &c.container),
-        vm: None,
+        vm: vm.as_deref().map(|v| &v.vm),
         netns: named.as_ref().map(|(name, _)| &**name),
     };
     let exe = process
@@ -1290,7 +1314,8 @@ pub(crate) fn decide(
         container
             .as_ref()
             .map(|c| Arc::clone(&c.key))
-            .or_else(|| named.as_ref().map(|(_, key)| Arc::clone(key))),
+            .or_else(|| named.as_ref().map(|(_, key)| Arc::clone(key)))
+            .or_else(|| vm.as_ref().map(|v| Arc::clone(&v.key))),
     );
     let rules = shared.rules.load();
     let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
@@ -1402,6 +1427,7 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
             ),
             facts.context,
             facts.container,
+            facts.vm,
         );
         NewPrompt {
             prompt: v1::Prompt {
@@ -1415,7 +1441,10 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
                 port: u32::from(facts.port),
                 protocol: u32::from(facts.protocol),
                 context: convert::context(facts.context).into(),
-                container: facts.container.map(|c| Box::new(convert::container(c))),
+                container: event
+                    .container
+                    .as_deref()
+                    .map(|key| Box::new(convert::container_from_key(key))),
                 exe_writable: crate::process::writable_by_others(event.pid),
                 suggestions: suggestions
                     .iter()

@@ -108,6 +108,15 @@ pub struct Identified {
     pub served: Option<(u32, u64)>,
 }
 
+/// A VM found for a tap, with its identity's key (as the history keeps it: a container's, with the hypervisor as its
+/// runtime and the UUID as its id), and the process holding the tap.
+#[derive(Debug)]
+pub struct VmFound {
+    pub vm: snitchhiker_core::context::Vm,
+    pub key: Arc<str>,
+    pub pid: u32,
+}
+
 /// What was found for a key: a container, or that there is none.
 type Found<K> = Mutex<HashMap<K, Option<Arc<Identified>>>>;
 
@@ -117,6 +126,8 @@ type Found<K> = Mutex<HashMap<K, Option<Arc<Identified>>>>;
 pub struct Contexts {
     containers: Found<u64>,
     helpers: Found<(u32, u64)>,
+    /// VMs by tap name.
+    taps: Mutex<HashMap<Arc<str>, Arc<VmFound>>>,
 }
 
 impl Contexts {
@@ -185,6 +196,118 @@ impl Contexts {
         }
         helpers.insert((helper, start), found.clone());
         found
+    }
+}
+
+impl Contexts {
+    /// The VM whose tap `tap` is: the process holding it open (its fdinfo names the interface), and that process's
+    /// name and UUID for the VM, from its command line (QEMU's `-name guest=…` and `-uuid`). Kept while that process
+    /// runs.
+    pub fn vm_on_tap(&self, tap: &Arc<str>) -> Option<Arc<VmFound>> {
+        let mut taps = self.taps.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(found) = taps.get(tap)
+            && Path::new(&format!("/proc/{}", found.pid)).exists()
+        {
+            return Some(Arc::clone(found));
+        }
+        let pid = tap_holder(tap)?;
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        let args: Vec<String> = cmdline
+            .split(|b| *b == 0)
+            .filter(|a| !a.is_empty())
+            .map(|a| String::from_utf8_lossy(a).into_owned())
+            .collect();
+        let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
+            .map_or_else(|_| String::new(), |p| p.to_string_lossy().into_owned());
+        let vm = vm_from_command_line(&args, &exe);
+        let key = Container {
+            runtime: vm.hypervisor.clone(),
+            id: vm.uuid.clone(),
+            name: vm.name.clone(),
+            ..Container::default()
+        }
+        .key();
+        let found = Arc::new(VmFound {
+            vm,
+            key: Arc::from(key),
+            pid,
+        });
+        if taps.len() >= CAPACITY {
+            taps.clear();
+        }
+        taps.insert(Arc::clone(tap), Arc::clone(&found));
+        Some(found)
+    }
+}
+
+/// The process holding the tap interface `tap` open: the line `iff:\t<tap>` of one of its descriptors' fdinfo.
+fn tap_holder(tap: &str) -> Option<u32> {
+    let wanted = format!("iff:\t{tap}");
+    for entry in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        let Ok(descriptors) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+            continue;
+        };
+        for descriptor in descriptors.flatten() {
+            // Only tun descriptors have an `iff` line: skip the rest without reading them.
+            if std::fs::read_link(descriptor.path())
+                .is_ok_and(|target| target != Path::new("/dev/net/tun"))
+            {
+                continue;
+            }
+            let info = std::fs::read_to_string(format!(
+                "/proc/{pid}/fdinfo/{}",
+                descriptor.file_name().to_string_lossy()
+            ));
+            if info.is_ok_and(|info| info.lines().any(|line| line == wanted)) {
+                return Some(pid);
+            }
+        }
+    }
+    None
+}
+
+/// A VM as its hypervisor's command line describes it.
+fn vm_from_command_line(args: &[String], exe: &str) -> snitchhiker_core::context::Vm {
+    let base = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
+    let hypervisor = [args.first().map_or_default(String::as_str), exe]
+        .iter()
+        .map(|p| base(p))
+        .find_map(|name| {
+            if name.starts_with("qemu-system") || name.starts_with("qemu-kvm") {
+                Some("qemu".to_owned())
+            } else if name == "firecracker" || name == "cloud-hypervisor" || name == "crosvm" {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| base(exe));
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .cloned()
+    };
+    // QEMU: `-name guest=web,debug-threads=on`, or `-name web`.
+    let name = value("-name").map_or_else(String::new, |n| {
+        n.split(',')
+            .find_map(|part| part.strip_prefix("guest="))
+            .map_or_else(
+                || n.split(',').next().unwrap_or_default().to_owned(),
+                str::to_owned,
+            )
+    });
+    snitchhiker_core::context::Vm {
+        hypervisor,
+        name,
+        uuid: value("-uuid").unwrap_or_default(),
     }
 }
 
@@ -491,6 +614,25 @@ mod tests {
         );
         assert_eq!(named("/user.slice/user-1000.slice/session-2.scope"), None);
         assert_eq!(named("/system.slice/docker-notanid.scope"), None);
+    }
+
+    #[test]
+    fn vms_are_named_by_their_command_line() {
+        let args = |line: &str| line.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let vm = vm_from_command_line(
+            &args(
+                "/usr/bin/qemu-system-x86_64 -name guest=web,debug-threads=on -uuid 4f6e-11 -m 2048",
+            ),
+            "/usr/bin/qemu-system-x86_64",
+        );
+        assert_eq!(
+            (vm.hypervisor.as_str(), vm.name.as_str(), vm.uuid.as_str()),
+            ("qemu", "web", "4f6e-11")
+        );
+        assert_eq!(
+            vm_from_command_line(&args("/usr/bin/qemu-system-aarch64 -name db"), "").name,
+            "db"
+        );
     }
 
     #[test]

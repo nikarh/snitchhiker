@@ -1,6 +1,7 @@
 //! Containers (plan §5.10): their traffic is decided with their identity, and host rules don't apply to them. The
 //! images are made here from the distribution's static busybox: nothing is pulled from a registry.
 
+use std::os::unix::process::CommandExt as _;
 use std::process::Command;
 use std::thread;
 use std::time::Duration;
@@ -509,6 +510,117 @@ pub fn a_named_namespaces_traffic_is_decided_inside_it() -> Result<(), String> {
         log.contains("a network namespace is let go")
             || log.contains("deciding inside a network namespace"),
         "the daemon didn't start deciding inside the namespace",
+        &found,
+    )
+}
+
+/// What stands in for a VM: a process holding a tap on a bridge, sending a TCP SYN through it as a guest would, and
+/// started with QEMU's command line (its name and UUID), as libvirt starts QEMU.
+const TAP_VM: &str = r#"
+import fcntl, os, socket, struct, sys, time
+tap, src_mac, dst_mac, src, dst, port = sys.argv[sys.argv.index("--") + 1:]
+fd = os.open("/dev/net/tun", os.O_RDWR)
+fcntl.ioctl(fd, 0x400454CA, struct.pack("16sH", tap.encode(), 0x0002 | 0x1000))  # TUNSETIFF: IFF_TAP | IFF_NO_PI
+print("ready", flush=True)
+sys.stdin.readline()
+def checksum(data):
+    if len(data) % 2:
+        data += b"\0"
+    total = sum(struct.unpack("!%dH" % (len(data) // 2), data))
+    total = (total >> 16) + (total & 0xFFFF)
+    total += total >> 16
+    return ~total & 0xFFFF
+s, d = socket.inet_aton(src), socket.inet_aton(dst)
+tcp = struct.pack("!HHIIBBHHH", 40000, int(port), 1, 0, 5 << 4, 0x02, 64240, 0, 0)
+tcp = tcp[:16] + struct.pack("!H", checksum(s + d + struct.pack("!BBH", 0, 6, len(tcp)) + tcp)) + tcp[18:]
+ip = struct.pack("!BBHHHBBH4s4s", 0x45, 0, 20 + len(tcp), 1, 0, 64, 6, 0, s, d)
+ip = ip[:10] + struct.pack("!H", checksum(ip)) + ip[12:]
+frame = bytes.fromhex(dst_mac.replace(":", "")) + bytes.fromhex(src_mac.replace(":", "")) + b"\x08\x00" + ip + tcp
+# As a guest's TCP does: again until it gives up (the port may still be coming up for the first ones).
+for _ in range(10):
+    os.write(fd, frame)
+    time.sleep(0.3)
+"#;
+
+/// A VM on a bridge (as libvirt's default network has it) is decided as the VM, named by its hypervisor's command
+/// line: a rule on the VM's name holds, and its traffic has no program.
+pub fn a_vm_on_a_bridge_is_decided_by_its_name() -> Result<(), String> {
+    use std::io::{BufRead as _, Write as _};
+    let daemon = Running::start("vm", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let _ = run("ip", &["link", "del", "virbr-e2e"]);
+    for args in [
+        &["link", "add", "virbr-e2e", "type", "bridge"][..],
+        &["addr", "add", "192.168.199.1/24", "dev", "virbr-e2e"],
+        &["link", "set", "virbr-e2e", "up"],
+    ] {
+        run("ip", args)?;
+    }
+    run("sysctl", &["-qw", "net.ipv4.ip_forward=1"])?;
+    daemon.cli(&[
+        "rules", "add", "allow", "--vm", "e2e-vm", "--port", "8095", "--name", "the VM",
+    ])?;
+    let bridge_mac =
+        std::fs::read_to_string("/sys/class/net/virbr-e2e/address").map_err(|e| e.to_string())?;
+    let send = |port: &str| -> Result<(), String> {
+        let mut vm = Command::new("python3")
+            .args([
+                "-c",
+                TAP_VM,
+                "-name",
+                "guest=e2e-vm,debug-threads=on",
+                "-uuid",
+                "6c9d4e4a-2f1b-4d33-9a51-0b7c2e1f4a10",
+                "--",
+                "tap-e2e",
+                "02:00:00:00:00:10",
+                bridge_mac.trim(),
+                "192.168.199.10",
+                "203.0.113.95",
+                port,
+            ])
+            // As libvirt starts it: argv[0] is QEMU's.
+            .arg0("qemu-system-x86_64")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| e.to_string())?;
+        let mut ready = String::new();
+        std::io::BufReader::new(vm.stdout.take().ok_or("no stdout")?)
+            .read_line(&mut ready)
+            .map_err(|e| e.to_string())?;
+        run(
+            "ip",
+            &["link", "set", "tap-e2e", "master", "virbr-e2e", "up"],
+        )?;
+        thread::sleep(Duration::from_millis(300));
+        vm.stdin
+            .take()
+            .ok_or("no stdin")?
+            .write_all(b"go\n")
+            .map_err(|e| e.to_string())?;
+        vm.wait().map_err(|e| e.to_string())?;
+        Ok(())
+    };
+    send("8095")?;
+    send("8096")?;
+    let _ = run("ip", &["link", "del", "virbr-e2e"]);
+    thread::sleep(Duration::from_millis(300));
+    let allowed = decisions(&daemon, "203.0.113.95:8095")?;
+    let denied = decisions(&daemon, "203.0.113.95:8096")?;
+    let found = format!("{}\n{}", allowed.join("\n"), denied.join("\n"));
+    check(
+        allowed
+            .iter()
+            .any(|l| l.contains(" allow ") && l.contains("[qemu e2e-vm] ?")),
+        "the VM's connection wasn't decided as the VM's, by its name",
+        &found,
+    )?;
+    check(
+        !denied.is_empty()
+            && denied
+                .iter()
+                .all(|l| l.contains(" deny ") && l.contains("[qemu e2e-vm]")),
+        "the rule on the VM held for another port",
         &found,
     )
 }

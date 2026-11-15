@@ -282,7 +282,8 @@ message Conditions {
 }
 
 // A container, as the node found it: its runtime and id from its cgroup, the rest from the runtime. Empty fields
-// couldn't be read.
+// couldn't be read. The same message names a VM (`runtime` its hypervisor, `id` its UUID, `name` its name) and a named
+// network namespace (`runtime` "netns", `name` its name).
 message ContainerIdentity {
   // `docker`, `podman`, `containerd`, `cri-o`, `nspawn`, `lxc`.
   string runtime = 1;
