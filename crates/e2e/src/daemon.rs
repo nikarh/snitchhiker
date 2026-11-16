@@ -835,7 +835,7 @@ pub fn policy_changes_apply_at_once_and_undo() -> Result<(), String> {
     let undone = mallory_connects(port)?;
     let shown = daemon.cli(&["policy"])?;
     let invalid = daemon
-        .cli(&["policy", "set", "prompt_timeout_secs=1"])
+        .cli(&["policy", "set", "prompt_timeout_secs=0"])
         .is_err();
     daemon.stop()?;
     let found = format!(
