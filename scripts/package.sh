@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the .deb and Arch Linux packages of a snitchhikerd binary, with nfpm (see mise.toml).
+# Builds the .deb, rpm and Arch Linux packages of a snitchhikerd binary, with nfpm (see mise.toml).
 #
 #   scripts/package.sh <x86_64|aarch64> <binary> <output dir> [<snitchhiker-ui binary>]
 #
@@ -9,12 +9,13 @@
 #
 #              released v0.1.0          no v0.1.0 yet
 #   deb    0.1.0+dev205.abc1234     0.1.0~dev205.abc1234
+#   rpm    0.1.0^dev205.abc1234     0.1.0~dev205.abc1234
 #   Arch   0.1.0.dev205.abc1234     0.1.0dev205.abc1234
 #
 # (Arch versions can't have + or -.) Counting the commits needs the whole history, not a shallow clone.
-# Outputs snitchhiker_<amd64|arm64>.deb and snitchhiker-<arch>.pkg.tar.zst (and with the app's binary,
-# snitchhiker-ui_<amd64|arm64>.deb and snitchhiker-ui-<arch>.pkg.tar.zst; with SNITCHHIKER_RELAY=<relay binary>, the
-# relay's likewise), names that don't change between versions, like the other release files.
+# Outputs snitchhiker_<amd64|arm64>.deb, snitchhiker-<arch>.rpm and snitchhiker-<arch>.pkg.tar.zst (and with the
+# app's binary, snitchhiker-ui's likewise; with SNITCHHIKER_RELAY=<relay binary>, the relay's likewise), names that
+# don't change between versions, like the other release files.
 set -euo pipefail
 
 if [[ $# -lt 3 || $# -gt 4 ]]; then
@@ -43,17 +44,17 @@ if [[ "${version}" =~ ^([0-9]+\.[0-9]+\.[0-9]+)-dev\+([0-9a-f]+)$ ]]; then
   fi
   build="dev$(git rev-list --count "${commit}").${commit}"
   if git ls-remote --exit-code --tags origin "refs/tags/v${base}" >/dev/null 2>&1; then
-    deb_version="${base}+${build}" arch_version="${base}.${build}"
+    deb_version="${base}+${build}" rpm_version="${base}^${build}" arch_version="${base}.${build}"
   else
-    deb_version="${base}~${build}" arch_version="${base}${build}"
+    deb_version="${base}~${build}" rpm_version="${base}~${build}" arch_version="${base}${build}"
   fi
 elif [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  deb_version=${version} arch_version=${version}
+  deb_version=${version} rpm_version=${version} arch_version=${version}
 else
   echo "can't package version ${version}" >&2
   exit 1
 fi
-echo "packaging ${version} as ${deb_version} (deb) and ${arch_version} (Arch)"
+echo "packaging ${version} as ${deb_version} (deb), ${rpm_version} (rpm) and ${arch_version} (Arch)"
 
 export SNITCHHIKER_ARCH=${goarch}
 mkdir -p "${out}"
@@ -61,6 +62,8 @@ SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm.yam
   --packager deb --target "${out}/snitchhiker_${goarch}.deb"
 SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm.yaml \
   --packager archlinux --target "${out}/snitchhiker-${arch}.pkg.tar.zst"
+SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm.yaml \
+  --packager rpm --target "${out}/snitchhiker-${arch}.rpm"
 
 # The relay, at the same version, when SNITCHHIKER_RELAY names its binary.
 if [[ -n "${SNITCHHIKER_RELAY:-}" ]]; then
@@ -69,6 +72,8 @@ if [[ -n "${SNITCHHIKER_RELAY:-}" ]]; then
     --packager deb --target "${out}/snitchhiker-relay_${goarch}.deb"
   SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
     --packager archlinux --target "${out}/snitchhiker-relay-${arch}.pkg.tar.zst"
+  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
+    --packager rpm --target "${out}/snitchhiker-relay-${arch}.rpm"
 fi
 
 # The desktop app, at the same version, when its binary is given.
@@ -78,4 +83,6 @@ if [[ -n "${4:-}" ]]; then
     --packager deb --target "${out}/snitchhiker-ui_${goarch}.deb"
   SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-ui.yaml \
     --packager archlinux --target "${out}/snitchhiker-ui-${arch}.pkg.tar.zst"
+  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-ui.yaml \
+    --packager rpm --target "${out}/snitchhiker-ui-${arch}.rpm"
 fi

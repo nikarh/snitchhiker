@@ -44,6 +44,23 @@ overrides:
     scripts:
       postinstall: dist/packaging/arch/ui-post-install.sh
       preremove: dist/packaging/arch/ui-pre-remove.sh
+  rpm:
+    depends:
+      - snitchhiker = ${SNITCHHIKER_VERSION}
+      - glibc >= 2.35
+      - fontconfig
+      - freetype
+      - libpng
+      - libxcb
+      - libxkbcommon
+      - libxkbcommon-x11
+      - libwayland-client
+      - vulkan-loader
+    recommends:
+      - mesa-vulkan-drivers
+    scripts:
+      postinstall: dist/packaging/rpm/ui-post.sh
+      preremove: dist/packaging/rpm/ui-preun.sh
 
 archlinux:
   packager: Nikolay Arhipov <nikarh@users.noreply.github.com>

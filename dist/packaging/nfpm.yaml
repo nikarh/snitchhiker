@@ -1,4 +1,4 @@
-# nfpm config of the .deb and Arch Linux packages, built by scripts/package.sh from a release binary. That script
+# nfpm config of the .deb, rpm and Arch Linux packages, built by scripts/package.sh from a release binary. That script
 # sets the variables and stages the files in target/package.
 name: snitchhiker
 arch: ${SNITCHHIKER_ARCH}
@@ -28,6 +28,15 @@ overrides:
     depends:
       - glibc
       - systemd
+  rpm:
+    depends:
+      - glibc >= 2.35
+      - systemd
+    recommends:
+      - polkit
+    scripts:
+      postinstall: dist/packaging/rpm/post.sh
+      preremove: dist/packaging/rpm/preun.sh
 
 contents:
   - src: target/package/snitchhikerd

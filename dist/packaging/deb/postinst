@@ -1,6 +1,6 @@
 #!/bin/sh
-# Creates the client group; the service is enabled but not started: its configuration starts in monitor mode, and
-# starting is the administrator's call (systemctl enable --now snitchhikerd).
+# Creates the client group. The service is neither enabled nor started: its configuration starts in monitor mode,
+# and starting it is the administrator's call (systemctl enable --now snitchhikerd).
 set -e
 if [ "$1" = configure ]; then
   systemd-sysusers snitchhiker.conf || true

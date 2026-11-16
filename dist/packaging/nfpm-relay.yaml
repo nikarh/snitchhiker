@@ -18,6 +18,9 @@ overrides:
   archlinux:
     depends:
       - glibc
+  rpm:
+    depends:
+      - glibc >= 2.35
 
 archlinux:
   packager: Nikolay Arhipov <nikarh@users.noreply.github.com>
