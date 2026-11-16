@@ -2,6 +2,9 @@
 
 ## How a release happens
 
+0. Before it, check the upgrade from the newest release: `mise run e2e:upgrade vX.Y.Z` (that release's tag) installs
+   it in the node VM with rules and history, then this tree's package over it, and checks that the rules and history
+   are kept and that the older and newer command lines and daemons understand each other.
 1. Run the **Create a release PR** workflow (Actions → Create a release PR → patch / minor / major). It bumps the
    workspace version in `Cargo.toml` (every crate inherits it), regenerates `CHANGELOG.md` with git-cliff from the
    conventional commits, and opens a pull request titled `Release vX.Y.Z` with the release notes as its body.

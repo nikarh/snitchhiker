@@ -52,6 +52,10 @@ depends = ["android:core"]
 dir = "android"
 run = "./gradlew :app:assembleFossRelease :app:assemblePlayRelease"
 
+[tasks."e2e:upgrade"]
+description = "An older version (a release tag or commit) upgraded to this tree's, in the node VM: rules and history kept, old and new command lines and daemons talking (e2e/upgrade.sh <ref>)"
+run = "e2e/upgrade.sh"
+
 [tasks."e2e:android"]
 description = "The Android app end to end: an emulator, the node VM and a relay between them (e2e/android.sh)"
 run = "e2e/android.sh"
