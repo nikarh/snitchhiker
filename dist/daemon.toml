@@ -38,6 +38,10 @@ fail = "closed"
 # (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`).
 #step_up = "polkit"
 
+# The local users who administer the node through the desktop app: members of these groups (those who may become root,
+# usually). Other users' apps can see the node and its history, and change nothing.
+#admin_groups = ["wheel", "sudo", "admin"]
+
 # The built-in System folder: loopback allowed, as OpenSnitch does by default. Its rules are in the fallback tier, so
 # any other matching rule decides instead.
 #default_rules = true

@@ -14,6 +14,7 @@ pub mod contexts;
 pub mod dns;
 pub mod fallback;
 pub mod forward;
+pub mod guard;
 pub mod hub;
 pub mod learn;
 pub mod lint;

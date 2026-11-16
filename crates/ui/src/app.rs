@@ -2,6 +2,7 @@
 
 use std::sync::mpsc;
 
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Window, div,
@@ -517,6 +518,13 @@ impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let sidebar = self.sidebar(cx);
         let page = self.page();
+        // A user outside the node's admin groups sees it and changes nothing.
+        let viewer = self
+            .model
+            .read(cx)
+            .node
+            .as_ref()
+            .is_some_and(|node| node.role() == snitchhiker_proto::v1::Role::Viewer);
         h_flex()
             .size_full()
             .bg(cx.theme().background)
@@ -535,6 +543,19 @@ impl Render for App {
                             .text_color(cx.theme().warning_foreground)
                             .child(warning.text())
                     }))
+                    .when(viewer, |this| {
+                        this.child(
+                            div()
+                                .px_4()
+                                .py_2()
+                                .bg(cx.theme().secondary)
+                                .text_color(cx.theme().secondary_foreground)
+                                .child(
+                                    "You can see this node, but not change it: changes are for the users in its \
+                                     admin groups (admin_groups in /etc/snitchhiker/daemon.toml).",
+                                ),
+                        )
+                    })
                     .child(page),
             )
     }

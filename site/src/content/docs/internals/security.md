@@ -48,9 +48,22 @@ Then it checks the pidfd still refers to a live process, so the process can't ha
 
 **Clients check the daemon too.** Before sending anything, a client (the command line included) checks that the socket and every directory above it belong to root and that no one else may write to those directories, and that the process serving the socket runs as root. A socket some other process bound elsewhere can't pose as the daemon to feed a client false prompts or collect its answers.
 
+## Who administers the node
+
+Every local user may run the desktop app, and the app may connect: what it may do depends on the user. Members of the node's [admin groups](/reference/configuration/#admin_groups) (`wheel`, `sudo` and `admin` by default: the users who may become root) administer it. Everyone else's app is a viewer: it shows the node, its rules and history, and changes nothing, answers no prompt. The groups are the real and supplementary groups of the app's process, as the kernel has them.
+
 ## Dangerous actions need more than a session
 
-Some requests would undo the firewall in one step, so a client's session isn't enough for them. Today that is a rule that allows every program to connect anywhere: an allow rule naming no program and no destination, whether added directly, imported, or made by answering a prompt with conditions of the client's own. Changes to the policy, pairing devices and the like will join it as they become possible through the protocol.
+Some requests would undo the firewall, or what watches it, in one step, so a client's session isn't enough for them. A change to the rules is judged by the rules it leaves in force, not by the request, so every way to the same result needs the same authorization. A change is dangerous when, after it:
+
+- **a rule in force allows broadly**: an enabled allow rule, in enabled folders, that with its folders' conditions names no particular program and no particular destination. A particular program is a path, app identity, container or VM named by patterns that each match finitely many values (an exact name, a glob without `*`, a regular expression without unbounded repetition such as `re:(?i)/usr/bin/curl`), or a binary hash; a particular destination is a host name (or a regular expression matching finitely many), `*.` and a name that isn't a public suffix, a network no wider than a /24 (IPv4) or /48 (IPv6), or a blocklist. So a rule for `glob:/**`, for `0.0.0.0/0`, or for `re:.*` as host is broad, and so is a narrow rule once its folder's scope is removed, or one imported disabled and then enabled. Splitting a broad rule into several doesn't help: each is broad.
+- **more than 20 rules stop being in force** at once: deleted, disabled, or in a folder that is.
+- **the policy lets through what it blocked** (`monitor`, `no_match = "allow"`, `allow` for `no_client` or `on_timeout`), or keeps less history.
+- **the system firewall lets in what it kept out.**
+
+Undoing a change is judged the same way. Pairing a device, unpairing or muting another one (it would no longer be told of prompts and alerts; a device may do either to itself), approving an agent's broad proposal and changing an agent's envelope are dangerous too.
+
+Deleting rules one at a time isn't: each deletion is in the history, can be undone, and is no different from what an administrator does every day. Acknowledging the alerts raised for dangerous actions isn't either: asking for it would raise another such alert. The audit trail keeps every attempt whatever happens to the alerts.
 
 For these the daemon asks polkit whether the client's process may do it (action `org.snitchhiker.manage`, the process named by its pidfd). By default polkit asks for an administrator's password through the user's polkit agent and remembers it for a few minutes. Local policy can change that with a file in `/etc/polkit-1/rules.d/`. When polkit doesn't authorize the request, or can't be asked (not installed, no agent), the request is refused with `ERROR_CODE_NOT_AUTHORIZED`. Root's requests on the admin socket need no step-up, and [`step_up = "off"`](/reference/configuration/#step_up) switches it off.
 

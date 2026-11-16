@@ -23,7 +23,8 @@ pub struct Peer {
     /// Real and effective user ids.
     pub uid: u32,
     pub euid: u32,
-    /// Effective group id, and the supplementary groups.
+    /// Real and effective group ids, and the supplementary groups.
+    pub gid: u32,
     pub egid: u32,
     pub groups: Vec<u32>,
     /// The executable, as the kernel resolved it.
@@ -116,6 +117,7 @@ pub fn identify(stream: &UnixStream) -> Result<(Peer, OwnedFd), Error> {
         pid,
         uid,
         euid: uids.get(1).copied().unwrap_or(u32::MAX),
+        gid: gids.first().copied().unwrap_or(u32::MAX),
         egid: gids.get(1).copied().unwrap_or(u32::MAX),
         groups: ids("Groups:"),
         exe,
@@ -299,6 +301,7 @@ mod tests {
             pid: 10,
             uid: 1000,
             euid: 1000,
+            gid: 1000,
             egid: 977,
             groups: vec![1000],
             exe: PathBuf::from("/usr/bin/snitchhiker-ui"),

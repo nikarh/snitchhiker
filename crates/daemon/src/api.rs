@@ -26,7 +26,7 @@ use crate::store::{
     AuditEntry, Batch, Dimension, Error as StoreError, HOUR_MS, Store, StringKind, UndoError,
 };
 use snitchhiker_core::query::{self, EventFilter};
-use snitchhiker_core::rule::{Action, Condition, Expiry, allows_everything};
+use snitchhiker_core::rule::{Expiry, allows_broadly};
 use snitchhiker_proto::columns::{self, EventRow};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
@@ -198,7 +198,7 @@ fn admit(
             let (peer, pidfd) = identify(stream).map_err(|e| e.to_string())?;
             verify(&peer, &policy).map_err(|e| e.to_string())?;
             let caller = Caller {
-                role: v1::Role::Admin,
+                role: local_role(&peer, &config.admin_groups),
                 uid: peer.uid,
                 pid: peer.pid,
                 pidfd: Some(pidfd.try_clone().map_err(|e| e.to_string())?),
@@ -220,6 +220,25 @@ fn admit(
             };
             Ok((caller, Some(pidfd)))
         }
+    }
+}
+
+/// A local user's role: admin for members of `admin_groups` (by the real or a supplementary group of the client's
+/// process, as the kernel has them: the app's own group is its effective one), viewer for everyone else.
+fn local_role(peer: &crate::peer::Peer, admin_groups: &[String]) -> v1::Role {
+    let admin = admin_groups.iter().any(|name| {
+        nix::unistd::Group::from_name(name)
+            .ok()
+            .flatten()
+            .is_some_and(|group| {
+                let gid = group.gid.as_raw();
+                peer.gid == gid || peer.groups.contains(&gid)
+            })
+    });
+    if admin {
+        v1::Role::Admin
+    } else {
+        v1::Role::Viewer
     }
 }
 
@@ -443,14 +462,14 @@ fn handle(
         Method::GetStatus(_) => R::Status(status(daemon)),
         Method::ListRules(_) => list_rules(daemon),
         Method::AddRule(add) => add_rule(daemon, caller, app, add),
-        Method::DeleteRule(delete) => delete_rule(daemon, app, delete.id),
-        Method::SetRuleEnabled(set) => set_rule_enabled(daemon, app, &set),
+        Method::DeleteRule(delete) => delete_rule(daemon, caller, app, delete.id),
+        Method::SetRuleEnabled(set) => set_rule_enabled(daemon, caller, app, &set),
         Method::UpdateRule(update) => update_rule(daemon, caller, app, &update),
-        Method::AddFolder(add) => add_folder(daemon, app, &add),
-        Method::UpdateFolder(update) => update_folder(daemon, app, &update),
+        Method::AddFolder(add) => add_folder(daemon, caller, app, &add),
+        Method::UpdateFolder(update) => update_folder(daemon, caller, app, &update),
         Method::DeleteFolder(delete) => delete_folder(daemon, caller, app, delete),
         Method::ListChanges(list) => list_changes(daemon, &list),
-        Method::Undo(request) => undo(daemon, app, request),
+        Method::Undo(request) => undo(daemon, caller, app, request),
         Method::Explore(explore) => self::explore(daemon, &explore),
         Method::ListConnections(_) => list_connections(daemon),
         Method::KillConnection(kill) => kill_connection(daemon, &kill),
@@ -634,47 +653,100 @@ fn add_rule(daemon: &Daemon, caller: &Caller, app: &str, add: v1::AddRule) -> v1
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
     rule.id = 0;
-    let scope = match scope_of(daemon, rule.folder) {
-        Ok(scope) => scope,
-        Err(e) => return internal(e),
-    };
-    if allows_everything(rule.action, rule.conditions.iter().chain(&scope))
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!(
-                "add the rule \"{}\", which allows every program to connect anywhere",
-                rule.name
-            ),
-        )
-    {
-        return refused;
-    }
-    match change(daemon, app, |store, batch| store.put_rule(&rule, batch)) {
+    match change(daemon, Some(caller), app, |store, batch| {
+        store.put_rule(&rule, batch)
+    }) {
         Ok(id) => v1::response::Result::RuleAdded(v1::RuleAdded { id }),
         Err(e) => e,
     }
 }
 
-/// Runs `apply` as one batch of `app`'s changes, all stored or none, then reloads the rules.
+/// Runs `apply` as one batch of `app`'s changes, all stored or none, then reloads the rules. A change that loosens
+/// what is in force ([`crate::guard`]) is a dangerous action of `caller`'s (`None`: the daemon's own, decided
+/// already): it is rolled back, authorized, then made.
 fn change<T>(
     daemon: &Daemon,
+    caller: Option<&Caller>,
     app: &str,
-    apply: impl FnOnce(&Store, &Batch) -> Result<T, StoreError>,
+    apply: impl Fn(&Store, &Batch) -> Result<T, StoreError>,
 ) -> Result<T, v1::response::Result> {
-    let applied = {
-        let mut store = daemon.store();
-        store
-            .batch(app, now_ms())
-            .and_then(|batch| store.atomically(|store| apply(store, &batch)))
-    };
-    let value = applied.map_err(|e| match e {
-        StoreError::NotFound(what, id) => error(v1::ErrorCode::NotFound, format!("no {what} {id}")),
-        other => internal(other),
+    let value = guarded(daemon, caller, app, &apply).map_err(|e| match e {
+        Guard::Failed(e) => store_error(e),
+        Guard::Refused(refused) => refused,
     })?;
     daemon.reload_rules().map_err(internal)?;
     Ok(value)
+}
+
+fn store_error(error: StoreError) -> v1::response::Result {
+    match error {
+        StoreError::NotFound(what, id) => {
+            self::error(v1::ErrorCode::NotFound, format!("no {what} {id}"))
+        }
+        other => internal(other),
+    }
+}
+
+/// A guarded change that wasn't made.
+enum Guard<E> {
+    Failed(E),
+    /// Not authorized.
+    Refused(v1::response::Result),
+}
+
+/// One try at a guarded change.
+enum Attempt<E> {
+    Failed(E),
+    /// It would loosen this: rolled back.
+    Loosens(String),
+}
+
+impl<E: From<StoreError>> From<StoreError> for Attempt<E> {
+    fn from(error: StoreError) -> Self {
+        Self::Failed(error.into())
+    }
+}
+
+/// Runs `apply` in one transaction as a batch of `app`'s changes; when it loosens what is in force, rolls it back,
+/// asks `caller` to authorize what it loosens (audited, even when unchecked), and makes it again.
+fn guarded<T, E: From<StoreError>>(
+    daemon: &Daemon,
+    caller: Option<&Caller>,
+    app: &str,
+    apply: &dyn Fn(&Store, &Batch) -> Result<T, E>,
+) -> Result<T, Guard<E>> {
+    let config = &daemon.shared.config;
+    let attempt = |check: bool| -> Result<T, Attempt<E>> {
+        let mut store = daemon.store();
+        let batch = store.batch(app, now_ms())?;
+        store.atomically(|store| {
+            let before = if check {
+                Some(crate::guard::State::of(store, config)?)
+            } else {
+                None
+            };
+            let value = apply(store, &batch).map_err(Attempt::Failed)?;
+            if let Some(before) = before
+                && let Some(what) = before.loosened_by(&crate::guard::State::of(store, config)?)
+            {
+                return Err(Attempt::Loosens(what));
+            }
+            Ok(value)
+        })
+    };
+    let first = attempt(caller.is_some());
+    match (first, caller) {
+        (Ok(value), _) => Ok(value),
+        (Err(Attempt::Failed(e)), _) => Err(Guard::Failed(e)),
+        (Err(Attempt::Loosens(what)), Some(caller)) => {
+            step_up(daemon, caller, app, &what).map_err(Guard::Refused)?;
+            attempt(false).map_err(|e| match e {
+                Attempt::Failed(e) => Guard::Failed(e),
+                Attempt::Loosens(what) => Guard::Refused(internal(what)),
+            })
+        }
+        (Err(Attempt::Loosens(what)), None) => Err(Guard::Refused(internal(what))),
+    }
 }
 
 fn locked(id: u64) -> Option<v1::response::Result> {
@@ -686,11 +758,11 @@ fn done<T>(result: Result<T, v1::response::Result>) -> v1::response::Result {
     result.map_or_else(|e| e, |_| v1::response::Result::Done(v1::Done {}))
 }
 
-fn delete_rule(daemon: &Daemon, app: &str, id: u64) -> v1::response::Result {
+fn delete_rule(daemon: &Daemon, caller: &Caller, app: &str, id: u64) -> v1::response::Result {
     if let Some(refused) = locked(id) {
         return refused;
     }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         if store.remove_rule(id, batch)? {
             Ok(())
         } else {
@@ -699,11 +771,16 @@ fn delete_rule(daemon: &Daemon, app: &str, id: u64) -> v1::response::Result {
     }))
 }
 
-fn set_rule_enabled(daemon: &Daemon, app: &str, set: &v1::SetRuleEnabled) -> v1::response::Result {
+fn set_rule_enabled(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    set: &v1::SetRuleEnabled,
+) -> v1::response::Result {
     if let Some(refused) = locked(set.id) {
         return refused;
     }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         let mut rule = store
             .rule(set.id)?
             .ok_or(StoreError::NotFound("rule", set.id))?;
@@ -728,29 +805,17 @@ fn update_rule(
         Ok(rule) => rule,
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
-    let scope = match scope_of(daemon, rule.folder) {
-        Ok(scope) => scope,
-        Err(e) => return internal(e),
-    };
-    if allows_everything(rule.action, rule.conditions.iter().chain(&scope))
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!(
-                "change the rule \"{}\" to allow every program to connect anywhere",
-                rule.name
-            ),
-        )
-    {
-        return refused;
-    }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         store.put_rule(&rule, batch)
     }))
 }
 
-fn add_folder(daemon: &Daemon, app: &str, add: &v1::AddFolder) -> v1::response::Result {
+fn add_folder(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    add: &v1::AddFolder,
+) -> v1::response::Result {
     let Some(wire) = &add.folder else {
         return error(v1::ErrorCode::Invalid, "no folder");
     };
@@ -762,13 +827,20 @@ fn add_folder(daemon: &Daemon, app: &str, add: &v1::AddFolder) -> v1::response::
     if let Some(refused) = folder.parent.and_then(locked) {
         return refused;
     }
-    match change(daemon, app, |store, batch| store.put_folder(&folder, batch)) {
+    match change(daemon, Some(caller), app, |store, batch| {
+        store.put_folder(&folder, batch)
+    }) {
         Ok(id) => v1::response::Result::FolderAdded(v1::FolderAdded { id }),
         Err(e) => e,
     }
 }
 
-fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::response::Result {
+fn update_folder(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    update: &v1::UpdateFolder,
+) -> v1::response::Result {
     let Some(wire) = &update.folder else {
         return error(v1::ErrorCode::Invalid, "no folder");
     };
@@ -794,13 +866,10 @@ fn update_folder(daemon: &Daemon, app: &str, update: &v1::UpdateFolder) -> v1::r
             None => break,
         }
     }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         store.put_folder(&folder, batch)
     }))
 }
-
-/// Deleting more rules than this at once is a dangerous action.
-const DANGEROUS_DELETE: usize = 20;
 
 fn list_alerts(daemon: &Daemon, list: &v1::ListAlerts) -> v1::response::Result {
     let before = if list.before == 0 {
@@ -1174,30 +1243,18 @@ fn set_policy(
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
     let config = &daemon.shared.config;
-    let before = crate::policy::Effective::of(config, &before_overrides);
-    let after = crate::policy::Effective::of(config, &overrides);
-    if before.loosened_by(&after)
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!(
-                "change the policy so that blocked connections get through ({})",
-                crate::policy::describe(&before, &after)
-            ),
-        )
-    {
-        return refused;
-    }
-    let what = crate::policy::describe(&before, &after);
-    let stored = {
-        let mut store = daemon.store();
-        store
-            .batch(app, now_ms())
-            .and_then(|batch| store.atomically(|store| store.put_policy(&overrides, &what, &batch)))
-    };
-    if let Err(e) = stored {
-        return internal(e);
+    let what = crate::policy::describe(
+        &crate::policy::Effective::of(config, &before_overrides),
+        &crate::policy::Effective::of(config, &overrides),
+    );
+    // Loosening it, or keeping less history, is a dangerous action ([`crate::guard`]).
+    let stored = guarded(daemon, Some(caller), app, &|store, batch| {
+        store.put_policy(&overrides, &what, batch)
+    });
+    match stored {
+        Ok(()) => {}
+        Err(Guard::Refused(refused)) => return refused,
+        Err(Guard::Failed(e)) => return internal(e),
     }
     match daemon.reload_policy() {
         Ok(effective) => {
@@ -1244,54 +1301,6 @@ fn lint_rules(daemon: &Daemon, lint: v1::LintRules) -> v1::response::Result {
     })
 }
 
-/// The dangerous actions among bulk edits: many deletions at once, or allowing everything.
-fn edit_rules_step_up(
-    daemon: &Daemon,
-    caller: &Caller,
-    app: &str,
-    edit: &v1::EditRules,
-    action: Option<Action>,
-) -> Result<(), v1::response::Result> {
-    use v1::edit_rules::Edit;
-    if matches!(edit.edit, Some(Edit::Delete(true)))
-        && edit.ids.len() > DANGEROUS_DELETE
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!("delete {} rules", edit.ids.len()),
-        )
-    {
-        return Err(refused);
-    }
-    if let Some(action) = action {
-        let mut everything = false;
-        for id in &edit.ids {
-            let rule = match daemon.store().rule(*id) {
-                Ok(Some(rule)) => rule,
-                Ok(None) => return Err(error(v1::ErrorCode::NotFound, format!("no rule {id}"))),
-                Err(e) => return Err(internal(e)),
-            };
-            let scope = match scope_of(daemon, rule.folder) {
-                Ok(scope) => scope,
-                Err(e) => return Err(internal(e)),
-            };
-            everything |= allows_everything(action, rule.conditions.iter().chain(&scope));
-        }
-        if everything
-            && let Err(refused) = step_up(
-                daemon,
-                caller,
-                app,
-                "change rules to allow every program to connect anywhere",
-            )
-        {
-            return Err(refused);
-        }
-    }
-    Ok(())
-}
-
 fn edit_rules(
     daemon: &Daemon,
     caller: &Caller,
@@ -1332,9 +1341,6 @@ fn edit_rules(
         },
         _ => None,
     };
-    if let Err(refused) = edit_rules_step_up(daemon, caller, app, edit, action) {
-        return refused;
-    }
     if let Edit::Move(v1::MoveRules {
         folder: Some(folder),
     }) = change_wanted
@@ -1342,7 +1348,7 @@ fn edit_rules(
     {
         return refused;
     }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         for id in &edit.ids {
             if matches!(change_wanted, Edit::Delete(true)) {
                 if !store.remove_rule(*id, batch)? {
@@ -1381,44 +1387,7 @@ fn delete_folder(
     if let Some(refused) = locked(id) {
         return refused;
     }
-    // The rules it holds, below it included.
-    let count = {
-        let store = daemon.store();
-        let folders = match store.folders() {
-            Ok(folders) => folders,
-            Err(e) => return internal(e),
-        };
-        let mut inside = vec![id];
-        let mut index = 0;
-        while let Some(&folder) = inside.get(index) {
-            inside.extend(
-                folders
-                    .iter()
-                    .filter(|f| f.parent == Some(folder))
-                    .map(|f| f.id),
-            );
-            index += 1;
-        }
-        let mut count = 0;
-        for folder in inside {
-            match store.rules_in(folder) {
-                Ok(rules) => count += rules.len(),
-                Err(e) => return internal(e),
-            }
-        }
-        count
-    };
-    if count > DANGEROUS_DELETE
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!("delete a folder of {count} rules"),
-        )
-    {
-        return refused;
-    }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         store
             .remove_folder(id, batch)?
             .ok_or(StoreError::NotFound("folder", id))
@@ -1448,19 +1417,21 @@ fn list_changes(daemon: &Daemon, list: &v1::ListChanges) -> v1::response::Result
     }
 }
 
-fn undo(daemon: &Daemon, app: &str, undo: v1::Undo) -> v1::response::Result {
-    let undone = {
-        let mut store = daemon.store();
-        store
-            .batch(app, now_ms())
-            .map_err(UndoError::Store)
-            .and_then(|batch| store.undo(undo.change, &batch))
-    };
+fn undo(daemon: &Daemon, caller: &Caller, app: &str, undo: v1::Undo) -> v1::response::Result {
+    // Undoing can loosen as much as any change: a rule put back, a stricter policy taken back.
+    let undone = guarded(daemon, Some(caller), app, &|store, batch| {
+        store.undo_within(undo.change, batch)
+    });
     match undone {
         Ok(_) => reload(daemon),
-        Err(UndoError::NotFound(id)) => error(v1::ErrorCode::NotFound, format!("no change {id}")),
-        Err(e @ UndoError::Changed(_)) => error(v1::ErrorCode::Invalid, e.to_string()),
-        Err(UndoError::Store(e)) => internal(e),
+        Err(Guard::Refused(refused)) => refused,
+        Err(Guard::Failed(UndoError::NotFound(id))) => {
+            error(v1::ErrorCode::NotFound, format!("no change {id}"))
+        }
+        Err(Guard::Failed(e @ UndoError::Changed(_))) => {
+            error(v1::ErrorCode::Invalid, e.to_string())
+        }
+        Err(Guard::Failed(UndoError::Store(e))) => internal(e),
     }
 }
 
@@ -1518,12 +1489,13 @@ fn answer_prompt(
             Ok(conditions) => conditions,
             Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
         };
-        if allows_everything(action, &conditions)
+        if allows_broadly(action, &conditions)
             && let Err(refused) = step_up(
                 daemon,
                 caller,
                 app,
-                "answer a prompt with a rule that allows every program to connect anywhere",
+                "answer a prompt with a rule that allows programs to connect broadly (naming no particular program \
+                 or destination)",
             )
         {
             return refused;
@@ -1690,36 +1662,19 @@ fn import_rules(
         Ok(rules) => rules,
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
-    let everything = rules
-        .iter()
-        .filter(|rule| {
-            rule.enabled && allows_everything(rule.action, rule.conditions.iter().chain(&scope))
-        })
-        .count();
-    if everything > 0
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!(
-                "import {everything} rule(s) into \"{name}\" that allow every program to connect anywhere"
-            ),
-        )
-    {
-        return refused;
-    }
-    done(change(daemon, app, |store, batch| {
+    done(change(daemon, Some(caller), app, |store, batch| {
         let folder = store.put_folder(
             &snitchhiker_core::rule::Folder {
                 id: 0,
                 parent: None,
-                name,
+                name: name.clone(),
                 enabled: true,
-                scope,
+                scope: scope.clone(),
             },
             batch,
         )?;
-        rules.into_iter().try_for_each(|mut rule| {
+        rules.iter().try_for_each(|rule| {
+            let mut rule = rule.clone();
             rule.folder = Some(folder);
             store.put_rule(&rule, batch).map(|_| ())
         })
@@ -1762,27 +1717,6 @@ pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
             .as_deref()
             .map(|key| Box::new(convert::container_from_key(key))),
     }
-}
-
-/// The conditions the folder `folder` and those above it add to their rules.
-fn scope_of(daemon: &Daemon, folder: Option<u64>) -> Result<Vec<Condition>, crate::store::Error> {
-    let Some(mut next) = folder else {
-        return Ok(Vec::new());
-    };
-    let folders = daemon.store().folders()?;
-    let mut scope = Vec::new();
-    // A cycle can't be stored, but the walk is bounded anyway.
-    for _ in 0..folders.len() {
-        let Some(folder) = folders.iter().find(|f| f.id == next) else {
-            break;
-        };
-        scope.extend(folder.scope.iter().cloned());
-        match folder.parent {
-            Some(parent) => next = parent,
-            None => break,
-        }
-    }
-    Ok(scope)
 }
 
 /// A dangerous action asked for by `caller`: goes ahead when root asks, when step-up is off, or when polkit authorizes
@@ -2155,6 +2089,11 @@ fn agents(
 }
 
 /// The requests about remote devices: pairing, the devices, and their actions waiting for approval.
+/// Whether `caller` is the paired device `id`.
+fn is_itself(caller: &Caller, id: &str) -> bool {
+    caller.device.as_ref().is_some_and(|(_, key)| key == id)
+}
+
 fn devices(
     daemon: &Arc<Daemon>,
     caller: &Caller,
@@ -2165,12 +2104,37 @@ fn devices(
     match method {
         Method::StartPairing(start) => start_pairing(daemon, caller, app, &start),
         Method::ListDevices(_) => crate::remote::list_devices(daemon),
-        Method::RemoveDevice(remove) => crate::remote::remove_device(daemon, &remove.id),
+        // Unpairing the phone that would be told, or muting it, takes away what watches the node; a device doing it to
+        // itself only stops listening.
+        Method::RemoveDevice(remove) => {
+            if !is_itself(caller, &remove.id)
+                && let Err(refused) = step_up(
+                    daemon,
+                    caller,
+                    app,
+                    &format!("unpair the device {}", remove.id),
+                )
+            {
+                return refused;
+            }
+            crate::remote::remove_device(daemon, &remove.id)
+        }
         Method::ListApprovals(_) => v1::response::Result::Approvals(v1::ApprovalList {
             approvals: daemon.approvals.list(),
         }),
         Method::DecideApproval(decide) => decide_approval(daemon, caller, app, decide),
         Method::SetDeviceMuted(set) => {
+            if set.muted
+                && !is_itself(caller, &set.id)
+                && let Err(refused) = step_up(
+                    daemon,
+                    caller,
+                    app,
+                    &format!("mute the device {}: it would no longer be told", set.id),
+                )
+            {
+                return refused;
+            }
             let muted = daemon.store().mute_device(&set.id, set.muted);
             match muted {
                 Ok(true) => {
@@ -2876,7 +2840,8 @@ fn approve(
     {
         return refused;
     }
-    let made = change(daemon, app, |store, batch| {
+    // Its risks were authorized above.
+    let made = change(daemon, None, app, |store, batch| {
         let folder = crate::agents::folder(store, batch, &provenance)?;
         let mut ids = Vec::new();
         for (_, shaped) in &chosen {

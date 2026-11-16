@@ -103,7 +103,7 @@ const MAX_PORTS: usize = 16;
 const MAX_TEXT: usize = 253;
 
 /// Whether `suffix` (`com`, `co.uk`) is a public suffix: anything under it is someone else's.
-fn public_suffix(suffix: &str) -> bool {
+pub(crate) fn public_suffix(suffix: &str) -> bool {
     psl::suffix_str(suffix).is_some_and(|s| s.eq_ignore_ascii_case(suffix))
 }
 

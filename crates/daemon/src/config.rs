@@ -74,6 +74,9 @@ pub struct Config {
     pub trusted_clients: Vec<PathBuf>,
     /// What confirms dangerous actions asked for by clients.
     pub step_up: StepUp,
+    /// The local users who administer the node through the desktop app: members of these groups (those who may
+    /// become root, usually). Other users' apps see the node and its history, and change nothing.
+    pub admin_groups: Vec<String>,
     pub fail: Fail,
     /// NFQUEUE queues, one deciding thread each.
     pub queues: u16,
@@ -148,6 +151,7 @@ impl Default for Config {
             client_group: "snitchhiker-ui".to_owned(),
             trusted_clients: Vec::new(),
             step_up: StepUp::Polkit,
+            admin_groups: ["wheel", "sudo", "admin"].map(str::to_owned).to_vec(),
             fail: Fail::Closed,
             queues: 4,
             queue: 0,

@@ -136,6 +136,11 @@ const SCENARIOS: &[Scenario] = &[
         "step-up/allow-everything-needs-authorization",
         stepup::allow_everything_needs_authorization,
     ),
+    ("stepup/no-way-around-it", stepup::no_way_around_step_up),
+    (
+        "stepup/other-local-users-are-viewers",
+        stepup::other_local_users_are_viewers,
+    ),
     (
         "agents/a-proposal-is-approved-for-the-session",
         agents::a_proposal_is_approved_for_the_session,
@@ -412,6 +417,11 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--request"), Some(socket), Some(step)) =
+        (args.get(1).map(String::as_str), args.get(2), args.get(3))
+    {
+        return stepup::request(socket, step, args.get(4).map(String::as_str));
     }
     if let (Some("--remote-device"), Some(link)) = (args.get(1).map(String::as_str), args.get(2)) {
         return remote::device(link);

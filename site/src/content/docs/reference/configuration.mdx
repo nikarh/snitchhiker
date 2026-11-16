@@ -111,9 +111,13 @@ Client binaries allowed on the client socket by path alone. Default none. Each m
 
 Clients are better registered with [`snitchhikerd trust-client`](/reference/cli/#trusted-clients), which also pins each to its SHA-256: packages register their client that way. The registry is `trusted-clients.toml` in the database's directory.
 
+### `admin_groups`
+
+The local users who administer the node through the desktop app: members of these groups. Default `["wheel", "sudo", "admin"]`, the groups whose members may become root on most distributions. Other users' apps can see the node and its history and change nothing ([Security](/internals/security/#who-administers-the-node)). Root, on the admin socket, always administers it.
+
 ### `step_up`
 
-What confirms a dangerous action a client asks for, such as a rule that allows every program to connect anywhere ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
+What confirms a dangerous action a client asks for, such as a rule that allows programs to connect broadly ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
 
 ## Remote devices
 

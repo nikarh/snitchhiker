@@ -36,13 +36,17 @@ set -euo pipefail
 # The daemon of this tree too, over the packaged one (the rest of the package stays).
 install -m 755 /tmp/snitchhikerd-ui /usr/bin/snitchhikerd
 install -o root -g snitchhiker-ui -m 2755 /tmp/snitchhiker-ui /usr/bin/snitchhiker-ui
-install -d -o root -g snitchhiker-ui -m 0770 /var/cache/snitchhiker-ui
-install -d -o root -g snitchhiker-ui -m 0770 /var/lib/snitchhiker-ui
+install -d -o root -g snitchhiker-ui -m 1770 /var/cache/snitchhiker-ui
+install -d -o root -g snitchhiker-ui -m 1770 /var/lib/snitchhiker-ui
 # Every run starts with this machine's node alone (a remote node added by an earlier run would add the node column).
 rm -f /var/lib/snitchhiker-ui/*/nodes.toml
 snitchhikerd trust-client /usr/bin/snitchhiker-ui >/dev/null
 cp /etc/snitchhiker/daemon.toml /tmp/daemon.toml.packaged
 if [ -n '${config}' ]; then printf '%s\n' '${config}' > /etc/snitchhiker/daemon.toml; fi
+# The test user administers the node from the app: a group of its own for that, which grants nothing else.
+groupadd -f e2e-admins
+usermod -aG e2e-admins mallory
+grep -q '^admin_groups' /etc/snitchhiker/daemon.toml || printf 'admin_groups = ["e2e-admins"]\n' >> /etc/snitchhiker/daemon.toml
 systemctl restart snitchhikerd
 # Before the app starts (SNITCHHIKER_UI_BEFORE): history seeded into the node, rules made, for the app to load.
 ${SNITCHHIKER_UI_BEFORE:-}

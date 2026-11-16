@@ -37,11 +37,14 @@ impl Running {
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let config = format!("{dir}/daemon.toml");
         // The scenarios probe 127.0.0.1, which the System folder allows: it is off unless a scenario says otherwise.
-        let defaults = if settings.contains("default_rules") {
-            ""
-        } else {
-            "default_rules = false\n"
-        };
+        let mut defaults = String::new();
+        if !settings.contains("default_rules") {
+            defaults.push_str("default_rules = false\n");
+        }
+        // The test user's clients administer it, unless a scenario says who does.
+        if !settings.contains("admin_groups") {
+            defaults.push_str("admin_groups = [\"e2e-admins\"]\n");
+        }
         std::fs::write(
             &config,
             format!(

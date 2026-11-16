@@ -89,7 +89,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
 | `Unsubscribe` | `Done` | |
 
-A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`. A dangerous request (a rule that allows every program to connect anywhere) from a client needs polkit's authorization of the client's process, which the node asks for while the request waits; without it the answer is `ERROR_CODE_NOT_AUTHORIZED` ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)).
+A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`. A dangerous request (a rule that allows programs to connect broadly, for one) from a client needs polkit's authorization of the client's process, which the node asks for while the request waits; without it the answer is `ERROR_CODE_NOT_AUTHORIZED` ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)).
 
 Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 

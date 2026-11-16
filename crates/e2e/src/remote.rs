@@ -378,7 +378,7 @@ pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
     let audit = daemon.cli(&["audit"])?;
     let found = format!("{listed}\noutcomes: {outcomes:?}\n{audit}");
     check(
-        listed.contains("phone") && listed.contains("allows every program to connect anywhere"),
+        listed.contains("phone") && listed.contains("allow programs to connect broadly"),
         "the request didn't say which device asked for what",
         &found,
     )?;

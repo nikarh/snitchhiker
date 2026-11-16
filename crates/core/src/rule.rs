@@ -158,34 +158,94 @@ pub fn implied_context(condition: &Condition) -> Option<ContextKind> {
     }
 }
 
-/// Whether a rule with these conditions (its own, and its folders' scopes) allows every program to reach anywhere: an
-/// allow rule that names no program and no destination. Asking for one is a dangerous action.
-pub fn allows_everything<'a>(
+/// Whether a rule with these conditions (its own, and its folders' scopes) allows broadly: an allow rule that names no
+/// particular program and no particular destination. Asking for one is a dangerous action. This is a class of rules, not
+/// a measure of how much one matches: a rule allowing everything split into several (`/u*` and `/[^u]*`) is several
+/// broad rules, each needing the same authorization.
+///
+/// - A particular program: patterns of executables, ancestors, command lines, app identities, containers, VMs or
+///   namespaces that each match finitely many values ([`crate::pattern::finite`]: exact, a glob without `*`, a regular
+///   expression without unbounded repetition), container or VM ids, or binary hashes.
+/// - A particular destination: host names (or regular expressions matching finitely many), or `*.` and a name that
+///   isn't a public suffix (`*.example.com`, not `*.co.uk`); networks no wider than a /24 (IPv4) or /48 (IPv6), aliases by their networks; blocklists.
+///
+/// Ports, protocols, users, contexts and negated conditions narrow nothing here.
+pub fn allows_broadly<'a>(
     action: Action,
     conditions: impl IntoIterator<Item = &'a Condition>,
 ) -> bool {
-    action == Action::Allow
-        && !conditions.into_iter().any(|condition| {
-            matches!(
-                condition,
-                Condition::Exe(_)
-                    | Condition::App(_)
-                    | Condition::Cmdline(_)
-                    | Condition::Parent(_)
-                    | Condition::Host(_)
-                    | Condition::Net(_)
-                    | Condition::ContainerName(_)
-                    | Condition::ContainerImage(_)
-                    | Condition::ContainerCompose(_)
-                    | Condition::ContainerLabel(_)
-                    | Condition::ContainerId(_)
-                    | Condition::VmName(_)
-                    | Condition::VmUuid(_)
-                    | Condition::NetnsName(_)
-                    | Condition::List(_)
-                    | Condition::Sha256(_)
-            )
-        })
+    action == Action::Allow && !conditions.into_iter().any(names_a_particular_thing)
+}
+
+/// Whether a condition names a particular program or destination (see [`allows_broadly`]).
+fn names_a_particular_thing(condition: &Condition) -> bool {
+    fn exact(patterns: &[PatternSource]) -> bool {
+        !patterns.is_empty() && patterns.iter().all(crate::pattern::finite)
+    }
+    fn narrow(net: &ipnet::IpNet) -> bool {
+        match net {
+            ipnet::IpNet::V4(net) => net.prefix_len() >= 24,
+            ipnet::IpNet::V6(net) => net.prefix_len() >= 48,
+        }
+    }
+    match condition {
+        Condition::Exe(patterns)
+        | Condition::App(patterns)
+        | Condition::Cmdline(patterns)
+        | Condition::Parent(patterns)
+        | Condition::ContainerName(patterns)
+        | Condition::ContainerImage(patterns)
+        | Condition::ContainerCompose(patterns)
+        | Condition::VmName(patterns)
+        | Condition::NetnsName(patterns) => exact(patterns),
+        Condition::ContainerLabel(labels) => {
+            !labels.is_empty()
+                && labels
+                    .iter()
+                    .all(|(_, value)| exact(std::slice::from_ref(value)))
+        }
+        Condition::ContainerId(ids) | Condition::VmUuid(ids) | Condition::Sha256(ids) => {
+            !ids.is_empty()
+        }
+        Condition::List(lists) => !lists.is_empty(),
+        Condition::Host(hosts) => {
+            !hosts.is_empty()
+                && hosts.iter().all(|host| match host {
+                    HostPattern::Exact(_) => true,
+                    HostPattern::Subdomains(suffix) => {
+                        !crate::proposal::public_suffix(suffix.trim_start_matches('.'))
+                    }
+                    HostPattern::Regex(regex) => {
+                        crate::pattern::finite(&PatternSource::Regex(regex.clone()))
+                    }
+                })
+        }
+        Condition::Net(networks) => {
+            !networks.is_empty()
+                && networks.iter().all(|network| match network {
+                    Network::Net(net) => narrow(net),
+                    Network::Alias(index) => {
+                        crate::destination::ALIASES
+                            .get(*index)
+                            .is_some_and(|(_, nets)| {
+                                nets.iter().all(|net| {
+                                    net.parse::<ipnet::IpNet>().is_ok_and(|net| narrow(&net))
+                                })
+                            })
+                    }
+                })
+        }
+        Condition::Uid(_)
+        | Condition::Port(_)
+        | Condition::Protocol(_)
+        | Condition::Context(_)
+        | Condition::Session(_)
+        | Condition::ContainerRuntime(_)
+        | Condition::ContainerOwner(_)
+        | Condition::VmHypervisor(_)
+        | Condition::Writable(_)
+        | Condition::Not(_) => false,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -226,13 +286,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn allow_rules_without_program_or_destination_allow_everything() {
+    fn allow_rules_naming_no_particular_program_or_destination_are_broad() {
+        let exe = |p: PatternSource| Condition::Exe(vec![p]);
         let port = Condition::Port(vec![(443, 443)]);
-        let exe = Condition::Exe(vec![PatternSource::Exact("/usr/bin/curl".to_owned())]);
+        let curl = exe(PatternSource::Exact("/usr/bin/curl".to_owned()));
         let not_host = Condition::Not(Box::new(Condition::Host(vec![])));
-        assert!(allows_everything(Action::Allow, [&port]));
-        assert!(allows_everything(Action::Allow, [&port, &not_host]));
-        assert!(!allows_everything(Action::Allow, [&port, &exe]));
-        assert!(!allows_everything(Action::Deny, [&port]));
+        assert!(allows_broadly(Action::Allow, [&port]));
+        assert!(allows_broadly(Action::Allow, [&port, &not_host]));
+        assert!(!allows_broadly(Action::Allow, [&port, &curl]));
+        assert!(!allows_broadly(Action::Deny, [&port]));
+        // Wildcards name no particular program; a glob without any does.
+        for broad in [
+            exe(PatternSource::Glob("/**".to_owned())),
+            exe(PatternSource::Glob("/usr/lib/systemd/**".to_owned())),
+            exe(PatternSource::Regex(".*".to_owned())),
+        ] {
+            assert!(allows_broadly(Action::Allow, [&broad]), "{broad:?}");
+        }
+        let any_case = exe(PatternSource::Regex("(?i)/usr/bin/curl".to_owned()));
+        assert!(!allows_broadly(Action::Allow, [&any_case]));
+        let cargo = exe(PatternSource::Glob("{home}/.cargo/bin/cargo".to_owned()));
+        assert!(!allows_broadly(Action::Allow, [&cargo]));
+        // Destinations.
+        let host = |h: &str| Condition::Host(vec![HostPattern::try_from(h.to_owned()).unwrap()]);
+        let net = |n: &str| Condition::Net(vec![Network::try_from(n.to_owned()).unwrap()]);
+        for particular in [
+            host("example.org"),
+            host("*.crates.io"),
+            net("198.51.100.0/24"),
+            net("2001:db8::/48"),
+            net("imds"),
+            Condition::List(vec!["ads".to_owned()]),
+        ] {
+            assert!(
+                !allows_broadly(Action::Allow, [&particular]),
+                "{particular:?}"
+            );
+        }
+        for broad in [
+            host("re:.*"),
+            host("*.co.uk"),
+            net("0.0.0.0/0"),
+            net("10.0.0.0/8"),
+            net("lan"),
+            Condition::Net(vec![
+                Network::try_from("198.51.100.0/24".to_owned()).unwrap(),
+                Network::try_from("::/0".to_owned()).unwrap(),
+            ]),
+        ] {
+            assert!(allows_broadly(Action::Allow, [&broad]), "{broad:?}");
+        }
     }
 }

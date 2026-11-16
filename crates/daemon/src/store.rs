@@ -1238,6 +1238,11 @@ impl Store {
     /// Undoes the batch of change `change`, newest first, as a new batch: every object it touched must still be as
     /// the batch left it. Returns how many changes were undone.
     pub fn undo(&mut self, change: u64, batch: &Batch) -> Result<usize, UndoError> {
+        self.atomically(|store| store.undo_within(change, batch))
+    }
+
+    /// [`Self::undo`], within a transaction the caller holds.
+    pub fn undo_within(&self, change: u64, batch: &Batch) -> Result<usize, UndoError> {
         let of: Option<i64> = self
             .connection
             .prepare_cached(sql("changes.batch_of").map_err(UndoError::Store)?)
@@ -1271,14 +1276,9 @@ impl Store {
                 )));
             }
         }
-        let transaction = self
-            .connection
-            .unchecked_transaction()
-            .map_err(Error::from)?;
         for change in changes.iter().rev() {
             self.restore(change, batch)?;
         }
-        transaction.commit().map_err(Error::from)?;
         Ok(changes.len())
     }
 
