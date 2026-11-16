@@ -251,6 +251,8 @@ pub struct Model {
     pub connections: Vec<v1::LiveConnection>,
     /// The last explanation the node sent.
     pub explanation: Option<v1::Explanation>,
+    /// OpenSnitch's files, as the node last sent them (for importing).
+    pub opensnitch: Option<v1::OpenSnitchFiles>,
     /// The last lint report.
     pub lint: Option<v1::LintReport>,
     pub policy: Option<v1::NodePolicy>,
@@ -347,6 +349,9 @@ impl Model {
             }
             Update::Explanation(explanation) => {
                 self.explanation = Some(*explanation);
+            }
+            Update::OpenSnitch(files) => {
+                self.opensnitch = Some(files);
             }
             Update::Blocklists(lists) => {
                 self.blocklists = Some(lists);
@@ -509,7 +514,8 @@ impl Model {
             | Update::Lint(_)
             | Update::Blocklists(_)
             | Update::Envelopes(_)
-            | Update::Explanation(_)) => self.apply_settings(update),
+            | Update::Explanation(_)
+            | Update::OpenSnitch(_)) => self.apply_settings(update),
             update @ (Update::Proposals(_)
             | Update::Proposal(_)
             | Update::Devices(_)

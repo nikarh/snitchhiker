@@ -141,6 +141,8 @@ printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"all
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
 # A system firewall too, which converts in part (the layout of the dialog depends on it).
 printf "%s" "{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"nat_output\", \"Family\": \"inet\", \"Type\": \"natdest\", \"Hook\": \"output\", \"Policy\": \"accept\", \"Rules\": [{\"Enabled\": true, \"Description\": \"redirect\", \"Target\": \"redirect\"}]}]}]}" > /etc/opensnitchd/system-fw.json
+# Root-only, as OpenSnitch keeps them: the app (running as the user) gets them from the node.
+chmod 600 /etc/opensnitchd/rules/*.json /etc/opensnitchd/system-fw.json
 page rules
 sleep 1
 click 941 48

@@ -14,7 +14,7 @@ sudo snitchhiker rules import-opensnitch                               # then im
 
 The rules go in a folder named `OpenSnitch`, where they can be reviewed, moved and edited like any other.
 
-In the desktop app, **Import…** on the Rules page reads the same files and shows what would convert and what wouldn't (with the reason) before anything changes. It also reads OpenSnitch's system firewall, below.
+In the desktop app, **Import…** on the Rules page has the node read the same files (they are root's; the node reads only OpenSnitch's own locations, for administrators) and shows what would convert and what wouldn't (with the reason) before anything changes. It also reads OpenSnitch's system firewall, below.
 
 ## The system firewall
 

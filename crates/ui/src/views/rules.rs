@@ -1034,6 +1034,20 @@ fn new_folder(
     });
 }
 
+impl RulesPage {
+    /// Import from OpenSnitch, with a preview.
+    fn import_button(&self) -> Button {
+        let (requests, model) = (self.requests.clone(), self.model.clone());
+        Button::new("import")
+            .small()
+            .label("Import…")
+            .tooltip("OpenSnitch's rules and system firewall, with a preview")
+            .on_click(move |_, window, cx| {
+                crate::views::import::open(&model, requests.clone(), window, cx);
+            })
+    }
+}
+
 impl Render for RulesPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let hints = crate::views::query::hints(
@@ -1074,16 +1088,7 @@ impl Render for RulesPage {
                                     }),
                             )
                             .child(div().flex_1().child(Input::new(&self.search).cleanable(true)))
-                            .child({
-                                let requests = self.requests.clone();
-                                Button::new("import")
-                                    .small()
-                                    .label("Import…")
-                                    .tooltip("OpenSnitch's rules and system firewall, with a preview")
-                                    .on_click(move |_, window, cx| {
-                                        crate::views::import::open(requests.clone(), window, cx);
-                                    })
-                            })
+                            .child(self.import_button())
                             .child({
                                 let model = self.model.clone();
                                 Button::new("rules-csv")

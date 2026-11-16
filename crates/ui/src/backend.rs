@@ -53,6 +53,8 @@ pub enum Request {
     ExploreBefore(v1::Explore),
     Connections,
     Kill(v1::KillConnection),
+    /// OpenSnitch's files on the node, to import.
+    ReadOpenSnitch,
     /// Why event `seq` is decided as it is.
     Explain {
         seq: i64,
@@ -141,6 +143,8 @@ pub enum Update {
     Connections(Vec<v1::LiveConnection>),
     /// Why an event is decided as it is.
     Explanation(Box<v1::Explanation>),
+    /// OpenSnitch's files, read by the node.
+    OpenSnitch(v1::OpenSnitchFiles),
     Lint(v1::LintReport),
     Policy(v1::NodePolicy),
     SystemFirewall(v1::SystemFirewall),
@@ -422,6 +426,7 @@ fn method(request: &Request) -> v1::request::Method {
         Request::Connections => Method::ListConnections(v1::ListConnections {}),
         Request::Kill(kill) => Method::KillConnection(kill.clone()),
         Request::Explain { seq } => Method::Explain(v1::Explain { seq: *seq }),
+        Request::ReadOpenSnitch => Method::ReadOpenSnitch(v1::ReadOpenSnitch {}),
         Request::EditRules(edit) => Method::EditRules(edit.clone()),
         Request::AddFolder(folder) => Method::AddFolder(v1::AddFolder {
             folder: Some(folder.clone()),
@@ -486,6 +491,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Explored(page) => Some(Update::Explored(page.rows)),
         R::Connections(list) => Some(Update::Connections(list.connections)),
         R::Explanation(explanation) => Some(Update::Explanation(explanation)),
+        R::OpenSnitchFiles(files) => Some(Update::OpenSnitch(files)),
         R::LintReport(report) => Some(Update::Lint(report)),
         R::Policy(policy) => Some(Update::Policy(policy)),
         R::SystemFirewall(firewall) => Some(Update::SystemFirewall(firewall)),

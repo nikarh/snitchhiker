@@ -108,6 +108,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `SetPushTarget` | `Done` | Where the calling device is woken (its push endpoint) |
 | `ListBlocklists`, `PutBlocklist`, `DeleteBlocklist`, `RefreshBlocklist` | `Blocklists` | The [blocklists](/guides/blocklists/), after the change |
 | `ListEnvelopes`, `PutEnvelope`, `DeleteEnvelope` | `Envelopes` | Agents' pre-authorized envelopes, after the change |
+| `ReadOpenSnitch` | `OpenSnitchFiles` | OpenSnitch's rule files and `system-fw.json`, read by the node from OpenSnitch's own locations (they are root's), for a client to convert and import |
 | `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
 | `Unsubscribe` | `Done` | |
 

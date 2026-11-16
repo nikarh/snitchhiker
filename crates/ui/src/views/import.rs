@@ -1,22 +1,22 @@
 //! Importing from OpenSnitch, with a preview: its rules (into a folder `OpenSnitch`) and its system firewall
 //! (`system-fw.json`), each converted where it can be exactly, and what can't listed with the reason. Nothing is
-//! changed until Import.
+//! changed until Import. OpenSnitch's files are root's: the node reads them (`ReadOpenSnitch`), from OpenSnitch's own
+//! locations only.
 
-use std::path::Path;
 use std::sync::mpsc;
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, InteractiveElement as _, IntoElement,
+    AnyElement, App, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use snitchhiker_core::{opensnitch, system};
+use snitchhiker_proto::v1;
 
 use crate::backend::Request;
+use crate::model::Model;
 
-const RULES_DIR: &str = "/etc/opensnitchd/rules";
-const SYSTEM_FW: &str = "/etc/opensnitchd/system-fw.json";
 const FOLDER: &str = "OpenSnitch";
 
 /// What reading OpenSnitch's files gave.
@@ -30,55 +30,57 @@ pub struct Preview {
     firewall_error: Option<String>,
     import_rules: bool,
     replace_firewall: bool,
-}
-
-/// OpenSnitch's rule files in `dir`: (file name, JSON), sorted.
-fn rule_files(dir: &Path) -> Result<Vec<(String, String)>, String> {
-    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut files = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e == "json") {
-            let text =
-                std::fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-            files.push((path.display().to_string(), text));
-        }
-    }
-    files.sort();
-    Ok(files)
+    /// Waiting for the node to send the files.
+    loading: bool,
 }
 
 impl Preview {
-    /// Reads and converts OpenSnitch's files from `rules_dir` and `system_fw`.
-    #[must_use]
-    pub fn read(rules_dir: &Path, system_fw: &Path) -> Self {
-        // Paths the user chose: read as the user alone.
-        crate::userfs::as_user(|| Self::read_as_user(rules_dir, system_fw))
+    /// Before the node has sent the files.
+    fn loading() -> Self {
+        Self {
+            rules: Err(String::new()),
+            rules_skipped: Vec::new(),
+            firewall: None,
+            firewall_skipped: Vec::new(),
+            firewall_notes: Vec::new(),
+            firewall_error: None,
+            import_rules: false,
+            replace_firewall: false,
+            loading: true,
+        }
     }
 
-    fn read_as_user(rules_dir: &Path, system_fw: &Path) -> Self {
+    /// Converts OpenSnitch's files, as the node sent them.
+    #[must_use]
+    pub fn from_files(files: &v1::OpenSnitchFiles) -> Self {
         let mut rules_skipped = Vec::new();
-        let rules = rule_files(rules_dir).and_then(|files| {
+        let rules = if files.rules_error.is_empty() {
+            let files: Vec<(String, String)> = files
+                .rules
+                .iter()
+                .map(|f| (f.name.clone(), f.json.clone()))
+                .collect();
             let imported = opensnitch::import(&files, FOLDER);
             rules_skipped = imported.skipped;
             let names: Vec<String> = imported.file.rule.iter().map(|r| r.name.clone()).collect();
             toml::to_string(&imported.file)
                 .map(|text| (text, names))
                 .map_err(|e| e.to_string())
-        });
-        let (firewall, firewall_skipped, firewall_notes, firewall_error) =
-            match std::fs::read_to_string(system_fw) {
-                Ok(json) => {
-                    let imported = system::import_opensnitch(&json);
-                    (imported.firewall, imported.skipped, imported.notes, None)
-                }
-                Err(e) => (
-                    None,
-                    Vec::new(),
-                    Vec::new(),
-                    Some(format!("{}: {e}", system_fw.display())),
-                ),
-            };
+        } else {
+            Err(files.rules_error.clone())
+        };
+        let (firewall, firewall_skipped, firewall_notes, firewall_error) = match &files.system_fw {
+            Some(json) => {
+                let imported = system::import_opensnitch(json);
+                (imported.firewall, imported.skipped, imported.notes, None)
+            }
+            None => (
+                None,
+                Vec::new(),
+                Vec::new(),
+                Some(files.system_fw_error.clone()),
+            ),
+        };
         let import_rules = rules.as_ref().is_ok_and(|(_, names)| !names.is_empty());
         Self {
             rules,
@@ -89,6 +91,7 @@ impl Preview {
             firewall_error,
             import_rules,
             replace_firewall: false,
+            loading: false,
         }
     }
 
@@ -162,6 +165,12 @@ fn toggle(
 impl Render for Preview {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        if self.loading {
+            return div()
+                .id("import-preview")
+                .text_color(muted)
+                .child("Reading OpenSnitch's files on the node…");
+        }
         let mut page = v_flex().gap_3();
         // Rules.
         page = page.child(div().text_lg().child("Rules"));
@@ -247,9 +256,27 @@ impl Render for Preview {
     }
 }
 
-/// Reads OpenSnitch's files and shows what importing them would do.
-pub fn open(requests: mpsc::Sender<Request>, window: &mut Window, cx: &mut App) {
-    let preview = cx.new(|_| Preview::read(Path::new(RULES_DIR), Path::new(SYSTEM_FW)));
+/// Asks the node for OpenSnitch's files and shows what importing them would do.
+pub fn open(
+    model: &Entity<Model>,
+    requests: mpsc::Sender<Request>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    model.update(cx, |model, _| model.opensnitch = None);
+    let _ = requests.send(Request::ReadOpenSnitch);
+    let preview = cx.new(|cx| {
+        cx.observe(model, |preview: &mut Preview, model, cx| {
+            if preview.loading
+                && let Some(files) = &model.read(cx).opensnitch
+            {
+                *preview = Preview::from_files(files);
+                cx.notify();
+            }
+        })
+        .detach();
+        Preview::loading()
+    });
     window.open_dialog(cx, move |dialog, _, _| {
         let (importing, requests) = (preview.clone(), requests.clone());
         dialog
@@ -283,17 +310,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_preview_reads_both_files_and_imports_only_whats_chosen() {
-        let dir = std::env::temp_dir().join(format!("snitchhiker-import-{}", std::process::id()));
-        let rules = dir.join("rules");
-        std::fs::create_dir_all(&rules).unwrap();
-        std::fs::write(
-            rules.join("curl.json"),
-            r#"{"name": "curl", "enabled": true, "action": "allow", "duration": "always",
-                "operator": {"type": "simple", "operand": "process.path", "data": "/usr/bin/curl"}}"#,
-        )
-        .unwrap();
-        let mut preview = Preview::read(&rules, &dir.join("missing.json"));
+    fn a_preview_converts_the_files_and_imports_only_whats_chosen() {
+        let files = v1::OpenSnitchFiles {
+            rules: vec![v1::OpenSnitchFile {
+                name: "/etc/opensnitchd/rules/curl.json".to_owned(),
+                json: r#"{"name": "curl", "enabled": true, "action": "allow", "duration": "always",
+                    "operator": {"type": "simple", "operand": "process.path", "data": "/usr/bin/curl"}}"#
+                    .to_owned(),
+            }],
+            system_fw_error: "/etc/opensnitchd/system-fw.json: not found".to_owned(),
+            ..v1::OpenSnitchFiles::default()
+        };
+        let mut preview = Preview::from_files(&files);
         assert!(preview.firewall_error.is_some());
         assert_eq!(preview.rules.as_ref().unwrap().1, vec!["curl"]);
         assert!(matches!(
@@ -302,6 +330,5 @@ mod tests {
         ));
         preview.import_rules = false;
         assert!(preview.requests().is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

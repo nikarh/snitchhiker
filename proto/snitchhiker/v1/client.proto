@@ -136,6 +136,7 @@ message Request {
     ListEnvelopes list_envelopes = 66;
     PutEnvelope put_envelope = 67;
     DeleteEnvelope delete_envelope = 68;
+    ReadOpenSnitch read_open_snitch = 69;
   }
 }
 
@@ -173,6 +174,7 @@ message Response {
     ApprovalList approvals = 42;
     Blocklists blocklists = 43;
     Envelopes envelopes = 44;
+    OpenSnitchFiles open_snitch_files = 45;
   }
 }
 
@@ -1329,6 +1331,29 @@ message PutEnvelope {
 
 message DeleteEnvelope {
   uint64 id = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// ReadOpenSnitch: OpenSnitch's files on the node, for a client to import (they are root's: the client can't read them
+// itself). Only OpenSnitch's own locations are read (/etc/opensnitchd/rules/*.json and
+// /etc/opensnitchd/system-fw.json), regular files of at most 1 MiB, never a path a client gives.
+
+message ReadOpenSnitch {}
+
+message OpenSnitchFiles {
+  // The rule files, by name, sorted.
+  repeated OpenSnitchFile rules = 1;
+  // Why the rules couldn't be read (no OpenSnitch on the node, for one); empty when they were.
+  string rules_error = 2;
+  // system-fw.json's text, if there is one.
+  optional string system_fw = 3;
+  // Why it couldn't be read; empty when it was, or when there is none.
+  string system_fw_error = 4;
+}
+
+message OpenSnitchFile {
+  string name = 1;
+  string json = 2;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

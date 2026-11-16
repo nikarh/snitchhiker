@@ -541,9 +541,60 @@ fn handle(
         Method::AnswerPrompt(answer) => answer_prompt(daemon, caller, app, &answer),
         Method::Learn(learn) => self::learn(daemon, &learn),
         Method::ImportRules(import) => import_rules(daemon, caller, app, &import),
+        Method::ReadOpenSnitch(_) => read_opensnitch(),
         Method::ListAudit(list) => list_audit(daemon, &list),
         Method::ExportRules(_) => export_rules(daemon),
     })
+}
+
+/// OpenSnitch's rules and system firewall, where OpenSnitch keeps them: they are root's, so a client asks the daemon.
+const OPENSNITCH_RULES: &str = "/etc/opensnitchd/rules";
+const OPENSNITCH_SYSTEM_FW: &str = "/etc/opensnitchd/system-fw.json";
+/// The largest OpenSnitch file read, and how many rule files at most.
+const OPENSNITCH_MAX_BYTES: u64 = 1 << 20;
+const OPENSNITCH_MAX_RULES: usize = 100_000;
+
+/// OpenSnitch's files, for a client to import: its own locations only, regular files (not links), each of at most
+/// [`OPENSNITCH_MAX_BYTES`].
+fn read_opensnitch() -> v1::response::Result {
+    fn regular(path: &std::path::Path) -> Result<String, String> {
+        let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
+        if !metadata.is_file() {
+            return Err("not a regular file".to_owned());
+        }
+        if metadata.len() > OPENSNITCH_MAX_BYTES {
+            return Err(format!("larger than {OPENSNITCH_MAX_BYTES} bytes"));
+        }
+        std::fs::read_to_string(path).map_err(|e| e.to_string())
+    }
+    let mut files = v1::OpenSnitchFiles::default();
+    match std::fs::read_dir(OPENSNITCH_RULES) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "json") {
+                    continue;
+                }
+                if files.rules.len() >= OPENSNITCH_MAX_RULES {
+                    files.rules_error = format!("more than {OPENSNITCH_MAX_RULES} rule files");
+                    break;
+                }
+                // A file that isn't a readable rule is reported by the conversion, as one that doesn't convert.
+                let json = regular(&path).unwrap_or_default();
+                files.rules.push(v1::OpenSnitchFile {
+                    name: path.display().to_string(),
+                    json,
+                });
+            }
+            files.rules.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        Err(e) => files.rules_error = format!("{OPENSNITCH_RULES}: {e}"),
+    }
+    match regular(std::path::Path::new(OPENSNITCH_SYSTEM_FW)) {
+        Ok(json) => files.system_fw = Some(json),
+        Err(e) => files.system_fw_error = format!("{OPENSNITCH_SYSTEM_FW}: {e}"),
+    }
+    v1::response::Result::OpenSnitchFiles(files)
 }
 
 fn get_system_firewall(daemon: &Daemon) -> v1::response::Result {
