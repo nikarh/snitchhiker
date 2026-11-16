@@ -600,6 +600,26 @@ impl EventFilter {
     }
 }
 
+/// Whether a name pattern can be looked up in the trigram index: text to find within names (no wildcards), ASCII (so
+/// LIKE's case folding is [`glob`]'s), and at least three characters (a trigram).
+fn indexed(pattern: &str) -> bool {
+    pattern.is_ascii() && pattern.len() >= 3 && !pattern.contains(['*', '?'])
+}
+
+/// A LIKE pattern finding `text` anywhere.
+fn like(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('%');
+    for c in text.chars() {
+        if matches!(c, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out.push('%');
+    out
+}
+
 fn node_sql(node: &Node<EventCond>, sql: &mut String, values: &mut Vec<SqlValue>) {
     let join =
         |nodes: &[Node<EventCond>], op: &str, sql: &mut String, values: &mut Vec<SqlValue>| {
@@ -634,6 +654,18 @@ fn cond_sql(c: &EventCond, sql: &mut String, values: &mut Vec<SqlValue>) {
         values.push(value);
     };
     match c {
+        // A name to find within: the names' trigram index (`strings_fts`) gives their ids, and an event's id is compared
+        // with them, not its text with the pattern.
+        EventCond::Exe(p) if indexed(p) => {
+            sql.push_str("e.exe IN (SELECT rowid FROM strings_fts WHERE value LIKE ? ESCAPE '\\')");
+            values.push(SqlValue::Text(like(p)));
+        }
+        EventCond::Host(p) if indexed(p) => {
+            sql.push_str(
+                "coalesce(e.host IN (SELECT rowid FROM strings_fts WHERE value LIKE ? ESCAPE '\\'), 0)",
+            );
+            values.push(SqlValue::Text(like(p)));
+        }
         EventCond::Exe(p) => {
             sql.push_str("snitchhiker_glob(?, x.value)");
             values.push(SqlValue::Text(p.clone()));
@@ -1303,7 +1335,7 @@ mod tests {
         assert!(!sql.contains("DROP"));
         assert_eq!(
             sql,
-            "(snitchhiker_glob(?, x.value) AND e.port > ? AND NOT h.value IS NULL)"
+            "(e.exe IN (SELECT rowid FROM strings_fts WHERE value LIKE ? ESCAPE '\\') AND e.port > ? AND NOT h.value IS NULL)"
         );
         assert_eq!(values.len(), 2);
     }

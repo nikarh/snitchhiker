@@ -308,6 +308,12 @@ GROUP BY w.window, dimension, key;
 DROP INDEX events_exe;
 DROP INDEX events_host;
 ",
+    // A trigram index of the names (programs, hosts, containers), for finding text within them (plan §11.4): history
+    // queries compare events' name ids with the ids it gives.
+    r"
+CREATE VIRTUAL TABLE strings_fts USING fts5(value, content='strings', content_rowid='id', tokenize='trigram');
+INSERT INTO strings_fts(strings_fts) VALUES ('rebuild');
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`, the busiest
@@ -568,6 +574,10 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     (
         "strings.insert",
         "INSERT INTO strings (kind, value) VALUES (?1, ?2)",
+    ),
+    (
+        "strings_fts.insert",
+        "INSERT INTO strings_fts (rowid, value) VALUES (?1, ?2)",
     ),
     (
         "events.insert",
@@ -2909,7 +2919,11 @@ fn intern(
         connection
             .prepare_cached(sql("strings.insert")?)?
             .execute(params![kind as u8, &**value])?;
-        (connection.last_insert_rowid(), true)
+        let id = connection.last_insert_rowid();
+        connection
+            .prepare_cached(sql("strings_fts.insert")?)?
+            .execute(params![id, &**value])?;
+        (id, true)
     };
     // Bounded: a history with ever new names (CDN shards, trackers) mustn't grow the daemon. Emptied when full; the
     // names in use come back on their next event.
