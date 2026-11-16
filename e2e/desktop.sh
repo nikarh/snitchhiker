@@ -181,7 +181,7 @@ modes=$(stat -c "%a %U:%G" /var/cache/snitchhiker-ui /var/cache/snitchhiker-ui/$
 if runuser -u mallory -- ls /var/cache/snitchhiker-ui/$uid >/dev/null 2>&1; then reach=yes; else reach=no; fi
 echo "kept $kept covered $covered modes $modes reach $reach" > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
-if grep -Eq "kept [1-9][0-9]* covered [1-9]" <<<"${out}" && grep -q "modes 770 root:snitchhiker-ui 700 mallory:" <<<"${out}" \
+if grep -Eq "kept [1-9][0-9]* covered [1-9]" <<<"${out}" && grep -q "modes 1770 root:snitchhiker-ui 700 mallory:" <<<"${out}" \
   && grep -q "reach no" <<<"${out}"; then
   pass history-is-kept-privately
 else

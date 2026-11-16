@@ -23,7 +23,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-/// Where the app's caches are: a directory only the app's group can enter (`root:snitchhiker-ui 0770`, made by its
+/// Where the app's caches are: a directory only the app's group can enter (`root:snitchhiker-ui 1770`, made by its
 /// package), with one directory per user in it. The user's other processes can't reach the files, though they are the
 /// user's.
 pub const CACHE_ROOT: &str = "/var/cache/snitchhiker-ui";
@@ -32,15 +32,32 @@ pub const CACHE_ROOT: &str = "/var/cache/snitchhiker-ui";
 /// by its package).
 #[must_use]
 pub fn cache_dir(uid: u32) -> Option<PathBuf> {
-    let root = Path::new(CACHE_ROOT);
+    own_dir(Path::new(CACHE_ROOT), uid)
+}
+
+/// User `uid`'s directory in `root`, a directory every user's app can write in (the app's group): made if needed
+/// (mode 0700), and only ever one the user owns. Anything else there (another user's directory or file made first, a
+/// link) is refused rather than used or changed; the root is sticky, so no one else can remove or replace the user's
+/// directory once it is there.
+#[must_use]
+pub fn own_dir(root: &Path, uid: u32) -> Option<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _};
     if !root.is_dir() {
         return None;
     }
     let dir = root.join(uid.to_string());
-    if !dir.is_dir() {
-        std::fs::create_dir(&dir).ok()?;
+    match std::fs::DirBuilder::new().mode(0o700).create(&dir) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(_) => return None,
     }
-    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).ok()?;
+    let metadata = std::fs::symlink_metadata(&dir).ok()?;
+    if !metadata.is_dir() || metadata.uid() != uid {
+        return None;
+    }
+    if metadata.mode() & 0o777 != 0o700 {
+        std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).ok()?;
+    }
     Some(dir)
 }
 
@@ -630,5 +647,29 @@ mod tests {
         assert_eq!(cache.len().unwrap(), 5);
         let page = cache.page(21, 100, "", None).unwrap().unwrap();
         assert_eq!((page.rows.len(), page.scanned_from), (5, 16));
+    }
+
+    #[test]
+    fn a_users_directory_is_only_ever_their_own() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let root = std::env::temp_dir().join(format!("snitchhiker-own-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let uid = std::os::unix::fs::MetadataExt::uid(&std::fs::metadata(&root).unwrap());
+        let dir = own_dir(&root, uid).unwrap();
+        assert_eq!(
+            std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(own_dir(&root, uid), Some(dir.clone()));
+        // Not a directory, or a link: refused.
+        std::fs::remove_dir(&dir).unwrap();
+        std::fs::write(&dir, "").unwrap();
+        assert_eq!(own_dir(&root, uid), None);
+        std::fs::remove_file(&dir).unwrap();
+        std::os::unix::fs::symlink(&root, &dir).unwrap();
+        assert_eq!(own_dir(&root, uid), None);
+        // Made by someone else (here, by this user, for another).
+        assert_eq!(own_dir(&root, uid + 1), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

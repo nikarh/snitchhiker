@@ -52,6 +52,11 @@ impl Preview {
     /// Reads and converts OpenSnitch's files from `rules_dir` and `system_fw`.
     #[must_use]
     pub fn read(rules_dir: &Path, system_fw: &Path) -> Self {
+        // Paths the user chose: read as the user alone.
+        crate::userfs::as_user(|| Self::read_as_user(rules_dir, system_fw))
+    }
+
+    fn read_as_user(rules_dir: &Path, system_fw: &Path) -> Self {
         let mut rules_skipped = Vec::new();
         let rules = rule_files(rules_dir).and_then(|files| {
             let imported = opensnitch::import(&files, FOLDER);

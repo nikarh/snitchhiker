@@ -13,6 +13,7 @@ mod prefs;
 mod session;
 mod shell;
 mod tray;
+mod userfs;
 mod views;
 
 use std::path::PathBuf;

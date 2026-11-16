@@ -8,7 +8,7 @@ if [ "$1" = configure ]; then
   chmod 2755 /usr/bin/snitchhiker-ui
   snitchhikerd trust-client /usr/bin/snitchhiker-ui >/dev/null
   # The app's caches of history: only the app (setgid to the group) can enter this directory.
-  install -d -o root -g snitchhiker-ui -m 0770 /var/cache/snitchhiker-ui
+  install -d -o root -g snitchhiker-ui -m 1770 /var/cache/snitchhiker-ui
   # The remote nodes it knows and this device's key: the user's other processes mustn't read the key.
-  install -d -o root -g snitchhiker-ui -m 0770 /var/lib/snitchhiker-ui
+  install -d -o root -g snitchhiker-ui -m 1770 /var/lib/snitchhiker-ui
 fi

@@ -1,6 +1,6 @@
 //! The remote nodes this app knows, and this device's key (plan §8.3).
 //!
-//! Both are kept in `/var/lib/snitchhiker-ui/<uid>`: the root directory is `root:snitchhiker-ui 0770` (made by the
+//! Both are kept in `/var/lib/snitchhiker-ui/<uid>`: the root directory is `root:snitchhiker-ui 1770` (made by the
 //! package), so only the app, setgid to that group, can enter it. The key is what a node knows this device by; a
 //! program of the user's that read it could connect to the user's nodes as this device, which the local socket's
 //! setgid check exists to prevent.
@@ -43,16 +43,7 @@ pub struct Nodes {
 /// The user's state directory, made if needed (0700); `None` without the root (an app not installed by its package).
 #[must_use]
 pub fn state_dir() -> Option<PathBuf> {
-    let root = Path::new(STATE_ROOT);
-    if !root.is_dir() {
-        return None;
-    }
-    let dir = root.join(nix::unistd::getuid().as_raw().to_string());
-    if !dir.is_dir() {
-        std::fs::create_dir(&dir).ok()?;
-    }
-    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700)).ok()?;
-    Some(dir)
+    snitchhiker_client::cache::own_dir(Path::new(STATE_ROOT), nix::unistd::getuid().as_raw())
 }
 
 impl Nodes {

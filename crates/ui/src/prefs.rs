@@ -1,6 +1,7 @@
 //! The app's own preferences, cosmetic only (nothing about what the node does): kept in
 //! `~/.config/snitchhiker/ui.toml`. The environment is scrubbed (the app is setgid), so the home directory comes from
-//! the user's passwd entry, not `$HOME` or `$XDG_CONFIG_HOME`.
+//! the user's passwd entry, not `$HOME` or `$XDG_CONFIG_HOME`; the file is read and written as the user alone
+//! ([`crate::userfs`]), never through a link.
 
 use std::path::PathBuf;
 
@@ -64,9 +65,9 @@ impl Prefs {
     /// The preferences kept, or the defaults.
     #[must_use]
     pub fn load() -> Self {
-        path()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|text| toml::from_str(&text).ok())
+        let text =
+            crate::userfs::as_user(|| path().and_then(|path| std::fs::read_to_string(path).ok()));
+        text.and_then(|text| toml::from_str(&text).ok())
             .unwrap_or_default()
     }
 
@@ -75,12 +76,15 @@ impl Prefs {
         let Some(path) = path() else {
             return;
         };
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
-        if let Ok(text) = toml::to_string(self) {
-            let _ = std::fs::write(path, text);
-        }
+        let Ok(text) = toml::to_string(self) else {
+            return;
+        };
+        crate::userfs::as_user(|| {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = crate::userfs::write(&path, &text);
+        });
     }
 }
 
