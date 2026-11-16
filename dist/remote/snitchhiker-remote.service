@@ -1,0 +1,54 @@
+[Unit]
+Description=Snitchhiker remote access: paired phones and desktops reach this node
+Documentation=https://github.com/nikarh/snitchhiker
+# It serves the daemon's devices through the daemon: it runs while the daemon does, starts with it once enabled
+# (WantedBy below), and stops before it, so the daemon still tells the push gateway why the node goes.
+BindsTo=snitchhikerd.service
+After=snitchhikerd.service
+
+[Service]
+# Settings are in /etc/snitchhiker/remote.toml: change them there, then restart.
+ExecStart=/usr/bin/snitchhiker-remote
+# Ended on its own (the daemon closed the connection, say): connects again.
+Restart=on-failure
+RestartSec=2s
+# A backstop against a leak: the endpoint needs a few tens of MB.
+MemoryHigh=128M
+MemoryMax=256M
+# A user of its own, the only one the daemon's remote socket serves (made by the package's sysusers.d entry).
+User=snitchhiker-remote
+Group=snitchhiker-remote
+# The node's key, once sealed (snitchhiker-remote seal-key): decrypted by systemd into the service's own credentials.
+ImportCredential=snitchhiker.node-key
+StateDirectory=snitchhiker-remote
+StateDirectoryMode=0700
+
+# No capability at all: it opens UDP sockets on unprivileged ports, and talks to the daemon over its socket.
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+# Netlink: the endpoint follows the machine's addresses and routes (a laptop moving between networks).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UMask=0077
+
+[Install]
+WantedBy=snitchhikerd.service

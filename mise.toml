@@ -111,10 +111,10 @@ description = "Release build of the binaries"
 run = "cargo build --locked --release"
 
 [tasks.package]
-description = "The .deb, rpm and Arch packages of the daemon, the desktop app and the relay, from a dist build (as releases are), into out/"
-env = { SNITCHHIKER_RELAY = "target/dist/snitchhiker-relay" }
+description = "The .deb, rpm and Arch packages of the daemon, the desktop app, remote access and the relay, from a dist build (as releases are), into out/"
+env = { SNITCHHIKER_RELAY = "target/dist/snitchhiker-relay", SNITCHHIKER_REMOTE = "target/dist/snitchhiker-remote" }
 run = [
-  "cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-relay",
+  "cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge -p snitchhiker-relay",
   "scripts/package.sh x86_64 target/dist/snitchhikerd out target/dist/snitchhiker-ui",
 ]
 

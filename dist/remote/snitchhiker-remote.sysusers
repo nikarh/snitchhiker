@@ -1,0 +1,2 @@
+# The remote service's user: the daemon's remote socket serves this user alone (decision 0016).
+u snitchhiker-remote - "Snitchhiker remote access" /var/lib/snitchhiker-remote

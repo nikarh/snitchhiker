@@ -14,7 +14,8 @@
 #
 # (Arch versions can't have + or -.) Counting the commits needs the whole history, not a shallow clone.
 # Outputs snitchhiker_<amd64|arm64>.deb, snitchhiker-<arch>.rpm and snitchhiker-<arch>.pkg.tar.zst (and with the
-# app's binary, snitchhiker-ui's likewise; with SNITCHHIKER_RELAY=<relay binary>, the relay's likewise), names that
+# app's binary, snitchhiker-ui's likewise; with SNITCHHIKER_RELAY=<relay binary>, the relay's likewise; with
+# SNITCHHIKER_REMOTE=<snitchhiker-remote binary>, remote access's likewise), names that
 # don't change between versions, like the other release files.
 set -euo pipefail
 
@@ -74,6 +75,17 @@ if [[ -n "${SNITCHHIKER_RELAY:-}" ]]; then
     --packager archlinux --target "${out}/snitchhiker-relay-${arch}.pkg.tar.zst"
   SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
     --packager rpm --target "${out}/snitchhiker-relay-${arch}.rpm"
+fi
+
+# Remote access, at the same version, when SNITCHHIKER_REMOTE names its binary.
+if [[ -n "${SNITCHHIKER_REMOTE:-}" ]]; then
+  install -m 0755 "${SNITCHHIKER_REMOTE}" "${stage}/snitchhiker-remote"
+  SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
+    --packager deb --target "${out}/snitchhiker-remote_${goarch}.deb"
+  SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
+    --packager archlinux --target "${out}/snitchhiker-remote-${arch}.pkg.tar.zst"
+  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
+    --packager rpm --target "${out}/snitchhiker-remote-${arch}.rpm"
 fi
 
 # The desktop app, at the same version, when its binary is given.

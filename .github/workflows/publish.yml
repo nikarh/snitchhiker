@@ -70,12 +70,13 @@ jobs:
           SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
           set -euo pipefail
-          cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-relay
+          cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge -p snitchhiker-relay
           bin=target/dist/snitchhikerd
           "$bin" --version
           mkdir -p out
           cp "$bin" "out/snitchhikerd-${{ matrix.arch }}-linux-gnu"
           cp target/dist/snitchhiker-ui "out/snitchhiker-ui-${{ matrix.arch }}-linux-gnu"
+          cp target/dist/snitchhiker-remote "out/snitchhiker-remote-${{ matrix.arch }}-linux-gnu"
           cp target/dist/snitchhiker-relay "out/snitchhiker-relay-${{ matrix.arch }}-linux-gnu"
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
@@ -83,6 +84,7 @@ jobs:
       - name: Packages
         env:
           SNITCHHIKER_RELAY: target/dist/snitchhiker-relay
+          SNITCHHIKER_REMOTE: target/dist/snitchhiker-remote
         run: scripts/package.sh ${{ matrix.arch }} target/dist/snitchhikerd out target/dist/snitchhiker-ui
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
