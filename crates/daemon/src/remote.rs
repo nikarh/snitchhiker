@@ -103,32 +103,44 @@ fn serve(daemon: &Arc<Daemon>, accepted: &Accepted) {
         pair(daemon, &accepted.peer, &accepted.stream);
         return;
     }
-    let device = daemon.store().device(&accepted.peer);
-    let device = match device {
-        Ok(Some(device)) => device,
-        Ok(None) => {
-            info!(peer = %accepted.peer, "refused a device that isn't paired");
-            crate::api::refuse(&accepted.stream, "this device isn't paired with the node");
-            return;
-        }
-        Err(error) => {
-            warn!(%error, "reading the paired devices");
-            return;
-        }
-    };
-    let seen = daemon.store().device_seen(&device.id, now_ms());
-    if let Err(error) = seen {
-        warn!(%error, "recording a device's connection");
-    }
     let number = daemon
         .remote
         .next
         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if let Ok(clone) = accepted.stream.try_clone() {
-        lock(&daemon.remote.connections)
-            .entry(device.id.clone())
-            .or_default()
-            .push((number, clone));
+    // Looked up and registered under the connections' lock, which unpairing holds while it deletes the device: a
+    // device unpaired meanwhile is either not found here, or its connection registered and shut by the unpairing.
+    let device = {
+        let mut connections = lock(&daemon.remote.connections);
+        let device = daemon.store().device(&accepted.peer);
+        let device = match device {
+            Ok(Some(device)) => device,
+            Ok(None) => {
+                drop(connections);
+                info!(peer = %accepted.peer, "refused a device that isn't paired");
+                crate::api::refuse(&accepted.stream, "this device isn't paired with the node");
+                return;
+            }
+            Err(error) => {
+                warn!(%error, "reading the paired devices");
+                return;
+            }
+        };
+        match accepted.stream.try_clone() {
+            Ok(clone) => connections
+                .entry(device.id.clone())
+                .or_default()
+                .push((number, clone)),
+            Err(error) => {
+                // A connection unpairing couldn't shut isn't served.
+                warn!(%error, "keeping a device's connection");
+                return;
+            }
+        }
+        device
+    };
+    let seen = daemon.store().device_seen(&device.id, now_ms());
+    if let Err(error) = seen {
+        warn!(%error, "recording a device's connection");
     }
     let caller = crate::api::Caller {
         role: v1::Role::try_from(device.role).unwrap_or(v1::Role::Viewer),
@@ -380,13 +392,18 @@ pub fn list_devices(daemon: &Daemon) -> v1::response::Result {
 
 /// `RemoveDevice`: unpaired, and its connections closed.
 pub fn remove_device(daemon: &Daemon, id: &str) -> v1::response::Result {
+    // Under the connections' lock: a connection being admitted is either refused or registered and shut here.
+    let mut connections = lock(&daemon.remote.connections);
     let removed = daemon.store().delete_device(id);
+    let open = if matches!(removed, Ok(true)) {
+        connections.remove(id).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    drop(connections);
     match removed {
         Ok(true) => {
-            for (_, stream) in lock(&daemon.remote.connections)
-                .remove(id)
-                .unwrap_or_default()
-            {
+            for (_, stream) in open {
                 let _ = stream.shutdown(std::net::Shutdown::Both);
             }
             info!(device = %id, "a device was unpaired");
