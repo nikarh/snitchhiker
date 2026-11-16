@@ -2298,9 +2298,11 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 - [x] Kernel matrix green (Arch, Debian 13 and Fedora 45 VMs: every scenario); upgrade tests (old daemon + new app,
       new daemon + old app: `e2e/upgrade.sh`, from 0.1.0).
 - [x] Packages: Arch repo, apt repo, rpm (signed repositories on GitHub Pages; e2e installs through them).
-- [ ] **Go public**, once everything above and in M0–M8 is done: scan the whole history for secrets, then the
+- [x] **Go public**, once everything above and in M0–M8 is done: scan the whole history for secrets, then the
       `public-github-project` settings that need a public repository (auto-merge, secret scanning, vulnerability
       alerts and reporting, code scanning, the `main` ruleset), and the docs on GitHub Pages.
+      Done 2026-11-16: the history scanned (clean), the repository public with its settings and `main` ruleset,
+      Actions allow-listed and pinned, the docs on GitHub Pages. The `latest` pre-release waits for the first release.
 - [ ] F-Droid submission (needs the public source). Prepared: the build recipe for fdroiddata
       (`docs/fdroid/dev.nikarh.snitchhiker.yml`), fastlane texts, icon, screenshots and the 1.0.0 changelog; release
       builds are unsigned without the release key, as F-Droid builds them.
