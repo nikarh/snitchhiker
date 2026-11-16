@@ -7,6 +7,19 @@ sidebar:
 
 The Android app does what the desktop app does, for every node you pair it with: prompts (answered from the notification, or several at once), rules by folder, the history, the Explorer, connections, the system firewall, alerts, settings, agent proposals and paired devices. It needs Android 10 or newer.
 
+## What it looks like
+
+The node list, then a node: its prompts, its history, the Explorer, and its Containers & VMs.
+
+![The node list: a node connected, with its alerts, and how the phone is woken](../../../assets/screenshots/android-nodes-phone-light.png)
+![A prompt: a connection waiting, the rules it could leave, and how long for](../../../assets/screenshots/android-prompts-phone-light.png)
+![The history: each connection, its program, destination and outcome](../../../assets/screenshots/android-events-phone-light.png)
+![The Explorer: programs by connections over the last day](../../../assets/screenshots/android-explorer-phone-light.png)
+
+On a tablet the same screens use the width:
+
+![Containers & VMs on a tablet: each container, VM and namespace, with its traffic over the day](../../../assets/screenshots/android-containers-vms-tablet-light.png)
+
 ## Getting it
 
 Each release has two builds, signed with the same key:

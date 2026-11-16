@@ -16,6 +16,7 @@ mkdir -p "${out}"
 # As root in the VM, once the daemon is up and before the app starts.
 before='
 systemctl stop snitchhikerd
+install -d -m 700 /var/lib/snitchhiker
 rm -f /var/lib/snitchhiker/state.db /var/lib/snitchhiker/state.db-* /var/lib/snitchhiker/state.running
 /tmp/snitchhiker-e2e-ui --seed /var/lib/snitchhiker/state.db 40000 7
 systemctl start snitchhikerd
@@ -96,16 +97,20 @@ install -d -o mallory /home/mallory/src/webshop
 sleep 6
 runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$(cat /run/user/$uid/bus-address) makoctl dismiss -a || true
 page proposals
+# Its buttons are drawn armed only while the window has the keyboard: this session has none but wtype.
+session wtype -k Shift_L -s 6000 -k Shift_L &
 sleep 2
 shot proposals
 for id in $(snitchhiker prompts | awk "/^prompt [0-9]+:/ {sub(\":\", \"\", \$2); print \$2}"); do
   snitchhiker prompts answer "$id" deny --duration once >/dev/null 2>&1 || true
 done
 bus=$(cat /run/user/$uid/bus-address)
-runuser -u mallory -- curl -s -m 30 https://example.org >/dev/null 2>&1 &
+runuser -u mallory -- curl -s -m 30 http://203.0.113.50:443 >/dev/null 2>&1 &
 sleep 2
 runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$bus makoctl dismiss -a || true
 page prompts
+# Its buttons are drawn armed only while the window has the keyboard: this session has none but wtype.
+session wtype -k Shift_L -s 6000 -k Shift_L &
 sleep 2
 shot prompts
 '

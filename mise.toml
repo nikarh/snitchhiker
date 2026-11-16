@@ -60,6 +60,10 @@ run = "e2e/upgrade.sh"
 description = "The Android app end to end: an emulator, the node VM and a relay between them (e2e/android.sh)"
 run = "e2e/android.sh"
 
+[tasks."screenshots:android"]
+description = "The Android app's screenshots for the docs, phone and tablet, light and dark (scripts/android-screenshots.sh)"
+run = "scripts/android-screenshots.sh"
+
 [tasks.fmt]
 description = "Format the Rust code"
 run = "cargo fmt --all"

@@ -2210,8 +2210,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
       (ntfy) for a prompt with the app not running and answers it, and is told by push that the node went offline
       (with its reason) and is back. Pairing by code is covered by the VM scenarios (LAN), which the emulator's network
       can't reach.
-- [ ] **Docs:** [x] Android install page (APKs, F-Droid build, APK verification, wake-ups, lock). [ ] Roborazzi
-      screenshots of every screen at phone and tablet sizes, dark and light, through the same text check.
+- [x] **Docs:** [x] Android install page (APKs, F-Droid build, APK verification, wake-ups, lock). [x] Screenshots of
+      every screen at phone and tablet sizes, dark and light: the real app in the emulator, paired through a relay with
+      the node VM over the synthetic history (`scripts/android-screenshots.sh`), rather than Roborazzi renders.
 - [x] **Release**
   - [x] Signing in the `release` environment (an EC key kept by the user); both APKs on GitHub releases with the
         signed checksums; F-Droid metadata (fastlane, foss flavour). The F-Droid submission needs the public source
@@ -2257,7 +2258,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] Context shown with the program (history, live, prompts) and a Container pivot in the Explorer; Containers & VMs
         page on desktop and Android; `snitchhiker contexts`.
 - [x] **Coexistence docs:** Docker, libvirt, Podman, portcullis, barbican.
-- [x] **Docs:** "Containers and VMs" guide with per-runtime notes and the coexistence page. [ ] Screenshots of the
+- [x] **Docs:** "Containers and VMs" guide with per-runtime notes and the coexistence page. [x] Screenshots of the
       Containers & VMs view.
 - [x] **Tests:** bridged Docker containers, rules by name/image/Compose service, a container's prompt and its answer,
       rootful and rootless Podman (inside the namespace, and its tamper), named namespaces, a VM on a bridge (a tap
