@@ -27,6 +27,7 @@ pub mod process;
 pub mod prompts;
 pub mod push;
 pub mod remote;
+pub mod resolved;
 pub mod router;
 pub mod runtime;
 pub mod stepup;

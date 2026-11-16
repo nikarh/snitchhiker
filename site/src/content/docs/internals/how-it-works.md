@@ -53,6 +53,8 @@ An answer counts only when it is believable:
 - It answers a query the attribution programs saw a process send to that resolver from that port. An unsolicited packet from port 53 teaches nothing.
 - Only the name asked and its CNAME chain are learned: a resolver can't attach other names to addresses.
 
+**systemd-resolved.** A program that resolves through resolved's library interface (nss-resolve), or gets an answer from its cache or its `/etc/hosts`, sends no DNS packet for the queue to see. The daemon also follows resolved's monitor (`io.systemd.Resolve.Monitor`, root only), which reports every answer resolved gives; those names count as recently resolved for the address, since the monitor doesn't say who asked. When resolved isn't running, the daemon waits for its socket to appear.
+
 The query also says which process asked. A connection is matched first against the names its own process resolved for the address, then against any name recently resolved for it (for programs that resolve through a local resolver such as systemd-resolved, whose own queries are the ones seen). Names are kept for at least 10 minutes whatever their TTL, since programs keep using addresses past it, up to four per address.
 
 ## Deciding

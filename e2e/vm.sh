@@ -108,7 +108,7 @@ packages() {
       docker podman passt slirp4netns busybox ;;
     debian) printf '%s\n' bpftool conntrack curl iproute2 jq nftables polkitd python3 socat sqlite3 strace \
       sway grim mako-notifier wtype mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 \
-      docker.io podman passt slirp4netns uidmap busybox-static ;;
+      docker.io podman passt slirp4netns uidmap busybox-static systemd-resolved ;;
   esac
 }
 

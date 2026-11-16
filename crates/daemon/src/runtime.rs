@@ -259,6 +259,17 @@ impl Daemon {
         self.spawn_table_watch()?;
         self.spawn_agent_watch()?;
         self.spawn_blocklist_refresh()?;
+        if self.shared.config.learn_dns {
+            // Names programs resolved through systemd-resolved's cache or its library interface: no packet shows them.
+            let shared = Arc::clone(&self.shared);
+            crate::resolved::spawn(move |answer| {
+                shared
+                    .names
+                    .write()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .learn(0, answer, now_ms());
+            })?;
+        }
         self.watch_agents(agents);
         crate::router::Router::spawn(&self.shared)?;
         crate::namespaces::Namespaces::spawn(self)?;

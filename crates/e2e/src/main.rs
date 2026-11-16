@@ -266,6 +266,10 @@ const SCENARIOS: &[Scenario] = &[
         names::unsolicited_answers_teach_nothing,
     ),
     (
+        "names/names-from-systemd-resolved",
+        names::names_from_systemd_resolved,
+    ),
+    (
         "containers/a-bridged-containers-traffic-is-decided-by-its-program",
         containers::a_bridged_containers_traffic_is_decided_by_its_program,
     ),

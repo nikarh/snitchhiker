@@ -194,3 +194,33 @@ pub fn unsolicited_answers_teach_nothing() -> Result<(), String> {
         &spoofed,
     )
 }
+
+/// A name systemd-resolved answers from its own data (here `/etc/hosts`; its cache is the same) crosses no network:
+/// the daemon learns it from resolved's monitor, and the connection to its address carries it.
+pub fn names_from_systemd_resolved() -> Result<(), String> {
+    const RESOLVED_NAME: &str = "monitored.snitchhiker.test";
+    const RESOLVED_ADDRESS: &str = "127.0.0.12";
+    let hosts = std::fs::read_to_string("/etc/hosts").map_err(|e| e.to_string())?;
+    let line = format!("{RESOLVED_ADDRESS} {RESOLVED_NAME}\n");
+    if !hosts.contains(&line) {
+        std::fs::write("/etc/hosts", format!("{hosts}{line}")).map_err(|e| e.to_string())?;
+    }
+    crate::util::run("systemctl", &["start", "systemd-resolved"])?;
+    let (_listener, port) = listen(RESOLVED_ADDRESS)?;
+    let mut daemon = Running::start("resolved", "mode = \"monitor\"\n")?;
+    // The daemon subscribes as it starts; give it a moment.
+    thread::sleep(Duration::from_millis(500));
+    let resolved = crate::util::run("resolvectl", &["query", RESOLVED_NAME])?;
+    let connected = mallory(false, RESOLVED_ADDRESS, port)?;
+    thread::sleep(Duration::from_millis(500));
+    let events = daemon.cli(&["events", "--limit", "20"])?;
+    daemon.stop()?;
+    let _ = crate::util::run("systemctl", &["stop", "systemd-resolved"]);
+    check(
+        events
+            .lines()
+            .any(|l| l.contains(&format!("{RESOLVED_NAME}:{port}"))),
+        "a name systemd-resolved gave isn't on the connection",
+        &format!("{resolved}\n{connected}\n{events}"),
+    )
+}
