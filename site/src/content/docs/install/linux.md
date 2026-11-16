@@ -1,44 +1,64 @@
 ---
 title: Linux packages
-description: Installing Snitchhiker from the Debian and Arch Linux packages, what they install, and removing it.
+description: Installing Snitchhiker from its signed apt, pacman and dnf repositories, what the packages install, and removing it.
 sidebar:
   order: 1
 ---
 
-Snitchhiker runs on Linux 6.5 or newer, on x86_64 and aarch64, with glibc 2.35 or newer (Ubuntu 22.04, Debian 12 and later, Arch Linux). The kernel needs BTF (`/sys/kernel/btf/vmlinux`), which every mainstream distribution kernel has.
+Snitchhiker runs on Linux 6.5 or newer, with BTF (`/sys/kernel/btf/vmlinux`, which every mainstream distribution kernel has), on x86_64 and aarch64, with glibc 2.35 or newer. That is Arch Linux, Debian 13, Ubuntu 24.04 (or 22.04 with its 6.5+ HWE kernel), Fedora 39 and later; Debian 12's own kernel is too old.
 
-Each release has the packages under names that don't change, so the commands below always fetch the newest. Check them against the signed checksums first: see [Verifying downloads](/install/verifying/).
+The packages come from signed repositories, so the system's updates keep Snitchhiker current. They are signed by the release key, "snitchhiker releases", fingerprint `6CFD4BB8304387DB6245A35F87F91E1FCC9299C5`: check that the key you add has it (`gpg --show-keys snitchhiker.asc`).
 
 ## Debian and Ubuntu
 
 ```bash
-arch=$(dpkg --print-architecture)    # amd64 or arm64
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker_${arch}.deb"
-sudo apt install "./snitchhiker_${arch}.deb"
+curl -fsSL https://nikarh.github.io/snitchhiker/repo/snitchhiker.asc \
+  | sudo gpg --dearmor --output /usr/share/keyrings/snitchhiker.gpg
+echo 'deb [signed-by=/usr/share/keyrings/snitchhiker.gpg] https://nikarh.github.io/snitchhiker/repo/apt stable main' \
+  | sudo tee /etc/apt/sources.list.d/snitchhiker.list
+sudo apt update
+sudo apt install snitchhiker
 sudo systemctl enable --now snitchhikerd
 ```
 
 ## Arch Linux
 
 ```bash
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-$(uname -m).pkg.tar.zst"
-sudo pacman -U "snitchhiker-$(uname -m).pkg.tar.zst"
+curl -fsSL https://nikarh.github.io/snitchhiker/repo/snitchhiker.asc -o snitchhiker.asc
+sudo pacman-key --add snitchhiker.asc
+sudo pacman-key --lsign-key 6CFD4BB8304387DB6245A35F87F91E1FCC9299C5
+printf '\n[snitchhiker]\nServer = https://nikarh.github.io/snitchhiker/repo/arch/$arch\n' | sudo tee -a /etc/pacman.conf
+sudo pacman -Sy snitchhiker
 sudo systemctl enable --now snitchhikerd
 ```
 
-## The desktop app
-
-The desktop app is a package of its own, `snitchhiker-ui`, at the same version as the daemon's:
+## Fedora
 
 ```bash
-arch=$(dpkg --print-architecture)
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-ui_${arch}.deb"
-sudo apt install "./snitchhiker-ui_${arch}.deb"
+sudo tee /etc/yum.repos.d/snitchhiker.repo <<'REPO'
+[snitchhiker]
+name=Snitchhiker
+baseurl=https://nikarh.github.io/snitchhiker/repo/rpm/$basearch
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://nikarh.github.io/snitchhiker/repo/snitchhiker.asc
+REPO
+sudo dnf install snitchhiker
+sudo systemctl enable --now snitchhikerd
 ```
 
+## Without a repository
+
+Each release also has the packages as files, under names that don't change (`snitchhiker_<amd64|arm64>.deb`, `snitchhiker-<x86_64|aarch64>.rpm`, `snitchhiker-<x86_64|aarch64>.pkg.tar.zst`), so `https://github.com/nikarh/snitchhiker/releases/latest/download/<name>` always fetches the newest. Check them against the signed checksums: see [Verifying downloads](/install/verifying/). Install them with `apt install ./…`, `dnf install ./…` or `pacman -U …`.
+
+## The desktop app
+
+The desktop app is a package of its own, `snitchhiker-ui`, at the same version as the daemon's, in the same repositories:
+
 ```bash
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-ui-$(uname -m).pkg.tar.zst"
-sudo pacman -U "snitchhiker-ui-$(uname -m).pkg.tar.zst"
+sudo apt install snitchhiker-ui      # Debian, Ubuntu
+sudo pacman -S snitchhiker-ui        # Arch Linux
+sudo dnf install snitchhiker-ui      # Fedora
 ```
 
 Installing it makes `/usr/bin/snitchhiker-ui` setgid to the `snitchhiker-ui` group and registers it as a trusted client of the daemon, pinned to its digest (`snitchhikerd trust-client`); every upgrade registers the new version, and removing the package unregisters it. That is what lets the app, and nothing else of your user, use the daemon's client socket ([Security](/internals/security/#clients)).
@@ -57,7 +77,7 @@ systemctl --user enable --now snitchhiker-ui
 | `/usr/bin/snitchhiker` | The command line: the same binary, which acts by the name it is run as |
 | `/usr/lib/systemd/system/snitchhikerd.service` | The service, hardened (below) |
 | `/usr/lib/sysusers.d/snitchhiker.conf` | The `snitchhiker-ui` group of the client binaries |
-| `/usr/share/polkit-1/actions/org.snitchhiker.manage.policy` | The polkit action for [step-up](/internals/security/#dangerous-actions-need-more-than-a-session) (the Debian package recommends `polkitd`; on Arch, install `polkit`) |
+| `/usr/share/polkit-1/actions/org.snitchhiker.manage.policy` | The polkit action for [step-up](/internals/security/#dangerous-actions-need-more-than-a-session) (the Debian and Fedora packages recommend `polkitd`/`polkit`; on Arch, install `polkit`) |
 | `/etc/snitchhiker/daemon.toml` | The [configuration](/reference/configuration/), in monitor mode. Kept on upgrades once changed |
 
 At run time the daemon keeps its database in `/var/lib/snitchhiker/` and its sockets in `/run/snitchhiker/`. It reads rule files from `/etc/snitchhiker/rules.d/` if that directory exists.
@@ -84,6 +104,7 @@ It sees the system read-only (`ProtectSystem=strict`, `ProtectHome=read-only`) a
 ```bash
 sudo apt remove snitchhiker      # Debian, Ubuntu; purge also deletes /etc/snitchhiker
 sudo pacman -R snitchhiker       # Arch Linux
+sudo dnf remove snitchhiker      # Fedora
 ```
 
 The daemon removes its nftables table when it stops, unless `fail = "closed"` keeps it in place; then removing the package leaves a table that holds new connections in a queue nobody reads. Delete it with `sudo nft delete table inet snitchhiker`, and the history with `sudo rm -r /var/lib/snitchhiker`.

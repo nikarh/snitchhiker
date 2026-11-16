@@ -6,6 +6,7 @@
 # release) and 404.html.
 #
 #   scripts/docs-publish.sh <version> <built site>      e.g. scripts/docs-publish.sh v0.2.0 site/dist
+#   scripts/docs-publish.sh repo <package repositories>  the signed package repositories (scripts/package-repos.sh)
 #
 # The site has to be built with DOCS_VERSION=<version>. Pushes with the credentials of the checkout it runs in; another
 # publish pushing in between is retried on top of it.
@@ -19,8 +20,8 @@ branch=gh-pages
 site=https://nikarh.github.io/snitchhiker
 prefix=/snitchhiker/
 
-if ! [[ $version == main || $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "docs-publish: version must be main or vX.Y.Z, not $version" >&2
+if ! [[ $version == main || $version == repo || $version =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "docs-publish: version must be main, repo or vX.Y.Z, not $version" >&2
   exit 1
 fi
 [[ -f $built/index.html ]] || { echo "docs-publish: $built has no index.html" >&2; exit 1; }

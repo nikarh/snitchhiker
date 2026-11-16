@@ -72,3 +72,12 @@ secret-tool lookup service snitchhiker-release-gpg \
     --export-secret-keys 6CFD4BB8304387DB6245A35F87F91E1FCC9299C5 \
   | gh secret set GPG_PRIVATE_KEY --env release --repo nikarh/snitchhiker
 ```
+
+## Package repositories
+
+After a release's files are uploaded, the *Publish* workflow's last job builds the signed package repositories
+(`scripts/package-repos.sh`: apt with `apt-ftparchive`, pacman with `repo-add`, dnf with `createrepo_c`, each in its
+distribution's container) from the release's packages, signs them with the release key (the Release file, the
+pacman database and packages, the rpms and `repomd.xml`), and publishes them to GitHub Pages under `/repo/` beside
+the docs (`scripts/docs-publish.sh repo`). They hold the newest release only. The e2e suite installs through such a
+repository, made with a throwaway key, on every run.
