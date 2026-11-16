@@ -98,7 +98,7 @@ impl Shell {
         for remote in Nodes::load().node {
             if let Ok(key) = crate::nodes::device_key() {
                 let target = Target::Remote {
-                    node: remote.address(),
+                    node: remote.clone(),
                     key,
                 };
                 shell.open(remote.name.clone().into(), target, Some(remote), window, cx);
@@ -151,19 +151,11 @@ impl Shell {
         };
         let text = adding.link.read(cx).value().to_string();
         let device_name = adding.name.read(cx).value().trim().to_owned();
-        // A link, or a code to look up nearby or through the relays of the nodes already known.
-        let target: Result<snitchhiker_remote::PairLink, snitchhiker_remote::code::Code> =
-            match text.parse() {
-                Ok(link) => Ok(link),
-                Err(error) => {
-                    let Ok(code) = text.parse::<snitchhiker_remote::code::Code>() else {
-                        adding.error = Some(format!("{error}, nor a pairing code"));
-                        cx.notify();
-                        return;
-                    };
-                    Err(code)
-                }
-            };
+        if !crate::remote::installed() {
+            adding.error = Some(crate::remote::NOT_INSTALLED.to_owned());
+            cx.notify();
+            return;
+        }
         let relays: Vec<String> = self
             .nodes
             .iter()
@@ -178,40 +170,8 @@ impl Shell {
                 .background_executor()
                 .spawn(async move {
                     let key = crate::nodes::device_key().map_err(|e| e.to_string())?;
-                    let options = snitchhiker_remote::Options {
-                        relays,
-                        lan: true,
-                        ..snitchhiker_remote::Options::default()
-                    };
-                    let (link, response) = match target {
-                        Ok(link) => {
-                            let response = snitchhiker_client::remote::pair(
-                                &key,
-                                &link,
-                                &device_name,
-                                &options,
-                            )
-                            .map_err(|e| e.to_string())?;
-                            (link, response)
-                        }
-                        Err(code) => snitchhiker_client::remote::pair_with_code(
-                            &key,
-                            &code,
-                            &device_name,
-                            &options,
-                        )
-                        .map_err(|e| e.to_string())?,
-                    };
-                    let node = RemoteNode {
-                        name: if response.node_name.is_empty() {
-                            link.name.clone()
-                        } else {
-                            response.node_name
-                        },
-                        id: link.node.id.clone(),
-                        relays: link.node.relays.clone(),
-                        addrs: link.node.addrs.iter().map(ToString::to_string).collect(),
-                    };
+                    // A link, or a code to look up nearby or through the relays of the nodes already known.
+                    let node = crate::remote::pair(&key, &text, &device_name, relays)?;
                     let mut nodes = Nodes::load();
                     nodes.node.retain(|n| n.id != node.id);
                     nodes.node.push(node.clone());
@@ -223,7 +183,7 @@ impl Shell {
                 Ok((node, key)) => {
                     shell.adding = None;
                     let target = Target::Remote {
-                        node: node.address(),
+                        node: node.clone(),
                         key,
                     };
                     shell

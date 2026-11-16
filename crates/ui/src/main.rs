@@ -10,6 +10,7 @@ mod model;
 mod nodes;
 mod notify;
 mod prefs;
+mod remote;
 mod session;
 mod shell;
 mod tray;

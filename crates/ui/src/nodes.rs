@@ -8,7 +8,6 @@
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use snitchhiker_remote::{Key, NodeAddress};
 
 pub const STATE_ROOT: &str = "/var/lib/snitchhiker-ui";
 
@@ -21,17 +20,6 @@ pub struct RemoteNode {
     pub relays: Vec<String>,
     #[serde(default)]
     pub addrs: Vec<String>,
-}
-
-impl RemoteNode {
-    #[must_use]
-    pub fn address(&self) -> NodeAddress {
-        NodeAddress {
-            id: self.id.clone(),
-            relays: self.relays.clone(),
-            addrs: self.addrs.iter().filter_map(|a| a.parse().ok()).collect(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -66,12 +54,32 @@ impl Nodes {
     }
 }
 
-/// This device's key, made the first time.
-pub fn device_key() -> std::io::Result<Key> {
+/// This device's key (an Ed25519 secret key: 32 random bytes), made the first time, readable by its owner only.
+pub fn device_key() -> std::io::Result<[u8; 32]> {
+    use std::io::{Read as _, Write as _};
+    use std::os::unix::fs::OpenOptionsExt as _;
     let dir = state_dir().ok_or_else(|| {
         std::io::Error::other("no state directory (the app wasn't installed by its package)")
     })?;
-    Key::load_or_create(&dir.join("device.key"))
+    let path = dir.join("device.key");
+    match std::fs::read(&path) {
+        Ok(bytes) => bytes
+            .try_into()
+            .map_err(|_| std::io::Error::other(format!("{}: not a key", path.display()))),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let mut key = [0_u8; 32];
+            std::fs::File::open("/dev/urandom")?.read_exact(&mut key)?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&path)?;
+            file.write_all(&key)?;
+            file.sync_all()?;
+            Ok(key)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// What this device is called when it pairs: the machine's name.
@@ -90,7 +98,7 @@ mod tests {
         let nodes = Nodes {
             node: vec![RemoteNode {
                 name: "web".to_owned(),
-                id: Key::generate().id(),
+                id: "62593521b594af9892be6f7182129362a3e946da240fa0b77948873ed9a23a0f".to_owned(),
                 relays: vec!["https://relay.example.org/".to_owned()],
                 addrs: vec!["192.0.2.1:7842".to_owned(), "nonsense".to_owned()],
             }],
@@ -98,6 +106,5 @@ mod tests {
         let text = toml::to_string(&nodes).unwrap();
         let back: Nodes = toml::from_str(&text).unwrap();
         assert_eq!(back.node, nodes.node);
-        assert_eq!(back.node[0].address().addrs.len(), 1);
     }
 }

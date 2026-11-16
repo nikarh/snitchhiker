@@ -26,9 +26,8 @@ ipnet = "2.12.2"
 nix = { version = "0.32.0", default-features = false, features = ["fs", "socket", "user"] }
 qrcode = { version = "0.14.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
-snitchhiker-client = { version = "0.1.0", path = "../client", features = ["cache", "remote"] }
+snitchhiker-client = { version = "0.1.0", path = "../client", features = ["cache"] }
 snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
-snitchhiker-remote = { version = "0.1.0", path = "../remote" }
 toml = "1.2.1"
 zbus = "6.3.0"

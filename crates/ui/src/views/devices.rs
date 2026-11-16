@@ -222,7 +222,7 @@ impl Render for Devices {
             None => page = page.child(div().text_color(theme.muted_foreground).child("Loading…")),
             Some(list) if !list.remote => {
                 page = page.child(div().text_color(theme.muted_foreground).child(
-                    "This node doesn't accept devices over the network: set remote = true in its daemon.toml.",
+                    "This node doesn't accept devices over the network: its remote access isn't running. Install the snitchhiker-remote package there, then systemctl enable --now snitchhiker-remote.",
                 ));
             }
             Some(list) => {

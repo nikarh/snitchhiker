@@ -218,31 +218,23 @@ pub fn start(
 
 /// A node the app connects to.
 #[derive(Clone)]
-#[expect(clippy::large_enum_variant, reason = "made once per node")]
 pub enum Target {
     /// This machine's, by its client socket.
     Local(PathBuf),
-    /// Another's, over the network, as this device (its key).
+    /// Another's, over the network (through `snitchhiker-remote`), as this device (its key).
     Remote {
-        node: snitchhiker_remote::NodeAddress,
-        key: snitchhiker_remote::Key,
+        node: crate::nodes::RemoteNode,
+        key: [u8; 32],
     },
 }
 
 fn connect(target: &Target) -> Result<Client, ClientError> {
     match target {
         Target::Local(socket) => Client::connect(socket, APP, env!("CARGO_PKG_VERSION")),
-        Target::Remote { node, key } => snitchhiker_client::remote::connect(
-            key,
-            node,
-            // The node's relays (from its address), and its address looked up on the local network too.
-            &snitchhiker_remote::Options {
-                lan: true,
-                ..snitchhiker_remote::Options::default()
-            },
-            APP,
-            env!("CARGO_PKG_VERSION"),
-        ),
+        Target::Remote { node, key } => {
+            let stream = crate::remote::connect(key, node).map_err(std::io::Error::other)?;
+            Client::handshake(stream, None, APP, env!("CARGO_PKG_VERSION"))
+        }
     }
 }
 
