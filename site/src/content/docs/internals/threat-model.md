@@ -62,7 +62,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 | Undoing the firewall with a session | Changes judged by the rules they leave in force: broad allow rules, many rules turned off, a looser policy or system firewall, less history, unpairing or muting another device all need polkit | `step-up/*` |
 | An agent approving itself | The agent role proposes and reads its own blocked connections; a person approves, broad proposals with step-up | `agents/*` |
 | Making root read a file | Local blocklists only from `/etc/snitchhiker/lists`, never through a link out of it | `daemon/blocklists-block-what-is-on-them` |
-| Tampering with the table | nftables notifications: restored, alerted | `tamper/*`, `containers/a-rootless-podman-container-is-decided-inside-its-namespace` |
+| Tampering with the table | The kernel's announcement of a deleted table (the host's and each managed namespace's): put back at once, alerted | `tamper/*`, `containers/a-rootless-podman-container-is-decided-inside-its-namespace` |
 
 ### The client and the session
 

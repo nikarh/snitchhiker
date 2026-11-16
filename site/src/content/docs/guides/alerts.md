@@ -12,11 +12,11 @@ An alert is something worth looking at that doesn't need an answer now, unlike a
 | Alert | When |
 | --- | --- |
 | The daemon stopped unexpectedly | At start, when the last run didn't stop cleanly: it crashed, was killed, or the machine lost power. |
-| Something removed an nftables table | Another tool deleted the daemon's table or the [system firewall](/guides/system-firewall/)'s (a `nft flush ruleset`, typically). The table is put back within ten seconds. |
+| Something removed an nftables table | Another tool deleted the daemon's table or the [system firewall](/guides/system-firewall/)'s (a `nft flush ruleset`, typically). The table is put back at once. |
 | The kernel dropped packets waiting for a decision | The daemon's queues overflowed: new connections were refused while that lasted. |
 | Connections weren't recorded | The database couldn't keep up, so some decided connections are missing from the history. |
 | Reloading the rules failed | A rule file in `rules.d` is invalid; the rules from before stay in effect. |
-| A dangerous action | A client was allowed one ([step-up](/reference/configuration/#step_up)): a rule allowing everything, a big deletion, loosening the policy, turning the system firewall off. |
+| A dangerous action | A client was allowed one ([step-up](/reference/configuration/#step_up)): a rule that allows broadly, many rules turned off at once, loosening the policy, turning the system firewall off, pairing a device. |
 
 ## Alert rules
 

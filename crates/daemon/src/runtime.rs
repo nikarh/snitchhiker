@@ -433,15 +433,29 @@ impl Daemon {
         }
     }
 
-    /// Every few seconds, checks that the tables are still there: one removed by someone else is put back, with an alert.
+    /// Whenever the kernel announces that the daemon's table or the system firewall's was deleted, checks they are
+    /// still there: one removed by someone else is put back, with an alert. (The daemon's own reinstalls delete and
+    /// create its table in one transaction: by the time their announcement is read, it is there.)
     fn spawn_table_watch(self: &Arc<Self>) -> std::io::Result<()> {
+        let mut monitor = snitchhiker_netfilter::nftables::Monitor::open()?;
         let daemon = Arc::clone(self);
         thread::Builder::new()
             .name("table-watch".to_owned())
             .spawn(move || {
+                let names = [daemon.table.name.as_str(), crate::system::TABLE];
                 loop {
-                    thread::sleep(TABLE_WATCH_EVERY);
-                    daemon.check_tables();
+                    match monitor.deleted_any(&names) {
+                        Ok(true) => daemon.check_tables(),
+                        Ok(false) => {}
+                        // Announcements were lost (the socket's buffer overflowed): one may have been a deletion.
+                        Err(error) if error.raw_os_error() == Some(nix::libc::ENOBUFS) => {
+                            daemon.check_tables();
+                        }
+                        Err(error) => {
+                            warn!(%error, "following the nftables changes; removed tables are no longer put back");
+                            return;
+                        }
+                    }
                 }
             })?;
         Ok(())
@@ -1805,7 +1819,6 @@ fn config_marker(config: &Config) -> std::path::PathBuf {
 }
 
 /// How often the tables are checked.
-const TABLE_WATCH_EVERY: Duration = Duration::from_secs(10);
 /// How often the counters of what was lost are checked.
 const LOSS_CHECK_EVERY: Duration = Duration::from_secs(60);
 

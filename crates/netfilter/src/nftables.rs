@@ -885,6 +885,11 @@ impl Monitor {
 
     /// Reads what the kernel announced; whether the table `name` was deleted.
     pub fn deleted(&mut self, name: &str) -> std::io::Result<bool> {
+        self.deleted_any(&[name])
+    }
+
+    /// Reads what the kernel announced; whether any of the tables `names` was deleted.
+    pub fn deleted_any(&mut self, names: &[&str]) -> std::io::Result<bool> {
         self.receive.clear();
         self.socket.recv(&mut self.receive, 0)?;
         let mut deleted = false;
@@ -897,8 +902,8 @@ impl Monitor {
                 .get(crate::netlink::NFGENMSG_LEN..)
                 .unwrap_or_default();
             deleted |= crate::netlink::attributes(body).any(|(kind, value)| {
-                kind == NFTA_TABLE_NAME
-                    && value.strip_suffix(&[0]).unwrap_or(value) == name.as_bytes()
+                let value = value.strip_suffix(&[0]).unwrap_or(value);
+                kind == NFTA_TABLE_NAME && names.iter().any(|name| value == name.as_bytes())
             });
         }
         Ok(deleted)

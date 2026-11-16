@@ -1023,7 +1023,8 @@ pub fn alerts_are_raised_and_acknowledged() -> Result<(), String> {
     daemon.cli(&["policy", "set", "retention_days=7"])?;
     daemon.cli(&["policy", "set", "no_match=allow"])?;
     run("nft", &["delete", "table", "inet", "snitchhiker"])?;
-    thread::sleep(Duration::from_secs(12));
+    // Put back as soon as the kernel announces the deletion.
+    thread::sleep(Duration::from_secs(1));
     let table_back = run("nft", &["list", "tables"])?.contains("inet snitchhiker\n");
     let raised = daemon.cli(&["alerts"])?;
     let status = daemon.cli(&["status"])?;
