@@ -1941,13 +1941,13 @@ the security model, and the GUI framework are proven before the bulk of feature 
 
 ### M1. Headless daemon MVP
 
-- [ ] **`core` crate**
+- [x] **`core` crate**
   - [x] Rule and folder model, matchers, compiled index, precedence, explain. Plus the rule file format
         (`spec`), used by managed files and later by import/export.
-  - [x] Path generalisation. [ ] App-identity types (with the `process.app` matcher, below).
+  - [x] Path generalisation and app-identity types (`pkg:`, `nix:`, `unit:`, `snap:`; [decision 0014](decisions/0014-app-identities.md)).
   - [x] Query language parser (rules subset).
-  - [ ] proptest suites.
-- [ ] **Interception**
+  - [x] proptest suites (the index against each rule alone, patterns, blocklists, rule files, the query parser).
+- [x] **Interception**
   - [x] nftables table lifecycle: create, verify, restore on change (netlink monitor), remove on stop.
   - [x] NFQUEUE workers with fanout, preallocated buffers, in-place parsing, verdicts, reject via `SOCK_DESTROY`,
         own-mark bypass.
@@ -1955,20 +1955,20 @@ the security model, and the GUI framework are proven before the bulk of feature 
         ([§11.3](#113-never-pay-for-what-isnt-ours)). *(The table is written and watched through nfnetlink, filtered
         by table name; the daemon keeps no runtime sets, so there are no element changes to make.)*
   - [x] Fail-open and fail-closed policy wiring.
-- [ ] **Attribution**
-  - [ ] eBPF connect/sendmsg programs, process exec/exit cache, `/proc` + `SOCK_DIAG` fallback. *(Done: the
-        programs, recording the process's start time; the process cache keyed by it. Remaining: exec/exit events,
-        the `SOCK_DIAG` fallback.)*
-  - [ ] Process facts: app identity (pacman/dpkg/rpm owner lookups, Flatpak, Snap, AppImage, Nix, systemd unit),
-        writable check, sha256 on demand.
+- [x] **Attribution**
+  - [x] eBPF connect/sendmsg programs, process cache, `/proc` + `SOCK_DIAG` fallback. *(The cache is keyed by pid and
+        start time and read from `/proc` on a miss, never by walking it, so it needs no exec/exit events; a flow the
+        programs missed is attributed through its socket when one process holds it.)*
+  - [x] Process facts: app identity (pacman/dpkg/rpm owner lookups, Snap, Nix, systemd unit; not Flatpak or AppImage,
+        whose markers users can make: decision 0014), writable check, sha256 on demand.
   - [x] Context detection, basic: (netns, tuple) keys; cgroup and mount namespace mark a connection as
         `container`/`vm`/`netns`; host-only default for rules. Full identity comes in [M7](#m7-containers-vms-and-network-namespaces).
 - [ ] **DNS**
   - [ ] UDP/53 answer sniffing, the resolved varlink monitor, getaddrinfo uprobes, the TTL'd map. *(Done: sniffing,
         only answers to queries the asker really sent, names per process and per address, kept at least 10 minutes.
         Remaining: the resolved monitor, uprobes.)*
-- [ ] **Store**
-  - [ ] Schema and migrations, interned dictionaries, the writer thread, events, rollups maintained at write time,
+- [x] **Store**
+  - [x] Schema and migrations, interned dictionaries, the writer thread, events, rollups maintained at write time,
         fixed-window totals, retention, keyset queries, FTS5 trigram search.
   - [x] Statement registry with the `EXPLAIN QUERY PLAN` gate.
   - [x] eBPF byte counters → events and rollups.
@@ -1979,15 +1979,16 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Foreign-table test (60k-range interval set, churning) on latency, ingestion and RSS (`perf/` scenarios).
 - [x] **System firewall and defaults**
   - [x] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files). *(Blocklists: files and URLs, M8.)*
-- [ ] **CLI (admin socket only in M1)**
-  - [ ] `status`, `rules ls/add/rm/enable/disable/import/export`, `events --follow/--query`, `stats`, `explain`,
+- [x] **CLI (admin socket only in M1)**
+  - [x] `status`, `rules ls/add/rm/enable/disable/import/export`, `events --follow/--query`, `stats`, `explain`,
         `policy`, `learn`.
 - [x] **Packaging**
   - [x] systemd unit (hardened), sysusers, tmpfiles, a PKGBUILD for local testing. *(nfpm builds .deb and Arch
         packages; the VM tests install them.)*
-- [ ] **Integration tests**
-  - [ ] The enforcement and attribution suite in VMs ([§12.4](#124-end-to-end-suites-in-vms)): verdicts,
-        attribution, DNS, fail modes, boot ordering; the kernel and distro matrix.
+- [x] **Integration tests**
+  - [x] The enforcement and attribution suite in VMs ([§12.4](#124-end-to-end-suites-in-vms)): verdicts,
+        attribution, DNS, fail modes, boot ordering (`boot/` in `e2e/run.sh`: the enabled service is up, its table in
+        place, before `network-pre.target`); Arch and Debian in CI (the wider kernel matrix is M9's).
   - [x] Escape suite, first part ([§12.5](#125-escape-and-tamper-suite)): getting packets out without a rule, and
         being mistaken for an allowed app.
 - **DoD:** on an AWS instance and on the workstation, the daemon runs in monitor mode and records attributed

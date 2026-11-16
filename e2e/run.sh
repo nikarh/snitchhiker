@@ -44,6 +44,34 @@ e2e/vm.sh node put "target/${dir}/snitchhiker-relay" /tmp/snitchhiker-relay
 e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-relay /usr/local/bin/'
 
 status=0
-e2e/vm.sh node ssh sudo snitchhiker-e2e "${1:-}" || status=$?
+if [[ ${1:-} != boot* ]]; then
+  e2e/vm.sh node ssh sudo snitchhiker-e2e "${1:-}" || status=$?
+fi
+
+# Boot ordering, outside the runner (a reboot would end it): the packaged service, enabled, is up and its table in
+# place before the network is, so nothing gets out undecided at boot.
+if [[ -z ${1:-} || boot/daemon-is-up-before-the-network == *"${1}"* ]]; then
+  e2e/vm.sh node ssh 'sudo systemctl enable snitchhikerd >/dev/null 2>&1; sudo systemctl reboot' || true
+  sleep 5
+  for _ in $(seq 1 90); do
+    e2e/vm.sh node ssh true >/dev/null 2>&1 && break
+    sleep 2
+  done
+  found=$(e2e/vm.sh node ssh 'set -e
+    daemon=$(systemctl show -P ActiveEnterTimestampMonotonic snitchhikerd.service)
+    network=$(systemctl show -P ActiveEnterTimestampMonotonic network-pre.target)
+    echo "daemon ready at ${daemon} us, network-pre at ${network} us"
+    systemctl is-active snitchhikerd
+    sudo nft list table inet snitchhiker >/dev/null && echo "table in place"
+    [ "${daemon}" -gt 0 ] && [ "${network}" -gt 0 ] && [ "${daemon}" -le "${network}" ] && echo ordered' 2>&1) || true
+  if [[ ${found} == *ordered* && ${found} == *"table in place"* ]]; then
+    echo "ok    boot/daemon-is-up-before-the-network"
+  else
+    echo "FAIL  boot/daemon-is-up-before-the-network"
+    echo "      the daemon wasn't up, or its table in place, before the network; found:"
+    sed 's/^/      /' <<<"${found}"
+    status=1
+  fi
+fi
 [[ -n ${KEEP_VM:-} ]] || e2e/vm.sh node down
 exit "${status}"
