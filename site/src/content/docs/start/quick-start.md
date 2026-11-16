@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-The packages start the daemon in **monitor mode**: nothing is blocked, and every connection is recorded with the decision that would have been made. A few days of that, then rules made from what was seen, then enforcing, is the safe way onto a machine you depend on.
+The packages start the daemon in **monitor mode**: nothing is blocked, and every connection is recorded with the decision that would have been made. A few days of that, then rules made from what was seen, then enforcing, is the safe way onto a machine you depend on. On a server, [Servers](/guides/servers/) goes through the same with rule files provisioned by your configuration management and a phone to answer.
 
 ## 1. Install
 

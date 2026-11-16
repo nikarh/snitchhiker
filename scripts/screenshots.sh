@@ -31,6 +31,10 @@ snitchhiker rules add allow --exe /usr/bin/curl --uid 0 --net 203.0.113.0/24 --n
 snitchhiker rules add deny --host log.spotify.com --host "*.visualstudio.com" --tier override --name "telemetry" >/dev/null
 snitchhiker alerts rules add "Anything to the metadata service" --query "ip:169.254.169.254" >/dev/null
 snitchhiker alerts rules add "New programs" --first-program >/dev/null
+printf "# trackers\n0.0.0.0 metrics.example.net telemetry.example.org\n||ads.example.com^\n198.51.100.0/24\n" >/etc/snitchhiker/trackers.txt
+snitchhiker lists add trackers /etc/snitchhiker/trackers.txt >/dev/null
+snitchhiker rules add deny --list trackers --any-context --name "trackers" >/dev/null
+snitchhiker envelopes add "package registries" --project "glob:{home}/src/**" --host registry.npmjs.org --host crates.io --host "*.crates.io" --port 443 >/dev/null
 nft delete table inet snitchhiker && sleep 11
 snitchhiker system import-opensnitch /dev/stdin >/dev/null 2>&1 <<J || true
 {"Enabled": true, "SystemRules": [{"Chains": [{"Name": "filter_input", "Family": "inet", "Type": "filter",
@@ -52,7 +56,10 @@ key Escape
 click 66 319
 sleep 2
 shot explorer
-click 66 391
+click 66 355
+sleep 2
+shot containers
+click 66 427
 sleep 2
 shot rules
 click 1165 121
@@ -62,10 +69,13 @@ key Escape
 click 66 211
 sleep 2
 shot alerts
-click 66 499
+click 66 535
 sleep 2
 shot firewall
-click 66 571
+click 66 607
+sleep 2
+shot blocklists
+click 66 643
 sleep 2
 shot settings
 for i in $(seq 1 12); do
