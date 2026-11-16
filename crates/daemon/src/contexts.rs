@@ -238,7 +238,19 @@ impl Contexts {
             .collect();
         let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
             .map_or_else(|_| String::new(), |p| p.to_string_lossy().into_owned());
-        let vm = vm_from_command_line(&args, &exe);
+        let mut vm = vm_from_command_line(&args, &exe);
+        // What the command line doesn't say, systemd-machined may: VMs registered with it (systemd-vmspawn's, and
+        // libvirt's) by their leader process.
+        if (vm.name.is_empty() || vm.uuid.is_empty())
+            && let Some((name, uuid)) = machine_of(pid)
+        {
+            if vm.name.is_empty() {
+                vm.name = name;
+            }
+            if vm.uuid.is_empty() {
+                vm.uuid = uuid;
+            }
+        }
         let key = Container {
             runtime: vm.hypervisor.clone(),
             id: vm.uuid.clone(),
@@ -290,6 +302,69 @@ fn tap_holder(tap: &str) -> Option<u32> {
         }
     }
     None
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.machine1.Manager",
+    default_service = "org.freedesktop.machine1",
+    default_path = "/org/freedesktop/machine1"
+)]
+trait MachineManager {
+    #[zbus(name = "GetMachineByPID")]
+    fn get_machine_by_pid(&self, pid: u32) -> zbus::Result<zbus::OwnedObjectPath>;
+}
+
+#[zbus::proxy(
+    interface = "org.freedesktop.machine1.Machine",
+    default_service = "org.freedesktop.machine1"
+)]
+trait Machine {
+    #[zbus(property)]
+    fn name(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn class(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn id(&self) -> zbus::Result<Vec<u8>>;
+}
+
+/// The name and UUID systemd-machined has for the VM whose leader is `pid` (or whose scope `pid` is in); `None` when
+/// machined isn't running or doesn't know it as a VM.
+fn machine_of(pid: u32) -> Option<(String, String)> {
+    zbus::block_on(async {
+        let connection = zbus::Connection::system().await?;
+        let path = MachineManagerProxy::new(&connection)
+            .await?
+            .get_machine_by_pid(pid)
+            .await?;
+        let machine = MachineProxy::builder(&connection)
+            .path(path)
+            .build()
+            .await?;
+        if machine.class().await? != "vm" {
+            return Ok::<_, zbus::Error>(None);
+        }
+        let id = machine.id().await.unwrap_or_default();
+        Ok(Some((machine.name().await?, uuid_text(&id))))
+    })
+    .ok()
+    .flatten()
+}
+
+/// A UUID's 16 bytes as text (`8-4-4-4-12` hex digits); empty for anything else.
+fn uuid_text(bytes: &[u8]) -> String {
+    if bytes.len() != 16 || bytes.iter().all(|b| *b == 0) {
+        return String::new();
+    }
+    let hex: String = bytes.iter().fold(String::with_capacity(32), |mut hex, b| {
+        use std::fmt::Write as _;
+        let _ = write!(hex, "{b:02x}");
+        hex
+    });
+    [0..8, 8..12, 12..16, 16..20, 20..32]
+        .into_iter()
+        .filter_map(|range| hex.get(range))
+        .collect::<Vec<_>>()
+        .join("-")
 }
 
 /// A VM as its hypervisor's command line describes it.
@@ -648,6 +723,14 @@ mod tests {
         );
         assert_eq!(named("/user.slice/user-1000.slice/session-2.scope"), None);
         assert_eq!(named("/system.slice/docker-notanid.scope"), None);
+    }
+
+    #[test]
+    fn machined_ids_read_as_uuids() {
+        let bytes: Vec<u8> = (1..=16).collect();
+        assert_eq!(uuid_text(&bytes), "01020304-0506-0708-090a-0b0c0d0e0f10");
+        assert_eq!(uuid_text(&[0; 16]), "");
+        assert_eq!(uuid_text(&[1, 2]), "");
     }
 
     #[test]

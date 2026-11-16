@@ -797,3 +797,100 @@ pub fn docker_on_its_nftables_backend_is_decided_too() -> Result<(), String> {
     restore();
     result
 }
+
+/// A real VM, started by libvirt on its default network (`virbr0`): this machine's kernel with a busybox initramfs
+/// that connects out every second. Its connections are forwarded from the bridge, and decided by the VM's name.
+pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
+    const GUEST: &str = "e2e-guest";
+    run("systemctl", &["start", "libvirtd"])?;
+    let _ = run("virsh", &["net-start", "default"]);
+    let images = "/var/lib/libvirt/images";
+    std::fs::create_dir_all(images).map_err(|e| e.to_string())?;
+    initramfs(&format!("{images}/e2e-initrd.cpio"))?;
+    let release = run("uname", &["-r"])?;
+    let kernel = [
+        format!("/boot/vmlinuz-{}", release.trim()),
+        "/boot/vmlinuz-linux".to_owned(),
+        format!("/usr/lib/modules/{}/vmlinuz", release.trim()),
+    ]
+    .into_iter()
+    .find(|p| std::path::Path::new(p).exists())
+    .ok_or("no kernel image to boot")?;
+    std::fs::copy(&kernel, format!("{images}/e2e-vmlinuz")).map_err(|e| e.to_string())?;
+    let domain = format!(
+        "<domain type='kvm'><name>{GUEST}</name><memory unit='MiB'>192</memory><vcpu>1</vcpu>\
+         <os><type arch='x86_64'>hvm</type><kernel>{images}/e2e-vmlinuz</kernel>\
+         <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 quiet panic=-1</cmdline></os>\
+         <devices><interface type='network'><source network='default'/><model type='virtio'/></interface>\
+         <serial type='pty'/></devices></domain>"
+    );
+    std::fs::write("/tmp/e2e-guest.xml", domain).map_err(|e| e.to_string())?;
+    let daemon = Running::start("libvirt", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--vm",
+        GUEST,
+        "--port",
+        "8096",
+        "--name",
+        "the guest",
+    ])?;
+    let _ = run("virsh", &["destroy", GUEST]);
+    run("virsh", &["create", "/tmp/e2e-guest.xml"])?;
+    let mut seen = Vec::new();
+    for _ in 0..60 {
+        thread::sleep(Duration::from_secs(1));
+        seen = decisions(&daemon, "203.0.113.9")?;
+        if seen.iter().any(|l| l.contains(":8096")) && seen.iter().any(|l| l.contains(":8097")) {
+            break;
+        }
+    }
+    let _ = run("virsh", &["destroy", GUEST]);
+    let found = seen.join("\n");
+    check(
+        seen.iter()
+            .any(|l| l.contains("allow") && l.contains(GUEST) && l.contains(":8096")),
+        "the VM's connection allowed by name wasn't seen as the VM's",
+        &found,
+    )?;
+    check(
+        seen.iter()
+            .any(|l| l.contains("deny") && l.contains(":8097")),
+        "the VM's other connection wasn't blocked",
+        &found,
+    )
+}
+
+/// An initramfs (newc cpio) whose init loads virtio-net, takes 192.168.122.50 on libvirt's default network, and
+/// connects to 203.0.113.95:8096 and :8097 every second.
+fn initramfs(path: &str) -> Result<(), String> {
+    let busybox = run("sh", &["-c", "command -v busybox"])?;
+    let script = format!(
+        r"set -e
+d=$(mktemp -d); mkdir -p $d/bin $d/modules $d/proc $d/sys $d/dev
+cp {busybox} $d/bin/busybox
+for a in sh insmod ip wget sleep mount; do ln -s busybox $d/bin/$a; done
+m=/usr/lib/modules/$(uname -r)/kernel
+for k in net/core/failover drivers/net/net_failover drivers/net/virtio_net; do
+  f=$(ls $m/$k.ko* | head -1)
+  case $f in *.zst) zstd -qdc $f ;; *.xz) xz -dc $f ;; *.gz) gzip -dc $f ;; *) cat $f ;; esac > $d/modules/$(basename $k).ko
+done
+cat > $d/init <<'INIT'
+#!/bin/sh
+mount -t proc proc /proc; mount -t sysfs sys /sys
+for k in failover net_failover virtio_net; do insmod /modules/$k.ko 2>/dev/null; done
+ip link set eth0 up; ip addr add 192.168.122.50/24 dev eth0; ip route add default via 192.168.122.1
+while true; do
+  wget -T 1 -q -O /dev/null http://203.0.113.95:8096/; wget -T 1 -q -O /dev/null http://203.0.113.95:8097/
+  sleep 1
+done
+INIT
+chmod +x $d/init
+(cd $d && find . | {busybox} cpio -o -H newc 2>/dev/null) > {path}
+rm -rf $d",
+        busybox = busybox.trim()
+    );
+    run("sh", &["-c", &script]).map(|_| ())
+}

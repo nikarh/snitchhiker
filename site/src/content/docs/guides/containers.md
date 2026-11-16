@@ -43,7 +43,7 @@ Named by their cgroup (`systemd-nspawn@<name>.service`, `lxc.payload.<name>`): `
 
 ### VMs
 
-A VM on a bridge (libvirt's default network `virbr0`, any tap on a bridge in [`forward_from`](/reference/configuration/#forward_from)) is named by the process holding its tap open, and that process's command line: QEMU's `-name guest=…` and `-uuid`, as libvirt starts it. Nothing inside a VM can be known from the host, so rules on a VM name the VM and destinations. A VM bridged straight onto the LAN with a physical interface isn't seen yet.
+A VM on a bridge (libvirt's default network `virbr0`, any tap on a bridge in [`forward_from`](/reference/configuration/#forward_from)) is named by the process holding its tap open, and that process's command line: QEMU's `-name guest=…` and `-uuid`, as libvirt starts it. What the command line doesn't say, systemd-machined does for VMs registered with it (systemd-vmspawn's, libvirt's). Nothing inside a VM can be known from the host, so rules on a VM name the VM and destinations. A VM bridged straight onto the LAN with a physical interface isn't seen yet.
 
 ### Named network namespaces
 

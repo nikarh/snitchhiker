@@ -2225,7 +2225,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         its command line, resolved through the runtime's processes (pasta sandboxes itself).
   - [x] A forwarded packet's sender: the bridge's forwarding database by source address, the veth's peer namespace
         ([decision 0013](decisions/0013-forwarded-senders.md): the bridge port isn't in the packet's metadata at the IP
-        hooks). VM tap → its process via `/proc/<pid>/fdinfo` `iff:`. [ ] machined lookups (the command line names
+        hooks). VM tap → its process via `/proc/<pid>/fdinfo` `iff:`. [x] machined lookups (the command line names
         libvirt's VMs already).
 - [x] **Forward-path interception**
   - [x] `forward` chain queueing from the bridges in `forward_from` (Docker, Podman, CNI, libvirt, LXD, Incus), at
@@ -2253,7 +2253,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
       Containers & VMs view.
 - [x] **Tests:** bridged Docker containers, rules by name/image/Compose service, a container's prompt and its answer,
       rootful and rootless Podman (inside the namespace, and its tamper), named namespaces, a VM on a bridge (a tap
-      held by a process with QEMU's command line). [ ] A real libvirt VM; Docker on native nftables.
+      held by a process with QEMU's command line). [x] A real libvirt VM (the node's kernel and a busybox initramfs, under nested KVM); Docker on native nftables.
 - **DoD:** a Compose project's `web` service is allowed to reach its API host and nothing else, a host rule for
   `/usr/bin/curl` does not let `curl` inside a container out, a libvirt VM shows up by name and can be limited to a set
   of destinations, and rootless Podman traffic is decided per binary inside the container rather than attributed to `pasta`.

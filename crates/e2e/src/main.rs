@@ -319,6 +319,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::docker_on_its_nftables_backend_is_decided_too,
     ),
     (
+        "containers/a-libvirt-vm-is-decided-by-its-name",
+        containers::a_libvirt_vm_is_decided_by_its_name,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),
