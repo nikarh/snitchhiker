@@ -2106,21 +2106,21 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 - [x] **`process.session` matcher**
   - [x] Pidfd-held ancestor matching (pid and start time); rules removed when the process exits (the daemon waits on
         pidfds); after a daemon restart, rules of agents gone are removed at start.
-- [ ] **Proposal engine**
+- [x] **Proposal engine**
   - [x] Validation and shaping: grounding in observed events (the program the kernel saw), over-breadth checks
         (Public Suffix List, ranges, sensitive aliases), defaults (session scope, folder), dedupe, rate limits.
   - [x] Proposal lifecycle and storage; approval with edits; reasons returned to the agent; expiry with the agent.
-  - [ ] Envelopes (dangerous tier to configure), auto-approval with audit log (moved to M8: off by default, and
+  - [x] Envelopes (dangerous tier to configure), auto-approval with audit log (moved to M8: off by default, and
         decision 0008 leaves it for later).
 - [x] **`snitchhiker mcp`**
   - [x] stdio MCP server (by hand, decision 0009): `get_status`, `check_connection`, `recent_blocked`,
         `propose_rules`, `get_proposal`, `wait_for_proposal`, `withdraw_proposal`, `annotate_pending`.
   - [x] Tool descriptions written so agents propose narrow rules (examples of good and bad proposals).
   - [x] Docs: registering with Claude Code and other MCP clients.
-- [ ] **Desktop review UI**
+- [x] **Desktop review UI**
   - [x] Proposal prompts with provenance, untrusted-text styling, risk badges, evidence, edit and approve; agents'
         notes on prompts; notifications.
-  - [x] Proposal history. [ ] Mute per process tree; envelopes editor (with envelopes, M8).
+  - [x] Proposal history. [x] Mute per process tree; envelopes editor (with envelopes, M8).
 - [x] **Docs:** the generated MCP tools reference; the "Agents and MCP" guide with registration for Claude Code and
       other clients, and examples of good and rejected proposals.
 - [x] **Tests:** an agent in the VM sees only its own refused connections, proposes, is approved (command line and
@@ -2262,8 +2262,8 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] User alert rules (query + threshold + window), deliveries (clients, push, webhook, journal), acknowledge sync.
 - [x] **Rule hygiene**
   - [x] "Binary moved" detection with one-click generalisation, never-hit rules, merge suggestions.
-- [ ] **Agent envelopes and muting** (from M4)
-  - [ ] Pre-authorized envelopes (a dangerous action to configure), auto-approval inside them with an audit log, their
+- [x] **Agent envelopes and muting** (from M4)
+  - [x] Pre-authorized envelopes (a dangerous action to configure), auto-approval inside them with an audit log, their
         editor; muting proposals of a process tree.
 - [x] **Blocklists from URLs**
   - [x] Refresh schedule, integrity (size limits, format checks), stats per list.

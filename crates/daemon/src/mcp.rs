@@ -399,6 +399,7 @@ fn proposal_json(p: &v1::Proposal) -> Value {
         "reason": if p.reason.is_empty() { None } else { Some(&p.reason) },
         "rules": rules,
         "folder": if p.folder.is_empty() { None } else { Some(&p.folder) },
+        "envelope": if p.envelope.is_empty() { None } else { Some(&p.envelope) },
         "note": note,
     })
 }

@@ -74,6 +74,7 @@ impl Proposals {
     /// Lists the proposals again (those answered too).
     pub fn refresh(&self) {
         let _ = self.requests.send(Request::Proposals);
+        let _ = self.requests.send(Request::Envelopes);
     }
 
     fn draft(&mut self, proposal: &v1::Proposal, window: &mut Window, cx: &mut Context<Self>) {
@@ -122,7 +123,7 @@ impl Proposals {
         );
     }
 
-    fn decide(&self, proposal: &v1::Proposal, approve: bool, cx: &Context<Self>) {
+    fn decide(&self, proposal: &v1::Proposal, approve: bool, mute: bool, cx: &Context<Self>) {
         let Some(draft) = self.drafts.get(&proposal.id) else {
             return;
         };
@@ -168,6 +169,7 @@ impl Proposals {
             reason: text(&draft.reason).trim().to_owned(),
             duration: duration.into(),
             rules: if edited { rules } else { Vec::new() },
+            mute,
         }));
     }
 
@@ -308,14 +310,28 @@ impl Proposals {
                 })
                 .primary()
                 .disabled(!armed || !draft.include.iter().any(|i| *i))
-                .on_click(cx.listener(move |this, _, _, cx| this.decide(&proposal, true, cx)))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.decide(&proposal, true, false, cx)),
+                )
         };
         let deny = {
             let proposal = proposal.clone();
             Button::new(SharedString::from(format!("deny-{id}")))
                 .label("Deny")
                 .disabled(!armed)
-                .on_click(cx.listener(move |this, _, _, cx| this.decide(&proposal, false, cx)))
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.decide(&proposal, false, false, cx)),
+                )
+        };
+        let mute = {
+            let proposal = proposal.clone();
+            Button::new(SharedString::from(format!("mute-{id}")))
+                .label("Deny and mute this agent")
+                .ghost()
+                .disabled(!armed)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.decide(&proposal, false, true, cx)),
+                )
         };
         v_flex()
             .gap_3()
@@ -333,7 +349,7 @@ impl Proposals {
             .child(v_flex().gap_2().children(rules))
             .child(h_flex().gap_1().children(durations))
             .child(Input::new(&draft.reason))
-            .child(h_flex().gap_2().child(approve).child(deny))
+            .child(h_flex().gap_2().child(approve).child(deny).child(mute))
             .into_any_element()
     }
 }
@@ -515,7 +531,12 @@ impl Render for Proposals {
             .when(!answered.is_empty(), |page| {
                 page.child(div().text_lg().child("Answered"))
                     .children(history)
-            });
+            })
+            .child(crate::views::envelopes::section(
+                self.model.read(cx).envelopes.as_ref(),
+                &self.requests,
+                cx,
+            ));
         div()
             .id("proposals")
             .size_full()

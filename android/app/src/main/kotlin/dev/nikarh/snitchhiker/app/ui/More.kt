@@ -20,6 +20,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +35,7 @@ import dev.nikarh.snitchhiker.app.SnitchhikerApp
 import kotlinx.coroutines.launch
 import snitchhiker.v1.ChainPolicy
 import snitchhiker.v1.DecideProposal
+import snitchhiker.v1.DeleteEnvelope
 import snitchhiker.v1.Dimension
 import snitchhiker.v1.EditedRule
 import snitchhiker.v1.Explore
@@ -44,11 +46,13 @@ import snitchhiker.v1.KillConnection
 import snitchhiker.v1.ListChanges
 import snitchhiker.v1.ListConnections
 import snitchhiker.v1.ListDevices
+import snitchhiker.v1.ListEnvelopes
 import snitchhiker.v1.ListProposals
 import snitchhiker.v1.Mode
 import snitchhiker.v1.Policy
 import snitchhiker.v1.ProposalDuration
 import snitchhiker.v1.ProposalState
+import snitchhiker.v1.PutEnvelope
 import snitchhiker.v1.RemoveDevice
 import snitchhiker.v1.Request
 import snitchhiker.v1.Role
@@ -168,6 +172,42 @@ private fun ProposalsPage(
     Page(modifier) {
         item { Problem(list.error) }
         items(list.value.orEmpty(), key = { it.id }) { proposal -> ProposalCard(session, proposal, list.reload) }
+        item { EnvelopesCard(session) }
+    }
+}
+
+/** Envelopes: shown, turned on or off and removed here (both ask for step-up); added from the desktop or the CLI. */
+@Composable
+private fun EnvelopesCard(session: NodeSession) {
+    val scope = rememberCoroutineScope()
+    var generation by remember { mutableIntStateOf(0) }
+    val envelopes = rememberRequest(session, generation, { Request(list_envelopes = ListEnvelopes()) }) { it.envelopes?.envelopes }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun act(request: Request) {
+        scope.launch {
+            error = run(session, request)
+            generation++
+        }
+    }
+    Item {
+        Text("Envelopes", style = MaterialTheme.typography.titleMedium)
+        Muted("Proposals from allow-listed agents inside an envelope are approved without asking, for the agent's session.")
+        Problem(envelopes.error ?: error)
+        if (envelopes.value?.isEmpty() == true) Muted("None: every proposal waits for you.")
+        for (e in envelopes.value.orEmpty()) {
+            Text(e.name + if (e.enabled) "" else " (off)", style = MaterialTheme.typography.titleSmall)
+            Muted(
+                "Agents in ${e.project} may reach ${e.hosts.joinToString(", ")}" +
+                    if (e.ports.isEmpty()) "" else " on ${e.ports.joinToString(", ")}",
+            )
+            Row {
+                TextButton(onClick = {
+                    act(Request(put_envelope = PutEnvelope(envelope = e.copy(enabled = !e.enabled))))
+                }) { Text(if (e.enabled) "Turn off" else "Turn on") }
+                TextButton(onClick = { act(Request(delete_envelope = DeleteEnvelope(id = e.id))) }) { Text("Remove") }
+            }
+        }
     }
 }
 
@@ -209,7 +249,10 @@ private fun ProposalCard(
         }
     val provenance = proposal.provenance
 
-    fun decide(approve: Boolean) {
+    fun decide(
+        approve: Boolean,
+        mute: Boolean = false,
+    ) {
         val edited =
             proposal.rules.mapIndexed { index, rule ->
                 val items =
@@ -246,6 +289,7 @@ private fun ProposalCard(
                                 reason = reason,
                                 duration = duration,
                                 rules = if (approve) edited else emptyList(),
+                                mute = mute,
                             ),
                     ),
                 )
@@ -291,6 +335,7 @@ private fun ProposalCard(
                 Button(onClick = { decide(true) }) { Text(if (proposal.broad) "Approve (needs step-up)" else "Approve") }
                 OutlinedButton(onClick = { decide(false) }) { Text("Deny") }
             }
+            TextButton(onClick = { decide(false, mute = true) }) { Text("Deny and mute this agent") }
         } else {
             Muted(
                 proposal.state.name
@@ -298,6 +343,7 @@ private fun ProposalCard(
                     .lowercase() +
                     if (proposal.reason.isEmpty()) "" else ": ${proposal.reason}",
             )
+            if (proposal.envelope.isNotEmpty()) Muted("Approved without asking, inside envelope \"${proposal.envelope}\"")
         }
     }
 }

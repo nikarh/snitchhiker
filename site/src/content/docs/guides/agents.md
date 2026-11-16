@@ -79,6 +79,27 @@ A proposal still waiting when its agent exits expires.
 
 From the command line, `snitchhiker proposals` lists those waiting, `snitchhiker proposals show <id>` shows one, and `snitchhiker proposals approve <id>` or `deny <id>` answers it ([reference](/reference/cli/)).
 
+### Muting an agent
+
+An agent that keeps proposing what you don't want can be muted: **Deny and mute this agent** (or `snitchhiker proposals deny <id> --mute`) denies the proposal and every later one from the same agent process and what it started, without asking you, until it exits. The agent is told each was denied.
+
+## Envelopes
+
+Some proposals you would approve every time: a build fetching from the package registries, in your own projects. An **envelope** approves those without asking. It says which projects (the agent's working directory), which hosts (names, and `*.name` for subdomains, never addresses), and optionally which ports and programs:
+
+```sh
+snitchhiker envelopes add registries --project 'glob:{home}/workspace/**' \
+  --host registry.npmjs.org --host crates.io --host '*.crates.io' --port 443
+```
+
+A proposal is approved by an envelope only when all of these hold; otherwise it waits for you as usual:
+
+- it comes from one of the node's [`agent_programs`](/reference/configuration/#agent_programs) (any other program's proposals never are);
+- every rule in it is inside the envelope: only host names it covers, on its ports, for its programs, and nothing else (no addresses, no other conditions);
+- no rule has a mark other than "nothing the agent tried matches it" (a rule proposed before the agent was refused is fine inside the bounds you set).
+
+Such approvals are for the agent's session only, are recorded in the [history](/guides/rules/#history-and-undo) as made by `envelope "<name>"`, and raise an alert, so you see what went through. Adding, changing or removing an envelope is a dangerous action: it asks for your password. Envelopes are listed under the proposals in the apps, and with `snitchhiker envelopes`.
+
 ## Good and bad proposals
 
 `cargo build` refused on its way to the registry, and the agent proposes:

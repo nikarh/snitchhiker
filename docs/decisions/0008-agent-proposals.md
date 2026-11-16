@@ -44,5 +44,5 @@ An agent runs as the user, so its MCP server does too. Whatever the agent can ca
   approves. Its provenance shows it isn't a known agent.
 - A prompt-injected agent can propose something harmful with a convincing reason. Shaping, the marks, the evidence
   of refused connections, and the session scope limit what a careless approval costs.
-- Pre-authorized envelopes (automatic approval inside declared bounds) are left for later: off by default in the plan,
+- Pre-authorized envelopes (automatic approval inside declared bounds) came later (M8): off until one is added,
   and a dangerous action to set.

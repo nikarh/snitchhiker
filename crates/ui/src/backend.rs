@@ -91,6 +91,9 @@ pub enum Request {
     /// The paired devices.
     Devices,
     Blocklists,
+    Envelopes,
+    PutEnvelope(v1::Envelope),
+    DeleteEnvelope(u64),
     PutBlocklist(v1::PutBlocklist),
     DeleteBlocklist(String),
     RefreshBlocklist(String),
@@ -165,6 +168,7 @@ pub enum Update {
     Proposal(Box<v1::Proposal>),
     Devices(v1::DeviceList),
     Blocklists(v1::Blocklists),
+    Envelopes(v1::Envelopes),
     /// A pairing started: its link.
     Pairing(v1::Pairing),
     /// A remote device asks for a dangerous action.
@@ -358,6 +362,11 @@ fn blocklist_method(request: &Request) -> v1::request::Method {
         Request::RefreshBlocklist(name) => {
             Method::RefreshBlocklist(v1::RefreshBlocklist { name: name.clone() })
         }
+        Request::Envelopes => Method::ListEnvelopes(v1::ListEnvelopes {}),
+        Request::PutEnvelope(envelope) => Method::PutEnvelope(v1::PutEnvelope {
+            envelope: Some(envelope.clone()),
+        }),
+        Request::DeleteEnvelope(id) => Method::DeleteEnvelope(v1::DeleteEnvelope { id: *id }),
         _ => Method::ListBlocklists(v1::ListBlocklists {}),
     }
 }
@@ -450,7 +459,10 @@ fn method(request: &Request) -> v1::request::Method {
         Request::Blocklists
         | Request::PutBlocklist(_)
         | Request::DeleteBlocklist(_)
-        | Request::RefreshBlocklist(_) => blocklist_method(request),
+        | Request::RefreshBlocklist(_)
+        | Request::Envelopes
+        | Request::PutEnvelope(_)
+        | Request::DeleteEnvelope(_) => blocklist_method(request),
         Request::StartPairing(_) | Request::RemoveDevice(_) | Request::MuteDevice { .. } => {
             device_method(request)
         }
@@ -484,6 +496,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Proposal(proposal) => Some(Update::Proposal(proposal)),
         R::Devices(list) => Some(Update::Devices(list)),
         R::Blocklists(lists) => Some(Update::Blocklists(lists)),
+        R::Envelopes(list) => Some(Update::Envelopes(list)),
         R::Pairing(pairing) => Some(Update::Pairing(pairing)),
         // Done after unpairing: list them again.
         R::Done(_) if matches!(request, Request::RemoveDevice(_)) => None,

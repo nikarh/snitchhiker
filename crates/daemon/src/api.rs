@@ -387,6 +387,7 @@ fn allowed(role: v1::Role, method: &v1::request::Method) -> bool {
             | Method::ListAlerts(_)
             | Method::ListAlertRules(_)
             | Method::ListBlocklists(_)
+            | Method::ListEnvelopes(_)
     );
     let agents = matches!(
         method,
@@ -466,6 +467,10 @@ fn handle(
         | Method::PutBlocklist(_)
         | Method::DeleteBlocklist(_)
         | Method::RefreshBlocklist(_)) => blocklist_request(daemon, method),
+        method
+        @ (Method::ListEnvelopes(_) | Method::PutEnvelope(_) | Method::DeleteEnvelope(_)) => {
+            envelope_request(daemon, caller, app, method)
+        }
         Method::GetSystemFirewall(_) => get_system_firewall(daemon),
         Method::SetSystemFirewall(set) => set_system_firewall(daemon, caller, app, &set),
         method @ (Method::CheckConnection(_)
@@ -907,6 +912,60 @@ fn put_alert_rule(daemon: &Daemon, put: &v1::PutAlertRule) -> v1::response::Resu
         Err(StoreError::NotFound(what, id)) => {
             error(v1::ErrorCode::NotFound, format!("no {what} {id}"))
         }
+        Err(e) => internal(e),
+    }
+}
+
+fn envelope_request(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    method: v1::request::Method,
+) -> v1::response::Result {
+    use v1::request::Method;
+    let changed = match method {
+        Method::PutEnvelope(put) => {
+            let Some(wire) = put.envelope else {
+                return error(v1::ErrorCode::Invalid, "no envelope");
+            };
+            let envelope = crate::agents::envelope_from(&wire);
+            if let Err(e) = envelope.check() {
+                return error(v1::ErrorCode::Invalid, e);
+            }
+            if let Err(refused) = step_up(
+                daemon,
+                caller,
+                app,
+                &format!(
+                    "let agents' proposals inside envelope \"{}\" be approved without asking",
+                    envelope.name
+                ),
+            ) {
+                return refused;
+            }
+            daemon.store().put_envelope(&envelope).map(|_| true)
+        }
+        Method::DeleteEnvelope(delete) => {
+            if let Err(refused) = step_up(daemon, caller, app, "remove an agents' envelope") {
+                return refused;
+            }
+            daemon.store().delete_envelope(delete.id)
+        }
+        _ => Ok(true),
+    };
+    match changed {
+        Ok(true) => {}
+        Ok(false) => return error(v1::ErrorCode::NotFound, "no such envelope"),
+        Err(StoreError::NotFound(what, id)) => {
+            return error(v1::ErrorCode::NotFound, format!("no {what} {id}"));
+        }
+        Err(e) => return internal(e),
+    }
+    let envelopes = daemon.store().envelopes();
+    match envelopes {
+        Ok(envelopes) => v1::response::Result::Envelopes(v1::Envelopes {
+            envelopes: envelopes.iter().map(crate::agents::envelope_wire).collect(),
+        }),
         Err(e) => internal(e),
     }
 }
@@ -2326,36 +2385,47 @@ fn publish_proposal(daemon: &Daemon, proposal: &v1::Proposal) {
     daemon.publish_proposal(proposal);
 }
 
+/// Why a proposal is refused as sent, if it is.
+fn check_proposal(propose: &v1::ProposeRules) -> Result<(), String> {
+    use crate::agents::{MAX_JUSTIFICATION, MAX_RULES};
+    if propose.rules.is_empty() {
+        return Err("no rules proposed".to_owned());
+    }
+    if propose.rules.len() > MAX_RULES {
+        return Err(format!("at most {MAX_RULES} rules a proposal"));
+    }
+    if propose.justification.chars().count() > MAX_JUSTIFICATION {
+        return Err(format!(
+            "a justification is at most {MAX_JUSTIFICATION} characters"
+        ));
+    }
+    if propose.justification.trim().is_empty() {
+        return Err("say why: the person approving reads it".to_owned());
+    }
+    Ok(())
+}
+
+fn is_muted(daemon: &Daemon, agent: snitchhiker_core::rule::ProcessRef) -> bool {
+    daemon
+        .shared
+        .muted_agents
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&agent)
+}
+
 fn propose_rules(
     daemon: &Daemon,
     caller: &Caller,
     propose: &v1::ProposeRules,
 ) -> v1::response::Result {
-    use crate::agents::{MAX_JUSTIFICATION, MAX_PENDING, MAX_RULES};
+    use crate::agents::MAX_PENDING;
     let agent = match agent_of(caller) {
         Ok(agent) => agent,
         Err(e) => return e,
     };
-    if propose.rules.is_empty() {
-        return error(v1::ErrorCode::Invalid, "no rules proposed");
-    }
-    if propose.rules.len() > MAX_RULES {
-        return error(
-            v1::ErrorCode::Invalid,
-            format!("at most {MAX_RULES} rules a proposal"),
-        );
-    }
-    if propose.justification.chars().count() > MAX_JUSTIFICATION {
-        return error(
-            v1::ErrorCode::Invalid,
-            format!("a justification is at most {MAX_JUSTIFICATION} characters"),
-        );
-    }
-    if propose.justification.trim().is_empty() {
-        return error(
-            v1::ErrorCode::Invalid,
-            "say why: the person approving reads it",
-        );
+    if let Err(refused) = check_proposal(propose) {
+        return error(v1::ErrorCode::Invalid, refused);
     }
     let now = now_ms();
     let blocked = daemon.shared.blocked.of(agent.anchor, now);
@@ -2420,15 +2490,96 @@ fn propose_rules(
         // Nothing to ask anyone: today's rules allow it all.
         return v1::response::Result::Proposal(Box::new(proposal));
     }
+    let muted = is_muted(daemon, agent.anchor);
+    if muted {
+        proposal.state = v1::ProposalState::Denied.into();
+        proposal.decided_ms = now;
+        "this agent's proposals were muted".clone_into(&mut proposal.reason);
+    }
     let stored = daemon.store().insert_proposal(&proposal, &key);
     match stored {
         Ok(id) => proposal.id = id,
         Err(e) => return internal(e),
     }
+    if muted {
+        return v1::response::Result::Proposal(Box::new(proposal));
+    }
+    if let Some(approved) = inside_envelope(daemon, &proposal) {
+        return approved;
+    }
     daemon.watch_agents([agent.anchor]);
     info!(id = proposal.id, agent = %agent.provenance.agent_exe, cwd = %agent.provenance.cwd, "an agent proposed rules");
     publish_proposal(daemon, &proposal);
     v1::response::Result::Proposal(Box::new(proposal))
+}
+
+/// Approves `proposal` without asking if an enabled envelope admits every rule in it (from an allow-listed agent, with
+/// no rule marked), for the agent's session; the approval is recorded as the envelope's, and an alert says so.
+fn inside_envelope(daemon: &Daemon, proposal: &v1::Proposal) -> Option<v1::response::Result> {
+    let provenance = proposal.provenance.as_ref()?;
+    // Marks other than "nothing the agent tried matches" (which the envelope's own bounds answer) go to a person.
+    let marked = proposal
+        .rules
+        .iter()
+        .filter(|r| !r.already_allowed)
+        .any(|r| r.risks.iter().any(|risk| risk.kind != "speculative"));
+    if !provenance.known_agent || marked {
+        return None;
+    }
+    let envelopes = daemon.store().envelopes().ok()?;
+    let home = crate::process::home_of(provenance.uid);
+    let rules: Vec<_> = proposal
+        .rules
+        .iter()
+        .filter(|r| !r.already_allowed)
+        .map(|r| {
+            convert::conditions_from(r.conditions.as_ref().unwrap_or(&v1::Conditions::default()))
+        })
+        .collect();
+    let envelope = envelopes.iter().find(|e| {
+        rules.iter().all(|rule| {
+            e.admits(
+                &provenance.agent_exe,
+                &provenance.cwd,
+                home.as_deref(),
+                rule,
+            )
+        })
+    })?;
+    let decide = v1::DecideProposal {
+        id: proposal.id,
+        approve: true,
+        reason: format!("inside envelope \"{}\"", envelope.name),
+        duration: v1::ProposalDuration::Session.into(),
+        ..v1::DecideProposal::default()
+    };
+    let mut proposal = proposal.clone();
+    decide.reason.clone_into(&mut proposal.reason);
+    proposal.decided_ms = proposal.created_ms;
+    envelope.name.clone_into(&mut proposal.envelope);
+    let actor = format!("envelope \"{}\"", envelope.name);
+    let approved = approve(daemon, None, &actor, &decide, proposal, now_ms());
+    if let v1::response::Result::Proposal(approved) = &approved {
+        info!(id = approved.id, envelope = %envelope.name, "an agent's proposal was approved inside an envelope");
+        daemon.raise(&crate::alerts::NewAlert {
+            kind: "envelope",
+            title: format!("Approved inside envelope \"{}\"", envelope.name),
+            body: format!(
+                "{} (in {}) was allowed {} for its session",
+                provenance.agent_exe,
+                provenance.cwd,
+                approved
+                    .rules
+                    .iter()
+                    .filter(|r| r.included)
+                    .flat_map(|r| r.conditions.iter().flat_map(|c| c.host.iter().cloned()))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            rule: None,
+        });
+    }
+    Some(approved)
 }
 
 /// A proposal the caller may see: an agent sees only its own.
@@ -2573,6 +2724,19 @@ fn decide_proposal(
     decide.reason.trim().clone_into(&mut proposal.reason);
     proposal.decided_ms = now;
     if !decide.approve {
+        if decide.mute
+            && let Some(p) = &proposal.provenance
+        {
+            daemon
+                .shared
+                .muted_agents
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(snitchhiker_core::rule::ProcessRef {
+                    pid: p.agent_pid,
+                    start: p.agent_start,
+                });
+        }
         proposal.state = v1::ProposalState::Denied.into();
         let updated = daemon.store().update_proposal(&proposal);
         if let Err(e) = updated {
@@ -2581,7 +2745,7 @@ fn decide_proposal(
         publish_proposal(daemon, &proposal);
         return v1::response::Result::Proposal(Box::new(proposal));
     }
-    approve(daemon, caller, app, decide, proposal, now)
+    approve(daemon, Some(caller), app, decide, proposal, now)
 }
 
 /// The rules approving `proposal` makes, with their indexes in it: as edited (shaped again, so their risks are
@@ -2640,10 +2804,11 @@ fn chosen_rules(
     Ok(chosen)
 }
 
-/// Approves `proposal` as `decide` says: makes its rules (as edited) in its agent's folder.
+/// Approves `proposal` as `decide` says: makes its rules (as edited) in its agent's folder. A person (`caller`)
+/// approving a marked rule needs step-up; an envelope (no caller) has checked its bounds instead.
 fn approve(
     daemon: &Daemon,
-    caller: &Caller,
+    caller: Option<&Caller>,
     app: &str,
     decide: &v1::DecideProposal,
     mut proposal: v1::Proposal,
@@ -2680,6 +2845,7 @@ fn approve(
         .collect();
     risky.dedup();
     if !risky.is_empty()
+        && let Some(caller) = caller
         && let Err(refused) = step_up(
             daemon,
             caller,

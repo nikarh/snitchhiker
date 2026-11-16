@@ -96,8 +96,17 @@ Commands:
   proposals show <id>             A proposal: who made it, the agent's words, its rules, their marks and evidence
   proposals approve <id> [--duration <session|hour|12h|forever>] [--reason <text>]
                                   Make its rules (for the agent's session by default), in Agents/<agent>/<project>
-  proposals deny <id> [--reason <text>]
-                                  Deny it; the agent is told the reason
+  proposals deny <id> [--reason <text>] [--mute]
+                                  Deny it; the agent is told the reason. --mute denies the agent's later proposals
+                                  too, without asking (until it ends)
+  envelopes                       Envelopes: bounds within which allow-listed agents' proposals are approved without
+                                  asking, for the agent's session
+  envelopes add <name> --project <pattern> --host <name>... [--port <n>...] [--agent <pattern>...]
+                [--program <pattern>...]
+                                  Add one (a dangerous action): agents working in a directory matching the project
+                                  pattern (glob:{home}/workspace/**) may get the hosts (*.name for subdomains), on
+                                  those ports (any by default), for those programs (any by default)
+  envelopes rm <id>               Remove one (a dangerous action)
   pair [--name <name>] [--role <admin|viewer>]
                                   Pair a device (a phone, the desktop app elsewhere): prints a one-time link and its
                                   QR code, valid for one pairing within 10 minutes (needs remote = true)

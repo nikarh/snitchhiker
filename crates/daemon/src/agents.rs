@@ -535,3 +535,33 @@ pub fn sessions(rule: &Rule) -> Option<&[ProcessRef]> {
         _ => None,
     })
 }
+
+/// An envelope as clients send it.
+#[must_use]
+pub fn envelope_from(wire: &v1::Envelope) -> snitchhiker_core::envelope::Envelope {
+    snitchhiker_core::envelope::Envelope {
+        id: wire.id,
+        name: wire.name.trim().to_owned(),
+        enabled: wire.enabled,
+        project: wire.project.trim().to_owned(),
+        agents: wire.agents.clone(),
+        programs: wire.programs.clone(),
+        hosts: wire.hosts.clone(),
+        ports: wire.ports.clone(),
+    }
+}
+
+/// An envelope as clients see it.
+#[must_use]
+pub fn envelope_wire(envelope: &snitchhiker_core::envelope::Envelope) -> v1::Envelope {
+    v1::Envelope {
+        id: envelope.id,
+        name: envelope.name.clone(),
+        enabled: envelope.enabled,
+        project: envelope.project.clone(),
+        agents: envelope.agents.clone(),
+        programs: envelope.programs.clone(),
+        hosts: envelope.hosts.clone(),
+        ports: envelope.ports.clone(),
+    }
+}

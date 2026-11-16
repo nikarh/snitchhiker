@@ -116,6 +116,8 @@ pub struct Shared {
     pub webhook: crate::webhook::Webhook,
     /// The blocklists rules name.
     pub blocklists: crate::blocklists::Blocklists,
+    /// Agents whose proposals are denied without asking anyone (muted by a person).
+    pub muted_agents: Mutex<HashSet<ProcessRef>>,
     /// Counts changes of proposals, for requests waiting for one.
     proposals_changed: (Mutex<u64>, std::sync::Condvar),
 }
@@ -199,6 +201,7 @@ impl Daemon {
             namespaces: crate::namespaces::Namespaces::default(),
             webhook: crate::webhook::Webhook::default(),
             blocklists,
+            muted_agents: Mutex::default(),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {

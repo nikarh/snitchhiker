@@ -5,6 +5,7 @@ pub mod blocklists;
 pub mod connections;
 pub mod devices;
 pub mod editor;
+pub mod envelopes;
 pub mod events;
 pub mod explain;
 pub mod explorer;

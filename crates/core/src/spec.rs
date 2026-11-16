@@ -167,7 +167,9 @@ const fn yes() -> bool {
     true
 }
 
-fn pattern(text: &str) -> PatternSource {
+/// A pattern as written: `glob:`, `re:` or exact.
+#[must_use]
+pub fn pattern(text: &str) -> PatternSource {
     if let Some(glob) = text.strip_prefix("glob:") {
         PatternSource::Glob(glob.to_owned())
     } else if let Some(regex) = text.strip_prefix("re:") {

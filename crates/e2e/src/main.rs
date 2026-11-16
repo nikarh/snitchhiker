@@ -144,6 +144,10 @@ const SCENARIOS: &[Scenario] = &[
         "agents/a-broad-proposal-needs-step-up",
         agents::a_broad_proposal_needs_step_up,
     ),
+    (
+        "agents/envelopes-approve-and-muting-denies",
+        agents::envelopes_approve_and_muting_denies,
+    ),
     ("daemon/enforces-rules", daemon::enforces_rules),
     (
         "daemon/alerts-reach-the-webhook-signed",

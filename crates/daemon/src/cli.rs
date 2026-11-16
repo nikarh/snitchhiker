@@ -133,8 +133,17 @@ Commands:
   proposals show <id>             A proposal: who made it, the agent's words, its rules, their marks and evidence
   proposals approve <id> [--duration <session|hour|12h|forever>] [--reason <text>]
                                   Make its rules (for the agent's session by default), in Agents/<agent>/<project>
-  proposals deny <id> [--reason <text>]
-                                  Deny it; the agent is told the reason
+  proposals deny <id> [--reason <text>] [--mute]
+                                  Deny it; the agent is told the reason. --mute denies the agent's later proposals
+                                  too, without asking (until it ends)
+  envelopes                       Envelopes: bounds within which allow-listed agents' proposals are approved without
+                                  asking, for the agent's session
+  envelopes add <name> --project <pattern> --host <name>... [--port <n>...] [--agent <pattern>...]
+                [--program <pattern>...]
+                                  Add one (a dangerous action): agents working in a directory matching the project
+                                  pattern (glob:{home}/workspace/**) may get the hosts (*.name for subdomains), on
+                                  those ports (any by default), for those programs (any by default)
+  envelopes rm <id>               Remove one (a dangerous action)
   pair [--name <name>] [--role <admin|viewer>]
                                   Pair a device (a phone, the desktop app elsewhere): prints a one-time link and its
                                   QR code, valid for one pairing within 10 minutes (needs remote = true)
@@ -223,6 +232,7 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("alerts") => alerts(args, version),
         Some("folders") => folders(args, version),
         Some("lists") => lists(args, version),
+        Some("envelopes") => envelopes(args, version),
         Some("explore") => explore(args, version),
         Some("contexts") => contexts(args, version),
         Some("history") => history(args, version),
@@ -362,6 +372,69 @@ fn rules_edit(args: &mut pico_args::Arguments) -> Result<v1::EditRules, Error> {
 }
 
 /// `alerts` and its subcommands.
+fn envelopes(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
+    use v1::request::Method;
+    let method = match args.subcommand()?.as_deref() {
+        None | Some("list") => Method::ListEnvelopes(v1::ListEnvelopes {}),
+        Some("add") => {
+            let envelope = v1::Envelope {
+                id: 0,
+                enabled: true,
+                project: args.value_from_str("--project")?,
+                hosts: args.values_from_str("--host")?,
+                ports: args.values_from_str("--port")?,
+                agents: args.values_from_str("--agent")?,
+                programs: args.values_from_str("--program")?,
+                name: args.free_from_str()?,
+            };
+            Method::PutEnvelope(v1::PutEnvelope {
+                envelope: Some(envelope),
+            })
+        }
+        Some("rm") => Method::DeleteEnvelope(v1::DeleteEnvelope {
+            id: args.free_from_str()?,
+        }),
+        Some(other) => return Err(Error::Usage(format!("unknown envelopes command {other}"))),
+    };
+    reject_rest(args)?;
+    match connect(version)?.call(method)? {
+        v1::response::Result::Envelopes(list) => {
+            let mut text = String::new();
+            if list.envelopes.is_empty() {
+                text.push_str("no envelopes\n");
+            }
+            for e in &list.envelopes {
+                let _ = writeln!(
+                    text,
+                    "{:>4} {} {:?}: agents in {} may reach {}{}{}{}",
+                    e.id,
+                    if e.enabled { "on " } else { "off" },
+                    e.name,
+                    e.project,
+                    e.hosts.join(", "),
+                    if e.ports.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" on {}", e.ports.join(", "))
+                    },
+                    if e.programs.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" with {}", e.programs.join(", "))
+                    },
+                    if e.agents.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" (agents {})", e.agents.join(", "))
+                    },
+                );
+            }
+            out(&text)
+        }
+        _ => Err(unexpected()),
+    }
+}
+
 fn lists(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;
     let command = args.subcommand()?;
@@ -1743,6 +1816,7 @@ fn proposals(mut args: pico_args::Arguments, version: &str) -> Result<(), Error>
             let id: u64 = args.free_from_str()?;
             let reason: String = args.opt_value_from_str("--reason")?.unwrap_or_default();
             let duration: Option<String> = args.opt_value_from_str("--duration")?;
+            let mute = args.contains("--mute");
             reject_rest(args)?;
             let duration = match duration.as_deref() {
                 None | Some("session") => v1::ProposalDuration::Session,
@@ -1757,6 +1831,7 @@ fn proposals(mut args: pico_args::Arguments, version: &str) -> Result<(), Error>
                 reason,
                 duration: duration.into(),
                 rules: Vec::new(),
+                mute,
             }))? {
                 v1::response::Result::Proposal(proposal) => out(&format_proposal(&proposal)),
                 _ => Err(unexpected()),
@@ -1780,9 +1855,14 @@ fn proposal_state(state: v1::ProposalState) -> &'static str {
 fn format_proposal_line(p: &v1::Proposal) -> String {
     let provenance = p.provenance.clone().unwrap_or_default();
     format!(
-        "proposal {}: {} {} rule(s){} from {} in {} (user {})\n",
+        "proposal {}: {}{} {} rule(s){} from {} in {} (user {})\n",
         p.id,
         proposal_state(p.state()),
+        if p.envelope.is_empty() {
+            String::new()
+        } else {
+            format!(" inside envelope \"{}\"", p.envelope)
+        },
         p.rules.len(),
         if p.broad { ", marked" } else { "" },
         provenance.agent_exe,

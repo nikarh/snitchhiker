@@ -4,6 +4,7 @@
 //! database and fails on a table scan or a temporary sort, so every query stays an index seek. Strings that repeat
 //! (executables, hosts) are stored once and referred to by id.
 
+use snitchhiker_core::envelope::Envelope;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -253,6 +254,10 @@ CREATE TABLE blocklists (
     name TEXT NOT NULL UNIQUE,
     list TEXT NOT NULL
 );
+CREATE TABLE envelopes (
+    id INTEGER PRIMARY KEY,
+    envelope TEXT NOT NULL
+);
 ",
 ];
 
@@ -378,6 +383,10 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     ),
     ("alerts.prune", "DELETE FROM alerts WHERE time_ms < ?1"),
     ("alert_rules.all", "SELECT id, rule FROM alert_rules ORDER BY id"),
+    ("envelopes.all", "SELECT id, envelope FROM envelopes ORDER BY id"),
+    ("envelopes.insert", "INSERT INTO envelopes (envelope) VALUES (?1)"),
+    ("envelopes.update", "UPDATE envelopes SET envelope = ?2 WHERE id = ?1"),
+    ("envelopes.delete", "DELETE FROM envelopes WHERE id = ?1"),
     ("blocklists.all", "SELECT id, name, list FROM blocklists ORDER BY id"),
     (
         "blocklists.put",
@@ -1257,7 +1266,14 @@ impl Store {
 
 /// Tables small enough that scanning them is fine (and SQLite may choose to).
 #[cfg(test)]
-const SCANNABLE: &[&str] = &["folders", "rules", "alert_rules", "devices", "blocklists"];
+const SCANNABLE: &[&str] = &[
+    "folders",
+    "rules",
+    "alert_rules",
+    "devices",
+    "blocklists",
+    "envelopes",
+];
 
 /// Statements that group what an index range yields, and so sort it: the Explorer's, over the rollups of a range of
 /// hours. Their cost is the rollup rows of those hours (the variety of the traffic), not the size of the history; the
@@ -2105,6 +2121,51 @@ impl Store {
             lists.push(record);
         }
         Ok(lists)
+    }
+
+    pub fn envelopes(&self) -> Result<Vec<Envelope>, Error> {
+        let mut statement = self.connection.prepare_cached(sql("envelopes.all")?)?;
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        let mut envelopes = Vec::new();
+        for row in rows {
+            let (id, text) = row?;
+            let mut envelope: Envelope =
+                serde_json::from_str(&text).map_err(|e| Error::Corrupt {
+                    what: "an envelope",
+                    error: e.to_string(),
+                })?;
+            envelope.id = id_of(id);
+            envelopes.push(envelope);
+        }
+        Ok(envelopes)
+    }
+
+    /// Adds `envelope` (id 0) or replaces the one with its id; returns its id.
+    pub fn put_envelope(&self, envelope: &Envelope) -> Result<u64, Error> {
+        if envelope.id == 0 {
+            self.connection
+                .prepare_cached(sql("envelopes.insert")?)?
+                .execute(params![json(envelope)])?;
+            return Ok(id_of(self.connection.last_insert_rowid()));
+        }
+        let changed = self
+            .connection
+            .prepare_cached(sql("envelopes.update")?)?
+            .execute(params![db_id(envelope.id), json(envelope)])?;
+        if changed == 0 {
+            return Err(Error::NotFound("envelope", envelope.id));
+        }
+        Ok(envelope.id)
+    }
+
+    pub fn delete_envelope(&self, id: u64) -> Result<bool, Error> {
+        Ok(self
+            .connection
+            .prepare_cached(sql("envelopes.delete")?)?
+            .execute(params![db_id(id)])?
+            > 0)
     }
 
     /// Adds the list, or replaces the one with its name; returns its id.

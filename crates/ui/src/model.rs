@@ -270,6 +270,8 @@ pub struct Model {
     pub devices: Option<v1::DeviceList>,
     /// The blocklists, as last listed.
     pub blocklists: Option<v1::Blocklists>,
+    /// Agents' envelopes, as last listed.
+    pub envelopes: Option<v1::Envelopes>,
     /// The pairing started last, until it is dismissed.
     pub pairing: Option<v1::Pairing>,
     /// Remote devices' dangerous actions waiting for an approval here.
@@ -348,6 +350,9 @@ impl Model {
             }
             Update::Blocklists(lists) => {
                 self.blocklists = Some(lists);
+            }
+            Update::Envelopes(list) => {
+                self.envelopes = Some(list);
             }
             _ => {}
         }
@@ -503,6 +508,7 @@ impl Model {
             | Update::TrustedClients(_)
             | Update::Lint(_)
             | Update::Blocklists(_)
+            | Update::Envelopes(_)
             | Update::Explanation(_)) => self.apply_settings(update),
             update @ (Update::Proposals(_)
             | Update::Proposal(_)

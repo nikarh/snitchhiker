@@ -5,6 +5,7 @@ pub mod blocklist;
 pub mod context;
 pub mod destination;
 pub mod engine;
+pub mod envelope;
 pub mod generalize;
 pub mod lint;
 pub mod opensnitch;

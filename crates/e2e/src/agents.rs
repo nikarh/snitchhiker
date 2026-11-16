@@ -333,3 +333,105 @@ fn broad_scenario() -> Result<(), String> {
         &found,
     )
 }
+
+/// An agent that proposes the rules given as JSON arguments one after another, printing each answer as it comes
+/// (without waiting for a person), and then waits for a line before exiting.
+const PROPOSER: &str = r"
+import json, subprocess, sys
+mcp = subprocess.Popen(['snitchhiker', 'mcp'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+n = 0
+def call(method, params):
+    global n
+    n += 1
+    mcp.stdin.write(json.dumps({'jsonrpc': '2.0', 'id': n, 'method': method, 'params': params}) + '\n')
+    mcp.stdin.flush()
+    return json.loads(mcp.stdout.readline())
+def tool(name, args):
+    result = call('tools/call', {'name': name, 'arguments': args})['result']
+    text = result['content'][0]['text']
+    return json.loads(text) if not result.get('isError') else {'error': text}
+call('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {}, 'clientInfo': {'name': 'e2e', 'version': '1'}})
+for line in sys.stdin:
+    if not line.strip():
+        break
+    rule = json.loads(line)
+    print(json.dumps(tool('propose_rules', {'justification': 'The build needs it.', 'rules': [rule]})), flush=True)
+";
+
+/// Inside an envelope a known agent's proposal is approved without asking, for its session; outside, it waits for a
+/// person; once the person denies and mutes the agent, its next proposal is denied without asking.
+pub fn envelopes_approve_and_muting_denies() -> Result<(), String> {
+    let daemon = Running::start(
+        "envelopes",
+        "mode = \"enforce\"\nno_match = \"deny\"\nagent_programs = [\"glob:/usr/bin/python3*\"]\n",
+    )?;
+    let added = daemon.cli(&[
+        "envelopes",
+        "add",
+        "registries",
+        "--project",
+        "glob:/tmp/**",
+        "--host",
+        "registry.test",
+        "--host",
+        "*.crates.test",
+        "--port",
+        "443",
+    ])?;
+    let _ = std::fs::create_dir_all("/tmp/project");
+    let mut agent = Command::new("runuser")
+        .args(["-u", "mallory", "--", "python3", "-c", PROPOSER])
+        .current_dir("/tmp/project")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let mut input = agent.stdin.take().ok_or("no stdin")?;
+    let mut lines = BufReader::new(agent.stdout.take().ok_or("no stdout")?).lines();
+    let mut propose = |rule: &str| -> Result<serde_json::Value, String> {
+        writeln!(input, "{rule}").map_err(|e| e.to_string())?;
+        let line = lines
+            .next()
+            .ok_or("the agent ended early")?
+            .map_err(|e| e.to_string())?;
+        serde_json::from_str(&line).map_err(|e| format!("{e}: {line}"))
+    };
+    let inside =
+        propose(r#"{"exe": "/usr/bin/curl", "hosts": ["static.crates.test"], "ports": ["443"]}"#)?;
+    let outside =
+        propose(r#"{"exe": "/usr/bin/curl", "hosts": ["elsewhere.test"], "ports": ["443"]}"#)?;
+    let waiting = at(&outside, "/id").as_u64().unwrap_or(0);
+    let denied = daemon.cli(&["proposals", "deny", &waiting.to_string(), "--mute"])?;
+    let muted =
+        propose(r#"{"exe": "/usr/bin/curl", "hosts": ["registry.test"], "ports": ["443"]}"#)?;
+    let alerts = daemon.cli(&["alerts"])?;
+    let history = daemon.cli(&["history"])?;
+    drop(propose);
+    let _ = agent.kill();
+    let _ = agent.wait();
+    let found = format!(
+        "{added}\ninside: {inside:#}\noutside: {outside:#}\n{denied}\nmuted: {muted:#}\n{alerts}{history}"
+    );
+    check(
+        at(&inside, "/state").as_str() == Some("approved")
+            && at(&inside, "/envelope").as_str() == Some("registries"),
+        "a proposal inside the envelope wasn't approved by it",
+        &found,
+    )?;
+    check(
+        at(&outside, "/state").as_str() == Some("pending"),
+        "a proposal outside the envelope didn't wait for a person",
+        &found,
+    )?;
+    check(
+        at(&muted, "/state").as_str() == Some("denied"),
+        "a muted agent's proposal wasn't denied",
+        &found,
+    )?;
+    check(
+        alerts.contains("envelope") && history.contains("envelope \"registries\""),
+        "the envelope's approval isn't in the alerts and the history",
+        &found,
+    )
+}

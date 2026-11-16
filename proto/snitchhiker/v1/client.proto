@@ -133,6 +133,9 @@ message Request {
     PutBlocklist put_blocklist = 63;
     DeleteBlocklist delete_blocklist = 64;
     RefreshBlocklist refresh_blocklist = 65;
+    ListEnvelopes list_envelopes = 66;
+    PutEnvelope put_envelope = 67;
+    DeleteEnvelope delete_envelope = 68;
   }
 }
 
@@ -169,6 +172,7 @@ message Response {
     DeviceList devices = 41;
     ApprovalList approvals = 42;
     Blocklists blocklists = 43;
+    Envelopes envelopes = 44;
   }
 }
 
@@ -1231,6 +1235,8 @@ message Proposal {
   bool broad = 11;
   // The folder its rules go in.
   string folder = 12;
+  // Approved without asking, inside this envelope.
+  string envelope = 13;
 }
 
 // The agent: only its own proposals.
@@ -1276,6 +1282,41 @@ message DecideProposal {
   ProposalDuration duration = 4;
   // Approving: the rules to make, edited. Empty: every rule as proposed (but those already allowed).
   repeated EditedRule rules = 5;
+  // Denying: also deny, without asking anyone, every later proposal of the agent's process tree (until it ends).
+  bool mute = 6;
+}
+
+// Bounds within which an allow-listed agent's proposals are approved without asking, for the agent's session (plan
+// §5.11). Adding, changing or removing one is a dangerous action.
+message Envelope {
+  uint64 id = 1;
+  string name = 2;
+  bool enabled = 3;
+  // The agent's working directory: a pattern (`glob:{home}/workspace/**`).
+  string project = 4;
+  // The agents' programs (patterns); empty: any allow-listed agent.
+  repeated string agents = 5;
+  // The programs its rules may be for (patterns); empty: any.
+  repeated string programs = 6;
+  // Names, and `*.` names for their subdomains. At least one.
+  repeated string hosts = 7;
+  // Ports and ranges; empty: any.
+  repeated string ports = 8;
+}
+
+message ListEnvelopes {}
+
+message Envelopes {
+  repeated Envelope envelopes = 1;
+}
+
+// Adds an envelope (id 0) or replaces one. Answered with the envelopes.
+message PutEnvelope {
+  Envelope envelope = 1;
+}
+
+message DeleteEnvelope {
+  uint64 id = 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
