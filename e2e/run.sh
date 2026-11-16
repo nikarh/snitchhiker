@@ -12,22 +12,25 @@ cd "$(dirname "$0")/.."
 profile=${SNITCHHIKER_E2E_PROFILE:-dev}
 e2e/vm.sh node start &
 boot=$!
-cargo build --locked --profile "${profile}" -p snitchhiker-daemon -p snitchhiker-e2e -p snitchhiker-relay
+cargo build --locked --profile "${profile}" -p snitchhiker-daemon -p snitchhiker-bridge -p snitchhiker-e2e -p snitchhiker-relay
 wait "${boot}"
 e2e/vm.sh node up
 
 dir=$([[ ${profile} == dev ]] && echo debug || echo "${profile}")
 # Snitchhiker is installed as users get it: from a signed package repository (scripts/package-repos.sh, here with a
 # throwaway key, trusted the way the install guide says), with the unit, the client group, the configuration.
-mise x nfpm -- scripts/package.sh x86_64 "target/${dir}/snitchhikerd" target/e2e-packages >/dev/null
+SNITCHHIKER_REMOTE="target/${dir}/snitchhiker-remote" \
+  mise x nfpm -- scripts/package.sh x86_64 "target/${dir}/snitchhikerd" target/e2e-packages >/dev/null
 distro=${SNITCHHIKER_VM_DISTRO:-arch}
 case "${distro}" in
-  arch) format=arch package=snitchhiker-x86_64.pkg.tar.zst ;;
-  debian) format=apt package=snitchhiker_amd64.deb ;;
-  fedora) format=rpm package=snitchhiker-x86_64.rpm ;;
+  arch) format=arch packages=(snitchhiker-x86_64.pkg.tar.zst snitchhiker-remote-x86_64.pkg.tar.zst) ;;
+  debian) format=apt packages=(snitchhiker_amd64.deb snitchhiker-remote_amd64.deb) ;;
+  fedora) format=rpm packages=(snitchhiker-x86_64.rpm snitchhiker-remote-x86_64.rpm) ;;
 esac
 e2e/vm.sh node ssh 'rm -rf /tmp/e2e-packages && mkdir -p /tmp/e2e-packages'
-e2e/vm.sh node put "target/e2e-packages/${package}" "/tmp/e2e-packages/${package}"
+for package in "${packages[@]}"; do
+  e2e/vm.sh node put "target/e2e-packages/${package}" "/tmp/e2e-packages/${package}"
+done
 e2e/vm.sh node put scripts/package-repos.sh /tmp/package-repos.sh
 e2e/vm.sh node ssh "sudo FORMAT=${format} bash -s" <<'REPO'
 set -euo pipefail
@@ -44,28 +47,29 @@ case "${FORMAT}" in
     pacman-key --add /srv/e2e-repository.asc >/dev/null 2>&1
     pacman-key --lsign-key "${key}" >/dev/null 2>&1
     grep -q '^\[snitchhiker\]' /etc/pacman.conf || printf '\n[snitchhiker]\nServer = file:///srv/e2e-repo/arch/$arch\n' >> /etc/pacman.conf
-    pacman -Sy --noconfirm snitchhiker >/dev/null
+    pacman -Sy --noconfirm snitchhiker snitchhiker-remote >/dev/null
     ;;
   apt)
     gpg --batch --yes --dearmor --output /usr/share/keyrings/snitchhiker.gpg /srv/e2e-repository.asc
     echo 'deb [signed-by=/usr/share/keyrings/snitchhiker.gpg] file:/srv/e2e-repo/apt stable main' \
       > /etc/apt/sources.list.d/snitchhiker.list
     apt-get update -qq >/dev/null
-    apt-get install -y -qq snitchhiker >/dev/null
+    apt-get install -y -qq snitchhiker snitchhiker-remote >/dev/null
     ;;
   rpm)
     printf '[snitchhiker]\nname=Snitchhiker\nbaseurl=file:///srv/e2e-repo/rpm/$basearch\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///srv/e2e-repository.asc\n' \
       > /etc/yum.repos.d/snitchhiker.repo
-    dnf install -y -q snitchhiker >/dev/null
+    dnf install -y -q snitchhiker snitchhiker-remote >/dev/null
     ;;
 esac
 snitchhikerd --version >/dev/null
+snitchhiker-remote --version >/dev/null
 REPO
 # Scenarios start their own daemons and bind the queues themselves: the packaged service (running in a VM kept from
 # scripts/ui-vm.sh) mustn't hold them.
-e2e/vm.sh node ssh 'sudo systemctl stop snitchhikerd; sudo pkill -x snitchhikerd || true'
+e2e/vm.sh node ssh 'sudo systemctl stop snitchhiker-remote snitchhikerd; sudo pkill -x snitchhikerd || true'
 # Copies an earlier version of this script left (a kept VM) would shadow the package's.
-e2e/vm.sh node ssh 'sudo rm -f /usr/local/bin/snitchhikerd /usr/local/bin/snitchhiker'
+e2e/vm.sh node ssh 'sudo rm -f /usr/local/bin/snitchhikerd /usr/local/bin/snitchhiker /usr/local/bin/snitchhiker-remote'
 e2e/vm.sh node put "target/${dir}/snitchhiker-e2e" /tmp/snitchhiker-e2e
 e2e/vm.sh node ssh 'sudo install -m 755 /tmp/snitchhiker-e2e /usr/local/bin/'
 # The test user administers test daemons from its clients (`admin_groups`): a group that grants nothing else.

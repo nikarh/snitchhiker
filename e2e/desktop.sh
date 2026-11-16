@@ -226,7 +226,7 @@ fi
 
 # 10. A node added in the app by its pairing link (here this machine's own node, over the network): the app pairs,
 # keeps the node, and shows it beside this machine's.
-scripts/ui-vm.sh "${shots}/node" '
+SNITCHHIKER_UI_REMOTE=1 scripts/ui-vm.sh "${shots}/node" '
 for id in $(snitchhiker devices | awk "NR > 1 {print \$1}"); do snitchhiker devices rm "$id" >/dev/null; done
 link=$(snitchhiker pair | grep "^snitchhiker://")
 page devices
@@ -238,8 +238,8 @@ type_text "$link"
 sleep 1
 click 49 266
 sleep 10
-{ snitchhiker devices; cat /var/lib/snitchhiker-ui/$uid/nodes.toml; } > /tmp/desktop-result.txt 2>&1' 'mode = "monitor"
-remote = true' >/dev/null 2>&1
+{ snitchhiker devices; cat /var/lib/snitchhiker-ui/$uid/nodes.toml; } > /tmp/desktop-result.txt 2>&1' 'mode = "monitor"' \
+  >/dev/null 2>&1
 out=$(result)
 if grep -Eq "snitchhiker-e2e +admin +connected" <<<"${out}" && grep -q '^id = "' <<<"${out}"; then
   pass node-added-in-the-app

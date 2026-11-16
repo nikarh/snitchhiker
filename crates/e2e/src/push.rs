@@ -298,7 +298,7 @@ pub fn devices_are_woken_and_told_when_the_node_goes() -> Result<(), String> {
     // The relay and the mock services are on this machine (elsewhere, in a deployment): with the node stopped, its
     // table must go (fail open) for the relay to reach them.
     let settings = format!(
-        "fail = \"open\"\nmode = \"enforce\"\nno_match = \"ask\"\nprompt_timeout_secs = 10\nremote = true\nrelays = [\"{RELAY}/\"]\npush_gateway = \"{gateway}\"\noffline_after_secs = 4\n"
+        "fail = \"open\"\nmode = \"enforce\"\nno_match = \"ask\"\nprompt_timeout_secs = 10\n[remote]\nrelays = [\"{RELAY}/\"]\npush_gateway = \"{gateway}\"\noffline_after_secs = 4\n"
     );
     let mut daemon = Running::start("push", &settings)?;
     // The test's connections, and the relay's (on another machine in a deployment), are a program's like any other's.

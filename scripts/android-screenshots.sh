@@ -12,14 +12,17 @@ cd "$(dirname "$0")/.."
 out=site/src/assets/screenshots
 mkdir -p "${out}"
 
-cargo build -q --locked --release -p snitchhiker-daemon -p snitchhiker-relay -p snitchhiker-e2e
+cargo build -q --locked --release -p snitchhiker-daemon -p snitchhiker-bridge -p snitchhiker-relay -p snitchhiker-e2e
 mise run android:core > /dev/null
 (cd android && ./gradlew -q --no-daemon :app:assembleFossDebug > /dev/null)
 e2e/vm.sh node up > /dev/null
-mise x nfpm -- scripts/package.sh x86_64 target/release/snitchhikerd target/e2e-packages > /dev/null
+SNITCHHIKER_REMOTE=target/release/snitchhiker-remote \
+  mise x nfpm -- scripts/package.sh x86_64 target/release/snitchhikerd target/e2e-packages > /dev/null
 e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
+e2e/vm.sh node put target/e2e-packages/snitchhiker-remote-x86_64.pkg.tar.zst /tmp/snitchhiker-remote.pkg.tar.zst
 e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
-  sudo pacman -U --noconfirm --overwrite /usr/bin/snitchhikerd /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+  sudo pacman -U --noconfirm --overwrite "/usr/bin/snitchhiker*" /tmp/snitchhiker.pkg.tar.zst \
+    /tmp/snitchhiker-remote.pkg.tar.zst >/dev/null'
 e2e/vm.sh node put target/release/snitchhiker-e2e /tmp/snitchhiker-e2e-ui
 
 # The relay, on loopback: the node and the emulator both reach it as 10.0.2.2:3340.
@@ -37,8 +40,10 @@ systemctl stop snitchhikerd
 install -d -m 700 /var/lib/snitchhiker
 rm -f /var/lib/snitchhiker/state.db /var/lib/snitchhiker/state.db-* /var/lib/snitchhiker/state.running
 /tmp/snitchhiker-e2e-ui --seed /var/lib/snitchhiker/state.db 40000 7
-printf 'mode = "enforce"\nno_match = "ask"\nno_client = "allow"\nprompt_timeout_secs = 600\nremote = true\nrelays = ["http://10.0.2.2:3340/"]\n' > /etc/snitchhiker/daemon.toml
-systemctl start snitchhikerd
+printf 'mode = "enforce"\nno_match = "ask"\nno_client = "allow"\nprompt_timeout_secs = 600\n' > /etc/snitchhiker/daemon.toml
+printf 'relays = ["http://10.0.2.2:3340/"]\n' > /etc/snitchhiker/remote.toml
+systemctl enable snitchhiker-remote > /dev/null 2>&1
+systemctl start snitchhikerd snitchhiker-remote
 sleep 2
 snitchhiker rules add allow --exe glob:/usr/lib/systemd/** --name "systemd" >/dev/null
 apps=$(snitchhiker folders add Apps | sed "s/added folder //")

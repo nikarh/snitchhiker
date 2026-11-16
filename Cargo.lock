@@ -8160,6 +8160,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "hickory-proto",
+ "nix",
  "ring",
  "serde_json",
  "snitchhiker-client",

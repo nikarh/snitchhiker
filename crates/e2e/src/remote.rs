@@ -1,5 +1,7 @@
-//! Paired devices over the network (iroh): a device pairs with a link's one-time secret and then connects with its
-//! key; an unpaired key is refused, a secret works once, and unpairing closes the device's connections.
+//! Paired devices over the network (iroh, through the node's remote service `snitchhiker-remote`): a device pairs
+//! with a link's one-time secret and then connects with its key; an unpaired key is refused, a secret works once, and
+//! unpairing closes the device's connections. The daemon serves the remote service's user alone, and that service's
+//! traffic is the node's own.
 
 use std::thread;
 use std::time::Duration;
@@ -9,7 +11,7 @@ use snitchhiker_proto::v1;
 use snitchhiker_remote::{Key, Options, PairLink};
 
 use crate::daemon::Running;
-use crate::util::check;
+use crate::util::{check, run};
 
 fn link(daemon: &Running, name: &str) -> Result<PairLink, String> {
     let printed = daemon.cli(&["pair", "--name", name])?;
@@ -31,7 +33,7 @@ fn status(client: &mut snitchhiker_client::Client) -> Result<v1::Status, String>
 }
 
 pub fn a_paired_device_connects_and_is_unpaired() -> Result<(), String> {
-    let daemon = Running::start("remote", "mode = \"monitor\"\nremote = true\n")?;
+    let daemon = Running::start("remote", "mode = \"monitor\"\n[remote]\n")?;
     let options = Options::default();
     let device = Key::generate();
     let first = link(&daemon, "laptop")?;
@@ -128,7 +130,7 @@ pub fn a_device_connects_through_the_relay() -> Result<(), String> {
     let relay = Relay::start(&[])?;
     let mut daemon = Running::start(
         "remote-relay",
-        &format!("mode = \"monitor\"\nremote = true\nrelays = [\"{RELAY}\"]\n"),
+        &format!("mode = \"monitor\"\n[remote]\nrelays = [\"{RELAY}\"]\n"),
     )?;
     let options = Options::default();
     let device = Key::generate();
@@ -145,7 +147,7 @@ pub fn a_device_connects_through_the_relay() -> Result<(), String> {
     let node_id = link.node.id.clone();
     let relay = Relay::start(&[node_id])?;
     daemon.restart(&format!(
-        "mode = \"monitor\"\nremote = true\nrelays = [\"{RELAY}\"]\n"
+        "mode = \"monitor\"\n[remote]\nrelays = [\"{RELAY}\"]\n"
     ))?;
     thread::sleep(Duration::from_secs(2));
     let refused = connect(&device, &link.node, &options, "e2e", "0")
@@ -275,7 +277,7 @@ pub fn a_device_behind_nat_reaches_a_firewalled_node() -> Result<(), String> {
     };
     let daemon = Running::start(
         "remote-nat",
-        &format!("mode = \"monitor\"\nremote = true\nrelays = [\"{relay_url}/\"]\n"),
+        &format!("mode = \"monitor\"\n[remote]\nrelays = [\"{relay_url}/\"]\n"),
     )?;
     // Inbound dropped but for SSH (the harness's way in) and the relay (here on the same machine; a deployment's is
     // elsewhere), as OpenSnitch's file says it.
@@ -316,7 +318,7 @@ pub fn a_device_behind_nat_reaches_a_firewalled_node() -> Result<(), String> {
 
 /// A remote device's dangerous request waits for a local approval: approved, it goes ahead; denied, it is refused.
 pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
-    let daemon = Running::start("remote-approval", "mode = \"monitor\"\nremote = true\n")?;
+    let daemon = Running::start("remote-approval", "mode = \"monitor\"\n[remote]\n")?;
     let options = Options::default();
     let device = Key::generate();
     let link = link(&daemon, "phone")?;
@@ -420,7 +422,7 @@ fn prompts_seen(client: &mut snitchhiker_client::Client, wait: Duration) -> Vec<
 pub fn prompts_escalate_to_devices_and_not_to_muted_ones() -> Result<(), String> {
     let daemon = Running::start(
         "remote-routing",
-        "mode = \"enforce\"\nno_match = \"ask\"\nprompt_timeout_secs = 20\nremote = true\nprompt_routing = \"escalate\"\nescalate_after_secs = 2\n",
+        "mode = \"enforce\"\nno_match = \"ask\"\nprompt_timeout_secs = 20\nprompt_routing = \"escalate\"\nescalate_after_secs = 2\n[remote]\n",
     )?;
     // This test's own connections to the node are a program's like any other's.
     daemon.cli(&[
@@ -497,7 +499,7 @@ fn code_of(printed: &str) -> Result<snitchhiker_remote::code::Code, String> {
 /// A device pairs by typing the node's code (found on the LAN by mDNS); a wrong code is spent, and reported.
 pub fn a_device_pairs_by_code_on_the_lan() -> Result<(), String> {
     use snitchhiker_client::remote::pair_with_code;
-    let daemon = Running::start("remote-code", "mode = \"monitor\"\nremote = true\n")?;
+    let daemon = Running::start("remote-code", "mode = \"monitor\"\n[remote]\n")?;
     let options = Options {
         lan: true,
         ..Options::default()
@@ -549,7 +551,7 @@ pub fn a_device_pairs_by_code_on_the_lan() -> Result<(), String> {
 
 /// A client of another major version of the protocol is refused at the handshake (its ALPN), before anything else.
 pub fn another_major_version_is_refused() -> Result<(), String> {
-    let daemon = Running::start("remote-version", "mode = \"monitor\"\nremote = true\n")?;
+    let daemon = Running::start("remote-version", "mode = \"monitor\"\n[remote]\n")?;
     let device = Key::generate();
     let link = link(&daemon, "")?;
     pair(&device, &link, "old", &Options::default()).map_err(|e| e.to_string())?;
@@ -579,6 +581,205 @@ pub fn another_major_version_is_refused() -> Result<(), String> {
     check(
         same.is_ok(),
         "a client of this version wasn't served",
+        &found,
+    )
+}
+
+/// The node's key sealed with `snitchhiker-remote seal-key`: the plaintext is gone, the packaged service gets the key
+/// from systemd (`ImportCredential=`), and the node keeps its id.
+pub fn the_node_key_is_sealed_and_keeps_its_id() -> Result<(), String> {
+    const KEY: &str = "/var/lib/snitchhiker-remote/node.key";
+    const SEALED: &str = "/etc/credstore.encrypted/snitchhiker.node-key";
+    let result = (|| {
+        let _ = std::fs::remove_file(KEY);
+        let _ = std::fs::remove_file(SEALED);
+        run(
+            "systemctl",
+            &["restart", "snitchhikerd", "snitchhiker-remote"],
+        )?;
+        let before = wait_for_node_id()?;
+        let sealed = run("snitchhiker-remote", &["seal-key"])?;
+        let plaintext = std::path::Path::new(KEY).exists();
+        run("systemctl", &["restart", "snitchhiker-remote"])?;
+        let after = wait_for_node_id()?;
+        let log = run(
+            "journalctl",
+            &["-u", "snitchhiker-remote", "--no-pager", "-n", "30"],
+        )
+        .unwrap_or_default();
+        let found = format!("{sealed}\nbefore: {before}\nafter: {after}\n{log}");
+        check(!plaintext, "the plaintext key is still on the disk", &found)?;
+        check(
+            !before.is_empty() && before == after,
+            "the node's id changed across sealing",
+            &found,
+        )?;
+        check(
+            log.contains("the node's key is the sealed credential"),
+            "the service didn't use the sealed key",
+            &found,
+        )
+    })();
+    let _ = run("systemctl", &["stop", "snitchhiker-remote", "snitchhikerd"]);
+    let _ = std::fs::remove_file(SEALED);
+    result
+}
+
+/// The node's id, once the packaged remote service has connected to the packaged daemon.
+fn wait_for_node_id() -> Result<String, String> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let devices = run("snitchhiker", &["devices"]).unwrap_or_default();
+        if let Some(id) = devices
+            .lines()
+            .find(|l| l.contains("node"))
+            .and_then(|l| l.split_whitespace().find(|w| w.len() == 64))
+        {
+            return Ok(id.to_owned());
+        }
+        if std::time::Instant::now() > deadline {
+            return Err(format!("the remote service didn't connect:\n{devices}"));
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Runs `snitchhiker-remote` as `user` with a configuration and key of its own; its exit status and log.
+fn bridge_as(user: &str, name: &str) -> Result<(bool, String), String> {
+    use std::os::unix::process::CommandExt as _;
+    let user = nix::unistd::User::from_name(user)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no user {user}"))?;
+    let dir = format!("/tmp/snitchhiker-bridge-{name}");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::os::unix::fs::chown(&dir, Some(user.uid.as_raw()), Some(user.gid.as_raw()))
+        .map_err(|e| e.to_string())?;
+    std::fs::write(
+        format!("{dir}/remote.toml"),
+        format!("key = \"{dir}/node.key\"\n"),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut child = std::process::Command::new("snitchhiker-remote")
+        .args(["--config", &format!("{dir}/remote.toml")])
+        .uid(user.uid.as_raw())
+        .gid(user.gid.as_raw())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while child.try_wait().map_err(|e| e.to_string())?.is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    Ok((
+        output.status.success(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    ))
+}
+
+/// The daemon's remote socket serves the remote service's user alone, and one service at a time: another user's
+/// process (root's too) or a second service is refused, and the node's devices stay with the first.
+pub fn only_the_remote_service_is_served() -> Result<(), String> {
+    let daemon = Running::start("remote-socket", "mode = \"monitor\"\n[remote]\n")?;
+    let devices_before = daemon.cli(&["devices"])?;
+    let (mallory_ok, mallory) = bridge_as("mallory", "mallory")?;
+    let (root_ok, root) = bridge_as("root", "root")?;
+    let (second_ok, second) = bridge_as("snitchhiker-remote", "second")?;
+    let devices_after = daemon.cli(&["devices"])?;
+    let log = std::fs::read_to_string("/tmp/snitchhiker-daemon-test/remote-socket/daemon.log")
+        .unwrap_or_default();
+    let found = format!(
+        "mallory's: {mallory}\nroot's: {root}\nsecond: {second}\nbefore: {devices_before}\nafter: {devices_after}\n{log}"
+    );
+    check(
+        !mallory_ok && mallory.contains("refused") && !mallory.contains("remote endpoint started"),
+        "another user's process was served as the remote service",
+        &found,
+    )?;
+    check(
+        !root_ok && root.contains("refused") && !root.contains("remote endpoint started"),
+        "root's process was served as the remote service",
+        &found,
+    )?;
+    check(
+        !second_ok && second.contains("refused"),
+        "a second remote service was served beside the first",
+        &found,
+    )?;
+    check(
+        log.contains("isn't snitchhiker-remote's")
+            && log.contains("another remote service is connected"),
+        "the daemon didn't say why it refused them",
+        &found,
+    )?;
+    check(
+        devices_before == devices_after,
+        "the node changed its id when the others were refused",
+        &found,
+    )
+}
+
+/// With nothing allowed (`no_match = "deny"`, no rules), the remote service still reaches the relay and devices
+/// through it: its traffic is the node's own, by its process. Another process of the same user is decided as any.
+pub fn the_remote_services_traffic_is_the_nodes_own() -> Result<(), String> {
+    use std::os::unix::process::CommandExt as _;
+    let relay = Relay::start(&[])?;
+    let daemon = Running::start(
+        "remote-own",
+        &format!("mode = \"enforce\"\nno_match = \"deny\"\n[remote]\nrelays = [\"{RELAY}\"]\n"),
+    )?;
+    // The device (this program) is let out to the relay; the node's remote service isn't, by any rule.
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "/usr/local/bin/snitchhiker-e2e",
+        "--name",
+        "the test device",
+    ])?;
+    let device = Key::generate();
+    let options = Options::default();
+    let mut link = link(&daemon, "phone")?;
+    link.node.addrs.clear();
+    let connected = pair(&device, &link, "phone", &options)
+        .map_err(|e| e.to_string())
+        .and_then(|_| connect(&device, &link.node, &options, "e2e", "0").map_err(|e| e.to_string()))
+        .and_then(|mut c| status(&mut c));
+    let user = nix::unistd::User::from_name("snitchhiker-remote")
+        .map_err(|e| e.to_string())?
+        .ok_or("no snitchhiker-remote user")?;
+    let other = std::process::Command::new("python3")
+        .args([
+            "-c",
+            "import socket\ntry:\n    socket.create_connection(('127.0.0.1', 3340), timeout=2)\n    print('connected')\nexcept OSError as e:\n    print('failed', e)",
+        ])
+        .uid(user.uid.as_raw())
+        .gid(user.gid.as_raw())
+        .output()
+        .map_err(|e| e.to_string())?;
+    let other = String::from_utf8_lossy(&other.stdout).into_owned();
+    let events = daemon.cli(&["events", "--limit", "20"]).unwrap_or_default();
+    drop(relay);
+    let found = format!(
+        "connected: {:?}\nanother process of the user: {other}\n{events}\n{}",
+        connected.as_ref().map(|s| &s.daemon_version),
+        daemon.remote_log()
+    );
+    check(
+        connected.is_ok(),
+        "the device didn't reach the node through the relay with nothing allowed",
+        &found,
+    )?;
+    check(
+        other.contains("failed"),
+        "another process of the remote service's user wasn't decided",
         &found,
     )
 }

@@ -201,10 +201,6 @@ const SCENARIOS: &[Scenario] = &[
         daemon::a_taken_queue_fails_the_start_with_nothing_in_place,
     ),
     (
-        "daemon/the-node-key-is-sealed-and-keeps-its-id",
-        daemon::the_node_key_is_sealed_and_keeps_its_id,
-    ),
-    (
         "daemon/loopback-is-allowed-by-default",
         daemon::loopback_is_allowed_by_default,
     ),
@@ -370,6 +366,18 @@ const SCENARIOS: &[Scenario] = &[
     (
         "remote/devices-are-woken-and-told-when-the-node-goes",
         push::devices_are_woken_and_told_when_the_node_goes,
+    ),
+    (
+        "remote/the-node-key-is-sealed-and-keeps-its-id",
+        remote::the_node_key_is_sealed_and_keeps_its_id,
+    ),
+    (
+        "remote/only-the-remote-service-is-served",
+        remote::only_the_remote_service_is_served,
+    ),
+    (
+        "remote/the-remote-services-traffic-is-the-nodes-own",
+        remote::the_remote_services_traffic_is_the_nodes_own,
     ),
 ];
 

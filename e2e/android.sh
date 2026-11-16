@@ -25,14 +25,17 @@ fail() {
 }
 
 # Builds: the node's package, the relay, the app with its core.
-cargo build -q --locked -p snitchhiker-daemon -p snitchhiker-relay
+cargo build -q --locked -p snitchhiker-daemon -p snitchhiker-bridge -p snitchhiker-relay
 mise run android:core > /dev/null
 (cd android && ./gradlew -q :app:assembleFossDebug > /dev/null)
 e2e/vm.sh node up > /dev/null
-mise x nfpm -- scripts/package.sh x86_64 target/debug/snitchhikerd target/e2e-packages > /dev/null
+SNITCHHIKER_REMOTE=target/debug/snitchhiker-remote \
+  mise x nfpm -- scripts/package.sh x86_64 target/debug/snitchhikerd target/e2e-packages > /dev/null
 e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
+e2e/vm.sh node put target/e2e-packages/snitchhiker-remote-x86_64.pkg.tar.zst /tmp/snitchhiker-remote.pkg.tar.zst
 e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
-  sudo pacman -U --noconfirm --overwrite /usr/bin/snitchhikerd /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+  sudo pacman -U --noconfirm --overwrite "/usr/bin/snitchhiker*" /tmp/snitchhiker.pkg.tar.zst \
+    /tmp/snitchhiker-remote.pkg.tar.zst >/dev/null'
 
 # ntfy (test only, never shipped): its server and its app, checked against the sums of the versions tried.
 ntfy_dir=${XDG_CACHE_HOME:-${HOME}/.cache}/snitchhiker-e2e/ntfy
@@ -65,8 +68,10 @@ e2e/vm.sh node ssh "sudo GATEWAY=${gateway} bash -s" <<'NODE' > /dev/null
 # Nothing of the desktop scenarios' session left: its app's connections would prompt too.
 pkill -u mallory || true
 pkill -x curl || true
-printf 'mode = "enforce"\nno_match = "ask"\nno_client = "deny"\nprompt_timeout_secs = 60\nremote = true\nrelays = ["http://10.0.2.2:3340/"]\npush_gateway = "%s"\noffline_after_secs = 20\n' "${GATEWAY}" > /etc/snitchhiker/daemon.toml
-systemctl restart snitchhikerd
+printf 'mode = "enforce"\nno_match = "ask"\nno_client = "deny"\nprompt_timeout_secs = 60\n' > /etc/snitchhiker/daemon.toml
+printf 'relays = ["http://10.0.2.2:3340/"]\npush_gateway = "%s"\noffline_after_secs = 20\n' "${GATEWAY}" > /etc/snitchhiker/remote.toml
+systemctl enable snitchhiker-remote > /dev/null 2>&1
+systemctl restart snitchhikerd snitchhiker-remote
 sleep 2
 for id in $(snitchhiker rules | awk '$1 ~ /^[0-9]+$/ {print $1}'); do snitchhiker rules rm "$id" > /dev/null; done
 for id in $(snitchhiker devices | awk 'NR > 1 {print $1}'); do snitchhiker devices rm "$id" > /dev/null; done

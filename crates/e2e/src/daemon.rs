@@ -13,9 +13,37 @@ const DIR: &str = "/tmp/snitchhiker-daemon-test";
 const PIDFILE: &str = "/run/snitchhiker/snitchhikerd.pid";
 
 /// A daemon started with its own configuration and database; stopped (and its table removed) when dropped.
+///
+/// Settings after a `[remote]` line are the node's remote access (`remote.toml`): the daemon is started with
+/// `snitchhiker-remote` beside it, as the service runs it (its own user), its key kept in the daemon's directory.
 pub struct Running {
     child: Option<Child>,
     config: String,
+    /// The remote service, and its settings.
+    bridge: Option<Child>,
+    remote: Option<String>,
+}
+
+/// The daemon's settings, and the remote service's (after a `[remote]` line), if any.
+fn split(settings: &str) -> (&str, Option<&str>) {
+    match settings.split_once("[remote]\n") {
+        Some((daemon, remote)) => (daemon, Some(remote)),
+        None => (settings, None),
+    }
+}
+
+/// Waits up to `wait` for `child` to exit; kills it if it doesn't.
+fn reap(child: &mut Child, wait: Duration) -> bool {
+    let deadline = Instant::now() + wait;
+    while child.try_wait().ok().flatten().is_none() {
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return false;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    true
 }
 
 impl Running {
@@ -29,6 +57,7 @@ impl Running {
         settings: &str,
         prepare: impl FnOnce(&str) -> Result<(), String>,
     ) -> Result<Self, String> {
+        let (settings, remote) = split(settings);
         // The packaged service must not run next to a test daemon (they would share queues and the table).
         let _ = run("systemctl", &["stop", "snitchhikerd"]);
         let _ = run("systemctl", &["reset-failed", "snitchhikerd"]);
@@ -62,9 +91,11 @@ impl Running {
             .stderr(std::fs::File::create(format!("{dir}/daemon.log")).map_err(|e| e.to_string())?)
             .spawn()
             .map_err(|e| format!("starting snitchhikerd: {e}"))?;
-        let running = Self {
+        let mut running = Self {
             child: Some(child),
             config,
+            bridge: None,
+            remote: remote.map(str::to_owned),
         };
         let deadline = Instant::now() + Duration::from_secs(10);
         while !Path::new(PIDFILE).exists() {
@@ -76,7 +107,73 @@ impl Running {
             }
             thread::sleep(Duration::from_millis(50));
         }
+        running.start_bridge()?;
         Ok(running)
+    }
+
+    fn dir(&self) -> String {
+        Path::new(&self.config)
+            .parent()
+            .map_or_else(String::new, |dir| dir.display().to_string())
+    }
+
+    /// Starts the remote service, if the daemon has remote settings, and waits for its endpoint.
+    fn start_bridge(&mut self) -> Result<(), String> {
+        use std::os::unix::process::CommandExt as _;
+        let Some(remote) = self.remote.clone() else {
+            return Ok(());
+        };
+        let user = nix::unistd::User::from_name("snitchhiker-remote")
+            .map_err(|e| e.to_string())?
+            .ok_or("no snitchhiker-remote user: is the snitchhiker-remote package installed?")?;
+        let dir = format!("{}/remote", self.dir());
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        std::os::unix::fs::chown(&dir, Some(user.uid.as_raw()), Some(user.gid.as_raw()))
+            .map_err(|e| e.to_string())?;
+        let config = format!("{dir}/remote.toml");
+        std::fs::write(&config, format!("key = \"{dir}/node.key\"\n{remote}"))
+            .map_err(|e| e.to_string())?;
+        let log = format!("{dir}/remote.log");
+        let child = Command::new("snitchhiker-remote")
+            .args(["--config", &config])
+            .uid(user.uid.as_raw())
+            .gid(user.gid.as_raw())
+            .stdout(Stdio::null())
+            .stderr(std::fs::File::create(&log).map_err(|e| e.to_string())?)
+            .spawn()
+            .map_err(|e| format!("starting snitchhiker-remote: {e}"))?;
+        self.bridge = Some(child);
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            if text.contains("remote endpoint started") {
+                return Ok(());
+            }
+            let exited = self
+                .bridge
+                .as_mut()
+                .is_some_and(|b| b.try_wait().ok().flatten().is_some());
+            if exited || Instant::now() > deadline {
+                return Err(format!("the remote service didn't start:\n{text}"));
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    /// The remote service's log.
+    pub fn remote_log(&self) -> String {
+        std::fs::read_to_string(format!("{}/remote/remote.log", self.dir())).unwrap_or_default()
+    }
+
+    /// Stops the remote service with SIGTERM, as systemd does before stopping the daemon (it is bound to it).
+    pub fn stop_bridge(&mut self) -> Result<(), String> {
+        if let Some(mut bridge) = self.bridge.take() {
+            run("kill", &["-TERM", &bridge.id().to_string()])?;
+            if !reap(&mut bridge, Duration::from_secs(10)) {
+                return Err("the remote service didn't stop on SIGTERM".to_owned());
+            }
+        }
+        Ok(())
     }
 
     /// The command line, which talks to the running daemon (there is one at a time).
@@ -120,6 +217,8 @@ impl Running {
     /// Stops the daemon and starts it again with `settings` instead, keeping its database.
     pub fn restart(&mut self, settings: &str) -> Result<(), String> {
         self.stop()?;
+        let (settings, remote) = split(settings);
+        self.remote = remote.map(str::to_owned);
         let dir = Path::new(&self.config)
             .parent()
             .ok_or("no config directory")?
@@ -147,20 +246,24 @@ impl Running {
             }
             thread::sleep(Duration::from_millis(50));
         }
-        Ok(())
+        self.start_bridge()
     }
 
-    /// Kills the daemon with SIGKILL, as a crash would end it.
+    /// Kills the daemon with SIGKILL, as a crash would end it; the remote service then ends by itself.
     pub fn kill(&mut self) -> Result<(), String> {
         if let Some(mut child) = self.child.take() {
             child.kill().map_err(|e| e.to_string())?;
             child.wait().map_err(|e| e.to_string())?;
         }
+        if let Some(mut bridge) = self.bridge.take() {
+            reap(&mut bridge, Duration::from_secs(10));
+        }
         Ok(())
     }
 
-    /// Stops the daemon with SIGTERM and waits for it.
+    /// Stops the remote service, then the daemon, with SIGTERM, and waits for them.
     pub fn stop(&mut self) -> Result<(), String> {
+        self.stop_bridge()?;
         if let Some(mut child) = self.child.take() {
             let pid = child.id().to_string();
             run("kill", &["-TERM", &pid])?;
@@ -1614,51 +1717,6 @@ fn run_nft(script: &str) -> Result<(), String> {
             String::from_utf8_lossy(&output.stderr)
         ))
     }
-}
-
-/// The node's key sealed with `snitchhikerd seal-key`: the plaintext is gone, the service gets the key from systemd
-/// (`ImportCredential=`), and the node keeps its id.
-pub fn the_node_key_is_sealed_and_keeps_its_id() -> Result<(), String> {
-    let config = "/etc/snitchhiker/daemon.toml";
-    let packaged = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
-    let result = (|| {
-        std::fs::write(config, format!("{packaged}\nremote = true\n"))
-            .map_err(|e| e.to_string())?;
-        let _ = std::fs::remove_file("/var/lib/snitchhiker/node.key");
-        let _ = std::fs::remove_file("/etc/credstore.encrypted/snitchhiker.node-key");
-        run("systemctl", &["restart", "snitchhikerd"])?;
-        let before = run("snitchhiker", &["devices"])?;
-        let sealed = run("snitchhikerd", &["seal-key"])?;
-        let plaintext = std::path::Path::new("/var/lib/snitchhiker/node.key").exists();
-        run("systemctl", &["restart", "snitchhikerd"])?;
-        let after = run("snitchhiker", &["devices"])?;
-        let log = run(
-            "journalctl",
-            &["-u", "snitchhikerd", "--no-pager", "-n", "30"],
-        )
-        .unwrap_or_default();
-        let id = |text: &str| {
-            text.lines()
-                .find(|l| l.contains("node"))
-                .map_or_else(String::new, str::to_owned)
-        };
-        let found = format!("{sealed}\nbefore: {before}\nafter: {after}\n{log}");
-        check(!plaintext, "the plaintext key is still on the disk", &found)?;
-        check(
-            !id(&before).is_empty() && id(&before) == id(&after),
-            "the node's id changed across sealing",
-            &found,
-        )?;
-        check(
-            log.contains("the node's key is the sealed credential"),
-            "the service didn't use the sealed key",
-            &found,
-        )
-    })();
-    let _ = run("systemctl", &["stop", "snitchhikerd"]);
-    let _ = std::fs::write(config, packaged);
-    let _ = std::fs::remove_file("/etc/credstore.encrypted/snitchhiker.node-key");
-    result
 }
 
 /// A queue another program holds (as OpenSnitch's daemon holds queue 0): the daemon doesn't start, says which queue

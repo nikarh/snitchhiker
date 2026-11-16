@@ -12,6 +12,8 @@
 # daemon.toml: settings for the daemon meanwhile; the packaged file is put back afterwards.
 # SNITCHHIKER_UI_PREFS: the app's ui.toml (`appearance = "dark"`), written before it starts.
 # SNITCHHIKER_UI_BEFORE: a shell snippet run as root once the daemon is up, before the app starts.
+# SNITCHHIKER_UI_REMOTE=1: the node's remote access (snitchhiker-remote.service) runs meanwhile, with the packaged
+# remote.toml.
 #
 # Nothing of this runs on the host but the build and the copies.
 set -euo pipefail
@@ -19,15 +21,19 @@ cd "$(dirname "$0")/.."
 out=${1:?usage: scripts/ui-vm.sh <output dir> [setup] [daemon.toml]}
 setup=${2:-}
 config=${3:-}
-cargo build -q --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-e2e
+cargo build -q --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge -p snitchhiker-e2e
 e2e/vm.sh node up >/dev/null
-# The package, as users get it, when the VM doesn't have it yet (one not kept from e2e/run.sh).
-if ! e2e/vm.sh node ssh 'getent group snitchhiker-ui' >/dev/null; then
-  mise x nfpm -- scripts/package.sh x86_64 target/release/snitchhikerd target/ui-vm-packages >/dev/null
+# The packages, as users get them, when the VM doesn't have them yet (one not kept from e2e/run.sh).
+if ! e2e/vm.sh node ssh 'getent group snitchhiker-ui && getent passwd snitchhiker-remote' >/dev/null; then
+  SNITCHHIKER_REMOTE=target/release/snitchhiker-remote \
+    mise x nfpm -- scripts/package.sh x86_64 target/release/snitchhikerd target/ui-vm-packages >/dev/null
   e2e/vm.sh node put target/ui-vm-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
+  e2e/vm.sh node put target/ui-vm-packages/snitchhiker-remote-x86_64.pkg.tar.zst /tmp/snitchhiker-remote.pkg.tar.zst
   e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
-    sudo pacman -U --noconfirm --overwrite /usr/bin/snitchhikerd /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+    sudo pacman -U --noconfirm --overwrite "/usr/bin/snitchhiker*" /tmp/snitchhiker.pkg.tar.zst \
+      /tmp/snitchhiker-remote.pkg.tar.zst >/dev/null'
 fi
+e2e/vm.sh node put target/release/snitchhiker-remote /tmp/snitchhiker-remote-ui
 e2e/vm.sh node put target/release/snitchhiker-ui /tmp/snitchhiker-ui
 e2e/vm.sh node put target/release/snitchhiker-e2e /tmp/snitchhiker-e2e-ui
 e2e/vm.sh node put target/release/snitchhikerd /tmp/snitchhikerd-ui
@@ -35,6 +41,7 @@ e2e/vm.sh node ssh "sudo bash -s" <<SCRIPT
 set -euo pipefail
 # The daemon of this tree too, over the packaged one (the rest of the package stays).
 install -m 755 /tmp/snitchhikerd-ui /usr/bin/snitchhikerd
+install -m 755 /tmp/snitchhiker-remote-ui /usr/bin/snitchhiker-remote
 install -o root -g snitchhiker-ui -m 2755 /tmp/snitchhiker-ui /usr/bin/snitchhiker-ui
 install -d -o root -g snitchhiker-ui -m 1770 /var/cache/snitchhiker-ui
 install -d -o root -g snitchhiker-ui -m 1770 /var/lib/snitchhiker-ui
@@ -48,6 +55,10 @@ groupadd -f e2e-admins
 usermod -aG e2e-admins mallory
 grep -q '^admin_groups' /etc/snitchhiker/daemon.toml || printf 'admin_groups = ["e2e-admins"]\n' >> /etc/snitchhiker/daemon.toml
 systemctl restart snitchhikerd
+if [ -n '${SNITCHHIKER_UI_REMOTE:-}' ]; then
+  systemctl start snitchhiker-remote
+  for _ in \$(seq 100); do snitchhiker devices | grep -q '^this node' && break; sleep 0.1; done
+fi
 # Before the app starts (SNITCHHIKER_UI_BEFORE): history seeded into the node, rules made, for the app to load.
 ${SNITCHHIKER_UI_BEFORE:-}
 uid=\$(id -u mallory)
@@ -99,6 +110,7 @@ ${setup}
 sleep 2
 shot final
 cp /tmp/daemon.toml.packaged /etc/snitchhiker/daemon.toml
+systemctl stop snitchhiker-remote
 systemctl restart snitchhikerd
 SCRIPT
 mkdir -p "${out}"
