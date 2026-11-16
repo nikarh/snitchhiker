@@ -70,20 +70,20 @@ jobs:
           SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
         run: |
           set -euo pipefail
-          cargo build --locked --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-relay
-          bin=target/release/snitchhikerd
+          cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-relay
+          bin=target/dist/snitchhikerd
           "$bin" --version
           mkdir -p out
           cp "$bin" "out/snitchhikerd-${{ matrix.arch }}-linux-gnu"
-          cp target/release/snitchhiker-ui "out/snitchhiker-ui-${{ matrix.arch }}-linux-gnu"
-          cp target/release/snitchhiker-relay "out/snitchhiker-relay-${{ matrix.arch }}-linux-gnu"
+          cp target/dist/snitchhiker-ui "out/snitchhiker-ui-${{ matrix.arch }}-linux-gnu"
+          cp target/dist/snitchhiker-relay "out/snitchhiker-relay-${{ matrix.arch }}-linux-gnu"
       - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           install_args: nfpm
       - name: Packages
         env:
-          SNITCHHIKER_RELAY: target/release/snitchhiker-relay
-        run: scripts/package.sh ${{ matrix.arch }} target/release/snitchhikerd out target/release/snitchhiker-ui
+          SNITCHHIKER_RELAY: target/dist/snitchhiker-relay
+        run: scripts/package.sh ${{ matrix.arch }} target/dist/snitchhikerd out target/dist/snitchhiker-ui
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ matrix.arch }}
@@ -100,9 +100,9 @@ jobs:
           sudo apt-get install -y --no-install-recommends musl-tools
           rustup target add "$TARGET"
           export "CC_${TARGET//-/_}=musl-gcc"
-          cargo build --locked --release --target "$TARGET" -p snitchhiker-relay
+          cargo build --locked --profile dist --target "$TARGET" -p snitchhiker-relay
           mkdir -p relay
-          cp "target/$TARGET/release/snitchhiker-relay" relay/
+          cp "target/$TARGET/dist/snitchhiker-relay" relay/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: relay-static-${{ matrix.arch }}
