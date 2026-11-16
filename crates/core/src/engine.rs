@@ -152,13 +152,68 @@ struct CompiledRule {
 }
 
 /// The rules that apply, compiled and indexed. Built once per change and shared read-only by the deciding threads.
+///
+/// Each rule is filed under its most selective key: the host names it is limited to (lowercase; `*.example.com`
+/// under `example.com`), else the exact programs, else the ports; the rest are checked for every connection. A
+/// connection looks only at the rules under its own names (and the domains above them), its program and its port.
 #[derive(Debug, Clone, Default)]
 pub struct RuleSet {
     rules: Vec<CompiledRule>,
+    by_host: HashMap<Box<str>, Vec<u32>>,
+    /// Every rule in `by_host`, for a name with capitals (looked up without allocating a lowercase copy).
+    host_indexed: Vec<u32>,
+    by_exe: HashMap<Box<str>, Vec<u32>>,
     /// Rules whose conditions name destination ports, by port.
     by_port: HashMap<u16, Vec<u32>>,
-    /// Rules that apply to any port.
-    any_port: Vec<u32>,
+    /// Rules that apply to any connection, as far as the index can tell.
+    rest: Vec<u32>,
+}
+
+/// Where a rule is filed.
+enum Key {
+    Hosts(Vec<Box<str>>),
+    Exes(Vec<Box<str>>),
+    Ports(Vec<u16>),
+    Rest,
+}
+
+/// A rule's most selective key, from its positive conditions.
+fn key(conditions: &[Compiled]) -> Key {
+    let hosts = conditions.iter().find_map(|c| match c {
+        Compiled::Host(matchers) if !matchers.is_empty() => matchers
+            .iter()
+            .map(|m| match m {
+                HostMatcher::Pattern(HostPattern::Exact(name)) => Some(
+                    name.trim_end_matches('.')
+                        .to_ascii_lowercase()
+                        .into_boxed_str(),
+                ),
+                HostMatcher::Pattern(HostPattern::Subdomains(suffix)) => Some(
+                    suffix
+                        .trim_start_matches('.')
+                        .trim_end_matches('.')
+                        .to_ascii_lowercase()
+                        .into_boxed_str(),
+                ),
+                _ => None,
+            })
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    });
+    if let Some(hosts) = hosts {
+        return Key::Hosts(hosts);
+    }
+    let exes = conditions.iter().find_map(|c| match c {
+        Compiled::Exe(patterns) if !patterns.is_empty() => patterns
+            .iter()
+            .map(|p| p.exact().map(Box::from))
+            .collect::<Option<Vec<_>>>(),
+        _ => None,
+    });
+    if let Some(exes) = exes {
+        return Key::Exes(exes);
+    }
+    indexed_ports(conditions).map_or(Key::Rest, Key::Ports)
 }
 
 /// A port condition with at most this many ports is indexed by port; wider ones are checked for every connection.
@@ -210,13 +265,24 @@ impl RuleSet {
             }
             let specificity = conditions.iter().map(specificity).sum();
             let index = u32::try_from(set.rules.len()).unwrap_or(u32::MAX);
-            match indexed_ports(&conditions) {
-                Some(ports) => {
+            match key(&conditions) {
+                Key::Hosts(hosts) => {
+                    for host in hosts {
+                        set.by_host.entry(host).or_default().push(index);
+                    }
+                    set.host_indexed.push(index);
+                }
+                Key::Exes(exes) => {
+                    for exe in exes {
+                        set.by_exe.entry(exe).or_default().push(index);
+                    }
+                }
+                Key::Ports(ports) => {
                     for port in ports {
                         set.by_port.entry(port).or_default().push(index);
                     }
                 }
-                None => set.any_port.push(index),
+                Key::Rest => set.rest.push(index),
             }
             set.rules.push(CompiledRule {
                 id: rule.id,
@@ -243,12 +309,31 @@ impl RuleSet {
         self.rules.is_empty()
     }
 
-    fn candidates(&self, port: u16) -> impl Iterator<Item = &CompiledRule> {
-        self.by_port
-            .get(&port)
-            .map_or(&[][..], Vec::as_slice)
-            .iter()
-            .chain(&self.any_port)
+    /// The rules that may match: those filed under the connection's names and the domains above them, its program
+    /// and its port, and the rest. A rule may come more than once (under two of the names).
+    fn candidates<'s>(&'s self, facts: &'s Facts<'_>) -> impl Iterator<Item = &'s CompiledRule> {
+        let bucket = |list: Option<&'s Vec<u32>>| list.map_or(&[][..], Vec::as_slice).iter();
+        let by_host = facts.hosts.iter().flat_map(move |host| {
+            let host: &str = host.strip_suffix('.').unwrap_or(host);
+            let lowercase = !host.bytes().any(|b| b.is_ascii_uppercase());
+            // A name with capitals: every rule filed under a name (rare: resolvers answer in lowercase).
+            let all = if lowercase {
+                &[][..]
+            } else {
+                self.host_indexed.as_slice()
+            };
+            let names = std::iter::successors(lowercase.then_some(host), |name| {
+                name.split_once('.')
+                    .map(|(_, parent)| parent)
+                    .filter(|p| !p.is_empty())
+            });
+            all.iter()
+                .chain(names.flat_map(move |name| bucket(self.by_host.get(name))))
+        });
+        by_host
+            .chain(bucket(self.by_exe.get(facts.exe)))
+            .chain(bucket(self.by_port.get(&facts.port)))
+            .chain(&self.rest)
             .filter_map(|&index| self.rules.get(index as usize))
     }
 
@@ -256,7 +341,7 @@ impl RuleSet {
     #[must_use]
     pub fn decide(&self, facts: &Facts<'_>) -> Option<Decision> {
         let mut best: Option<&CompiledRule> = None;
-        for rule in self.candidates(facts.port) {
+        for rule in self.candidates(facts) {
             if !rule.matches(facts) {
                 continue;
             }
@@ -275,9 +360,12 @@ impl RuleSet {
     #[must_use]
     pub fn explain(&self, facts: &Facts<'_>) -> Vec<Match> {
         let mut matched: Vec<&CompiledRule> = self
-            .candidates(facts.port)
+            .candidates(facts)
             .filter(|r| r.matches(facts))
             .collect();
+        // A rule filed under two of the connection's names comes twice.
+        matched.sort_by_key(|r| std::ptr::from_ref(*r));
+        matched.dedup_by_key(|r| std::ptr::from_ref(*r));
         matched.sort_by(|a, b| {
             if outranks(a, b) {
                 std::cmp::Ordering::Less
@@ -611,6 +699,87 @@ mod tests {
             set.decide(&facts("/usr/bin/wget", &["example.com"], 443)),
             None
         );
+    }
+
+    #[test]
+    fn the_index_decides_as_checking_every_rule_does() {
+        let mut rules = Vec::new();
+        let mut id = 0;
+        let mut next = |action, conditions| {
+            id += 1;
+            rule(id, action, conditions)
+        };
+        for i in 0..40_u16 {
+            let action = if i % 3 == 0 {
+                Action::Deny
+            } else {
+                Action::Allow
+            };
+            rules.push(next(
+                action,
+                vec![host(&format!("*.s{}.example.com", i % 7))],
+            ));
+            rules.push(next(
+                action,
+                vec![
+                    host(&format!("api.s{}.example.com", i % 5)),
+                    exe("/usr/bin/curl"),
+                ],
+            ));
+            rules.push(next(action, vec![exe(&format!("/usr/bin/app{}", i % 6))]));
+            rules.push(next(
+                action,
+                vec![Condition::Port(vec![(8000 + i % 4, 8000 + i % 4)])],
+            ));
+            rules.push(next(action, vec![host(r"re:.*\.s3\.example\.com")]));
+            rules.push(next(
+                action,
+                vec![Condition::Not(Box::new(host("x.example.com")))],
+            ));
+            rules.push(next(
+                action,
+                vec![Condition::Net(vec![
+                    Network::try_from("lan".to_owned()).unwrap(),
+                ])],
+            ));
+        }
+        let set = RuleSet::compile(&[], &rules).unwrap();
+        let everything = |facts: &Facts<'_>| {
+            let mut best: Option<&CompiledRule> = None;
+            for rule in set.rules.iter().filter(|r| r.matches(facts)) {
+                if best.is_none_or(|b| outranks(rule, b)) {
+                    best = Some(rule);
+                }
+            }
+            best.map(|r| (r.id, r.action))
+        };
+        let names = [
+            "api.s1.example.com",
+            "API.S2.Example.com",
+            "s3.example.com",
+            "deep.a.s4.example.com.",
+            "x.example.com",
+            "example.com",
+            "elsewhere.org",
+        ];
+        for exe_path in ["/usr/bin/curl", "/usr/bin/app2", "/usr/bin/other"] {
+            for name in names {
+                for port in [443, 8001, 8003] {
+                    let f = facts(exe_path, &[name], port);
+                    assert_eq!(
+                        set.decide(&f).map(|d| (d.rule, d.action)),
+                        everything(&f),
+                        "{exe_path} {name} {port}"
+                    );
+                    assert_eq!(
+                        set.explain(&f).first().map(|m| (m.rule, m.action)),
+                        everything(&f)
+                    );
+                }
+            }
+            let f = facts(exe_path, &[], 8002);
+            assert_eq!(set.decide(&f).map(|d| (d.rule, d.action)), everything(&f));
+        }
     }
 
     #[test]
