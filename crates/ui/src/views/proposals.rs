@@ -20,7 +20,7 @@ use snitchhiker_proto::{convert, v1};
 
 use crate::backend::Request;
 use crate::model::Model;
-use crate::views::prompts::ARM_AFTER;
+use crate::views::prompts::Focus;
 
 /// Durations offered, in order; the session's first.
 const DURATIONS: [(v1::ProposalDuration, &str); 4] = [
@@ -44,6 +44,7 @@ pub struct Proposals {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
     drafts: HashMap<u64, Draft>,
+    focus: Focus,
 }
 
 impl Proposals {
@@ -68,6 +69,7 @@ impl Proposals {
             model,
             requests,
             drafts: HashMap::new(),
+            focus: Focus::default(),
         }
     }
 
@@ -274,10 +276,7 @@ impl Proposals {
         let Some(draft) = self.drafts.get(&id) else {
             return div().into_any_element();
         };
-        let armed = draft.shown.elapsed() >= ARM_AFTER;
-        if !armed {
-            window.request_animation_frame();
-        }
+        let armed = self.focus.armed(draft.shown, window);
         let provenance = proposal.provenance.clone().unwrap_or_default();
         let rules: Vec<AnyElement> = (0..proposal.rules.len())
             .map(|index| self.rule(proposal, index, cx))
@@ -474,6 +473,7 @@ fn state(state: v1::ProposalState) -> &'static str {
 
 impl Render for Proposals {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus.update(window);
         let proposals: Vec<v1::Proposal> = self
             .model
             .read(cx)

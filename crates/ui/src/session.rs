@@ -99,11 +99,14 @@ fn unknown_peer(path: &Path) -> Option<String> {
         return Some(format!("pid {pid}, another user's"));
     }
     match exe_of(pid) {
-        Ok(exe) => {
+        Ok((exe, id)) => {
             let name = exe
                 .file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-            (!known(&name)).then(|| exe.display().to_string())
+            // A known name isn't enough: a copy of a proxy can have it. The program must be the file at its path
+            // here (not one mounted over it in another namespace), and that path root's, which the user can't change.
+            (!(known(&name) && is_file(&exe, id) && root_only(&exe)))
+                .then(|| exe.display().to_string())
         }
         // The user's own process, yet its executable can't be read: it holds capabilities from its file (sway does,
         // for cap_sys_nice), which made it undumpable. Only root gives a file capabilities, so no proxy of the user's
@@ -134,12 +137,32 @@ fn holds_capabilities(status: &str) -> bool {
 /// The executable of the user's process `pid`. The app is setgid to the client group, and the kernel lets a process
 /// read another's `exe` only when its filesystem gid is the other's gid: for the read, this thread's filesystem gid is
 /// the user's own (it is per thread, and put back at once).
-fn exe_of(pid: i32) -> std::io::Result<PathBuf> {
+fn exe_of(pid: i32) -> std::io::Result<(PathBuf, (u64, u64))> {
+    use std::os::unix::fs::MetadataExt as _;
     let own = nix::unistd::getgid();
     let previous = nix::unistd::setfsgid(own);
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe"));
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).and_then(|path| {
+        // The file the process runs, whatever is at its path now.
+        let running = std::fs::metadata(format!("/proc/{pid}/exe"))?;
+        Ok((path, (running.dev(), running.ino())))
+    });
     nix::unistd::setfsgid(previous);
     exe
+}
+
+/// Whether `path` is the file `id` (device, inode).
+fn is_file(path: &Path, id: (u64, u64)) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    std::fs::metadata(path).is_ok_and(|m| (m.dev(), m.ino()) == id)
+}
+
+/// Whether `path` and every directory above it belong to root, and no one else may write to them.
+fn root_only(path: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    path.is_absolute()
+        && path.ancestors().all(|part| {
+            std::fs::symlink_metadata(part).is_ok_and(|m| m.uid() == 0 && m.mode() & 0o022 == 0)
+        })
 }
 
 fn known(name: &str) -> bool {
@@ -215,5 +238,25 @@ mod tests {
             "{peer}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_root_owned_compositors_count() {
+        use std::os::unix::fs::MetadataExt as _;
+        let sh = std::fs::canonicalize("/bin/sh").unwrap();
+        assert!(root_only(&sh));
+        let meta = std::fs::metadata(&sh).unwrap();
+        assert!(is_file(&sh, (meta.dev(), meta.ino())));
+        assert!(!is_file(&sh, (meta.dev(), meta.ino() + 1)));
+        // A copy of the user's, named like a compositor.
+        let dir =
+            std::env::temp_dir().join(format!("snitchhiker-compositor-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let copy = dir.join("sway");
+        std::fs::write(&copy, "").unwrap();
+        // /tmp is world-writable: never root's alone, whoever made the file.
+        assert!(!root_only(&copy));
+        assert!(!root_only(Path::new("relative/sway")));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

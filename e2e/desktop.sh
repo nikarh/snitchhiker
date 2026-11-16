@@ -25,6 +25,11 @@ for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitc
 runuser -u mallory -- curl -s -m 20 http://198.51.100.7:443 >/dev/null 2>&1 &
 sleep 2
 shot asked
+# The buttons arm only once the window has been active (has the keyboard) a moment. This headless session has no
+# keyboard other than the one wtype makes, while it runs: one kept for a few seconds gives the seat a keyboard, and the
+# focused window the keyboard focus.
+session wtype -k Shift_L -s 5000 -k Shift_L &
+sleep 2
 click 318 328
 sleep 2
 { snitchhiker rules; snitchhiker events --limit 5; } > /tmp/desktop-result.txt' "${ask}" >/dev/null 2>&1
@@ -202,6 +207,8 @@ sleep 6
 page proposals
 sleep 2
 shot proposals
+session wtype -k Shift_L -s 5000 -k Shift_L &
+sleep 2
 click 329 487
 sleep 4
 shot approved

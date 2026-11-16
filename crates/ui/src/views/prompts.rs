@@ -19,8 +19,40 @@ use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::protocol;
 
-/// How long a new prompt's buttons stay disarmed.
+/// How long a new prompt's buttons stay disarmed, and the window must have been active before they arm.
 pub const ARM_AFTER: Duration = Duration::from_millis(800);
+
+/// Since when the window is active, for arming answer buttons: they arm [`ARM_AFTER`] after both the prompt appeared
+/// and the window became active, and only while it is. A click or key meant for another window, or a window raised
+/// over a waiting prompt, can't answer it.
+#[derive(Debug, Default)]
+pub struct Focus {
+    since: Option<Instant>,
+}
+
+impl Focus {
+    /// Notes whether the window is active now (at each render).
+    pub fn update(&mut self, window: &Window) {
+        if window.is_window_active() {
+            self.since.get_or_insert_with(Instant::now);
+        } else {
+            self.since = None;
+        }
+    }
+
+    /// Whether the buttons of something shown at `shown` are armed; when they will arm, draws again until then.
+    pub fn armed(&self, shown: Instant, window: &mut Window) -> bool {
+        let Some(since) = self.since else {
+            // Inactive: drawn again when the window is activated.
+            return false;
+        };
+        let armed = since.elapsed() >= ARM_AFTER && shown.elapsed() >= ARM_AFTER;
+        if !armed {
+            window.request_animation_frame();
+        }
+        armed
+    }
+}
 
 /// Answer durations offered, in order.
 const DURATIONS: [(v1::Duration, &str); 5] = [
@@ -42,6 +74,7 @@ pub struct Prompts {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
     choices: HashMap<u64, Choice>,
+    focus: Focus,
 }
 
 impl Prompts {
@@ -68,6 +101,7 @@ impl Prompts {
             model,
             requests,
             choices: HashMap::new(),
+            focus: Focus::default(),
         }
     }
 
@@ -90,11 +124,7 @@ impl Prompts {
     fn card(&self, prompt: &v1::Prompt, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let id = prompt.id;
         let choice = self.choices.get(&id).copied();
-        let armed = choice.is_some_and(|c| c.shown.elapsed() >= ARM_AFTER);
-        if !armed {
-            // Draw again once the buttons arm.
-            window.request_animation_frame();
-        }
+        let armed = choice.is_some_and(|c| self.focus.armed(c.shown, window));
         let theme = cx.theme().clone();
         let suggestions = prompt
             .suggestions
@@ -209,6 +239,7 @@ impl Prompts {
 
 impl Render for Prompts {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus.update(window);
         let prompts: Vec<v1::Prompt> = self.model.read(cx).prompts.values().cloned().collect();
         let approvals: Vec<v1::Approval> =
             self.model.read(cx).approvals.values().cloned().collect();
