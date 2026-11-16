@@ -1380,11 +1380,13 @@ pub fn events_follow_and_stats() -> Result<(), String> {
 }
 
 /// A blocklist read from a file blocks what is on it through a rule naming it; a version that isn't a list is refused
-/// and the one before stays; a new version applies once fetched.
+/// and the one before stays; a new version applies once fetched. Only files in the lists directory are read: not one
+/// elsewhere, nor one linked from there.
 pub fn blocklists_block_what_is_on_them() -> Result<(), String> {
     let (_target, port) = listener()?;
-    let _ = std::fs::create_dir_all(DIR);
-    let source = format!("{DIR}/blocklist.txt");
+    let lists = "/etc/snitchhiker/lists";
+    std::fs::create_dir_all(lists).map_err(|e| e.to_string())?;
+    let source = format!("{lists}/e2e-blocklist.txt");
     let write = |text: &str| std::fs::write(&source, text).map_err(|e| e.to_string());
     write("# a test list\n0.0.0.0 ads.example\n127.0.0.1\n")?;
     let daemon = Running::start("blocklists", "mode = \"enforce\"\nno_match = \"allow\"\n")?;
@@ -1437,6 +1439,26 @@ pub fn blocklists_block_what_is_on_them() -> Result<(), String> {
         "",
     )?;
     daemon.cli(&["lists", "rm", "test"])?;
+    let _ = std::fs::create_dir_all(DIR);
+    let elsewhere = format!("{DIR}/blocklist.txt");
+    std::fs::write(&elsewhere, "0.0.0.0 ads.example\n").map_err(|e| e.to_string())?;
+    let link = format!("{lists}/e2e-link.txt");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&elsewhere, &link).map_err(|e| e.to_string())?;
+    for refused in [elsewhere.as_str(), link.as_str()] {
+        // Refused when added (a path elsewhere), or when read (a link out of the directory).
+        let out = daemon
+            .cli(&["lists", "add", "outside", refused])
+            .unwrap_or_else(|e| e);
+        check(
+            out.contains("a file in /etc/snitchhiker/lists") && !out.contains("1 entries"),
+            "a list outside the lists directory was read",
+            &out,
+        )?;
+    }
+    let _ = daemon.cli(&["lists", "rm", "outside"]);
+    let _ = std::fs::remove_file(&link);
+    let _ = std::fs::remove_file(&source);
     Ok(())
 }
 

@@ -31,8 +31,9 @@ snitchhiker rules add allow --exe /usr/bin/curl --uid 0 --net 203.0.113.0/24 --n
 snitchhiker rules add deny --host log.spotify.com --host "*.visualstudio.com" --tier override --name "telemetry" >/dev/null
 snitchhiker alerts rules add "Anything to the metadata service" --query "ip:169.254.169.254" >/dev/null
 snitchhiker alerts rules add "New programs" --first-program >/dev/null
-printf "# trackers\n0.0.0.0 metrics.example.net telemetry.example.org\n||ads.example.com^\n198.51.100.0/24\n" >/etc/snitchhiker/trackers.txt
-snitchhiker lists add trackers /etc/snitchhiker/trackers.txt >/dev/null
+mkdir -p /etc/snitchhiker/lists
+printf "# trackers\n0.0.0.0 metrics.example.net telemetry.example.org\n||ads.example.com^\n198.51.100.0/24\n" >/etc/snitchhiker/lists/trackers.txt
+snitchhiker lists add trackers /etc/snitchhiker/lists/trackers.txt >/dev/null
 snitchhiker rules add deny --list trackers --any-context --name "trackers" >/dev/null
 snitchhiker envelopes add "package registries" --project "glob:{home}/src/**" --host registry.npmjs.org --host crates.io --host "*.crates.io" --port 443 >/dev/null
 nft delete table inet snitchhiker && sleep 11

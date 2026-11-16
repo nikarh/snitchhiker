@@ -67,7 +67,7 @@ Commands:
                                   --first-program counts only programs never seen before
   alerts rules rm <id>            Delete an alert rule
   lists                           The blocklists: their sources, entries, last fetch and what they decided
-  lists add <name> <https://url | /path> [--every <n>[s|m|h|d]]
+  lists add <name> <https://url | /etc/snitchhiker/lists/file> [--every <n>[s|m|h|d]]
                                   Add a blocklist (or change one's source), fetched now and then every day (or as
                                   given, at least 15m). Hosts files, a domain per line, adblock ||domain^ rules,
                                   addresses and CIDRs; rules name it with --list <name>

@@ -54,6 +54,10 @@ contents:
     type: config|noreplace
     file_info:
       mode: 0644
+  - dst: /etc/snitchhiker/lists
+    type: dir
+    file_info:
+      mode: 0755
   - src: README.md
     dst: /usr/share/doc/snitchhiker/README.md
   - src: LICENSE-MIT

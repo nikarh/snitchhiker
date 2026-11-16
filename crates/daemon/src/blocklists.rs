@@ -1,8 +1,9 @@
 //! Blocklists from URLs and files (plan §5.8): fetched on a schedule, checked before they replace what was there, kept
 //! on disk so a restart without a network still has them, and named by rules' `list` condition.
 //!
-//! A list's source is an `https://` URL (plain HTTP isn't taken: anyone on the path could change it) or an absolute
-//! path on the node. A fetch is refused, and the version before kept, when the file is larger than
+//! A list's source is an `https://` URL (plain HTTP isn't taken: anyone on the path could change it) or a file in
+//! [`LOCAL_DIR`], a directory only root writes: a client may add lists, and must not make the daemon (root) read any
+//! other file on the node, which the list's entries, counts and errors would then show. A fetch is refused, and the version before kept, when the file is larger than
 //! `blocklist_max_bytes`, isn't text, has no entries, or has more than a tenth of its lines that aren't entries (an
 //! error page, a list in a format this doesn't read). Unchanged lists aren't downloaded again (`If-None-Match`).
 
@@ -64,6 +65,8 @@ impl Record {
 /// The lists in use, and what decided by them.
 pub struct Blocklists {
     dir: PathBuf,
+    /// Where local lists are read from: [`LOCAL_DIR`].
+    local_dir: PathBuf,
     max_bytes: u64,
     lists: RwLock<Lists>,
     /// Connections decided by rules naming each list, since the daemon started.
@@ -95,6 +98,7 @@ impl Blocklists {
         }
         Self {
             dir,
+            local_dir: PathBuf::from(LOCAL_DIR),
             max_bytes,
             lists: RwLock::new(lists),
             matched: RwLock::default(),
@@ -239,7 +243,10 @@ impl Blocklists {
         let mut bytes = Vec::new();
         let mut etag = String::new();
         if record.source.starts_with('/') {
-            let file = std::fs::File::open(&record.source).map_err(|e| e.to_string())?;
+            // Checked again here, after resolving links: a list added before files were confined to the directory, or a
+            // link put there.
+            let file = std::fs::File::open(local_file(&self.local_dir, &record.source)?)
+                .map_err(|e| e.to_string())?;
             file.take(limit + 1)
                 .read_to_end(&mut bytes)
                 .map_err(|e| e.to_string())?;
@@ -349,6 +356,25 @@ pub fn is_due(record: &Record, now_ms: u64) -> bool {
     record.due_ms() <= now_ms
 }
 
+/// The directory local lists are read from: regular files in it, never through a symbolic link out of it.
+pub const LOCAL_DIR: &str = "/etc/snitchhiker/lists";
+
+/// A local list's file, after resolving links: one that is still directly in `local_dir` and a regular file.
+fn local_file(local_dir: &Path, source: &str) -> Result<PathBuf, String> {
+    let outside = || format!("{source:?}: a local list is a file in {LOCAL_DIR}");
+    let real = std::fs::canonicalize(source).map_err(|e| format!("{source:?}: {e}"))?;
+    let dir =
+        std::fs::canonicalize(local_dir).map_err(|e| format!("{}: {e}", local_dir.display()))?;
+    if real.parent() != Some(dir.as_path()) {
+        return Err(outside());
+    }
+    let metadata = std::fs::symlink_metadata(&real).map_err(|e| e.to_string())?;
+    if !metadata.is_file() {
+        return Err(outside());
+    }
+    Ok(real)
+}
+
 /// Checks what a client asks for: a name rules can use, and a source this fetches.
 pub fn check(name: &str, source: &str) -> Result<(), String> {
     if name.is_empty()
@@ -361,9 +387,12 @@ pub fn check(name: &str, source: &str) -> Result<(), String> {
             "{name:?}: a list's name is 1 to 64 letters, digits, '-', '_' and '.'"
         ));
     }
-    if !(source.starts_with("https://") || Path::new(source).is_absolute()) {
+    let local = Path::new(source);
+    let in_dir = local.parent() == Some(Path::new(LOCAL_DIR))
+        && local.file_name().is_some_and(|n| n != ".." && n != ".");
+    if !(source.starts_with("https://") || in_dir) {
         return Err(format!(
-            "{source:?}: a list comes from an https:// URL or an absolute path on the node"
+            "{source:?}: a list comes from an https:// URL or a file in {LOCAL_DIR} on the node"
         ));
     }
     Ok(())
@@ -390,7 +419,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("snitchhiker-lists-{}", std::process::id()));
         let source = dir.join("source.txt");
         std::fs::create_dir_all(&dir).unwrap();
-        let lists = Blocklists::load(dir.join("lists"), 1024, &[]);
+        let mut lists = Blocklists::load(dir.join("lists"), 1024, &[]);
+        lists.local_dir.clone_from(&dir);
         let mut record = Record {
             id: 1,
             name: "ads".to_owned(),
@@ -435,13 +465,38 @@ mod tests {
         lists.decided(7);
         lists.decided(8);
         assert_eq!(lists.wire(&record, vec![7]).matched, 1);
+        // A link from the directory to a file elsewhere isn't read.
+        let elsewhere =
+            std::env::temp_dir().join(format!("snitchhiker-elsewhere-{}", std::process::id()));
+        std::fs::write(&elsewhere, "ads.example\n").unwrap();
+        let link = dir.join("link.txt");
+        std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+        let mut linked = Record {
+            id: 2,
+            name: "linked".to_owned(),
+            source: link.to_string_lossy().into_owned(),
+            ..Record::default()
+        };
+        assert!(!lists.fetch(&mut linked, 40));
+        assert!(
+            linked.error.contains("a local list is a file in"),
+            "{}",
+            linked.error
+        );
+        std::fs::remove_file(elsewhere).unwrap();
         std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
     fn names_and_sources_are_checked() {
         assert!(check("oisd-big", "https://big.oisd.nl/domainswild").is_ok());
-        assert!(check("ads", "/etc/snitchhiker/ads.txt").is_ok());
+        assert!(check("ads", "/etc/snitchhiker/lists/ads.txt").is_ok());
+        // Only files in the lists directory: nothing else root can read.
+        assert!(check("ads", "/etc/shadow").is_err());
+        assert!(check("ads", "/etc/snitchhiker/ads.txt").is_err());
+        assert!(check("ads", "/etc/snitchhiker/lists/../daemon.toml").is_err());
+        assert!(check("ads", "/etc/snitchhiker/lists/sub/ads.txt").is_err());
+        assert!(check("ads", "/etc/snitchhiker/lists/").is_err());
         assert!(check("ads", "http://example.com/list").is_err());
         assert!(check("ads", "relative.txt").is_err());
         assert!(check("bad name", "/x").is_err());
