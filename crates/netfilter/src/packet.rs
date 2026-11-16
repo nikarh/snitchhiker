@@ -3,6 +3,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 pub const IPPROTO_ICMP: u8 = 1;
+pub const IPPROTO_IGMP: u8 = 2;
 pub const IPPROTO_TCP: u8 = 6;
 pub const IPPROTO_UDP: u8 = 17;
 pub const IPPROTO_ICMPV6: u8 = 58;

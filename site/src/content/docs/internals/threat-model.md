@@ -49,7 +49,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 | An allowed path over another file | Mount namespaces made without privileges are a container's context, where host rules don't apply | `escape/allowed-path-in-a-private-mount-namespace` |
 | Through a container, VM or namespace | Forwarded flows from their bridges and namespaces are decided with their identity | `containers/*` |
 | A forged host name | Names only from answers to queries the process or the resolver was seen sending | `names/*` |
-| Through the kernel's own replies | Only ICMP from no file-backed socket (the kernel's) passes undecided | `escape/the-kernels-own-icmp-passes` |
+| Through the kernel's own replies | Only ICMP and IGMP from no file-backed socket (the kernel's) pass undecided | `escape/the-kernels-own-packets-pass` |
 
 ### Controlling the daemon
 

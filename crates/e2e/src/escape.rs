@@ -122,9 +122,10 @@ pub fn icmp_ping_socket() -> Result<(), String> {
     )
 }
 
-/// The kernel's own ICMP (here "port unreachable", about a datagram a rule allowed) isn't a program's: it passes
-/// undecided, so the sender learns the port is closed rather than waiting, and no prompt asks about "no program".
-pub fn the_kernels_own_icmp_passes() -> Result<(), String> {
+/// The kernel's own ICMP (here "port unreachable", about a datagram a rule allowed) and IGMP (a group membership
+/// report) aren't a program's: they pass undecided, so the sender learns the port is closed rather than waiting, and no
+/// prompt asks about "no program".
+pub fn the_kernels_own_packets_pass() -> Result<(), String> {
     let closed = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = closed.local_addr().map_err(|e| e.to_string())?.port();
     drop(closed);
@@ -148,6 +149,16 @@ pub fn the_kernels_own_icmp_passes() -> Result<(), String> {
         out.contains("refused"),
         "the kernel's port unreachable didn't reach the sender",
         &out,
+    )?;
+    // Joining a multicast group: the kernel reports the membership (IGMP), from no socket of mallory's.
+    let joined = python(
+        "import socket, struct, time\ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\ns.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, struct.pack('4s4s', socket.inet_aton('239.1.2.3'), socket.inet_aton('0.0.0.0')))\ntime.sleep(2)\nprint('joined')",
+    )?;
+    let events = daemon.cli(&["events", "--limit", "50"])?;
+    check(
+        joined.contains("joined") && !events.contains("proto 2 "),
+        "the kernel's own IGMP was decided as a program's",
+        &format!("{joined}\n{events}"),
     )
 }
 

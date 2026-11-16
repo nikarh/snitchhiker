@@ -1405,16 +1405,19 @@ fn owner_of(
 ///
 /// - the daemon's own traffic (its remote endpoint: the relay, devices), as marked packets aren't queued: its sockets
 ///   come from a library that can't mark them, but the kernel names their process;
-/// - ICMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"): no socket a program
-///   opened sent it (the queue names the owner of any socket backed by a file, raw and ping sockets included), so there
-///   is no program to decide about or ask.
+/// - ICMP and IGMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"; its multicast
+///   membership reports): no socket a program opened sent it (the queue names the owner of any socket backed by a
+///   file, raw and ping sockets included), so there is no program to decide about or ask.
 fn never_decided(pid: Option<u32>, queued: &Packet<'_>, protocol: u8) -> bool {
     match pid {
         Some(pid) => pid == std::process::id(),
         None => {
             queued.hook == NF_INET_LOCAL_OUT
                 && queued.uid.is_none()
-                && matches!(protocol, packet::IPPROTO_ICMP | packet::IPPROTO_ICMPV6)
+                && matches!(
+                    protocol,
+                    packet::IPPROTO_ICMP | packet::IPPROTO_ICMPV6 | packet::IPPROTO_IGMP
+                )
         }
     }
 }

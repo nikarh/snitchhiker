@@ -263,8 +263,8 @@ const SCENARIOS: &[Scenario] = &[
     ("escape/ipv6-and-mapped-ipv4", escape::ipv6_and_mapped_ipv4),
     ("escape/icmp-ping-socket", escape::icmp_ping_socket),
     (
-        "escape/the-kernels-own-icmp-passes",
-        escape::the_kernels_own_icmp_passes,
+        "escape/the-kernels-own-packets-pass",
+        escape::the_kernels_own_packets_pass,
     ),
     (
         "escape/raw-sockets-need-privileges",
