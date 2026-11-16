@@ -81,9 +81,17 @@ pub fn disguised_clients_are_refused() -> Result<(), String> {
     let socket = "/run/snitchhiker/client.sock";
     // The control: the genuine client gets in.
     let (genuine_ok, genuine) = as_mallory(CLIENT, &["--protocol-client", socket])?;
-    // A hard link of mallory's own to the setgid client, on the same filesystem (fs.protected_hardlinks forbids it).
-    let (link_ok, link) = mallory(&format!("ln {CLIENT} $HOME/mallory-link"))?;
-    let _ = mallory("rm -f $HOME/mallory-link");
+    // A hard link of mallory's own to the setgid client, in a directory of hers on the client's own mount (the home
+    // directory may be another one, as on Fedora): fs.protected_hardlinks forbids it.
+    let dir = std::path::Path::new(CLIENT)
+        .parent()
+        .and_then(std::path::Path::parent)
+        .ok_or("the client has no directory above its own")?
+        .join("e2e-mallory");
+    let dir = dir.display();
+    crate::util::run("install", &["-d", "-o", "mallory", &dir.to_string()])?;
+    let (link_ok, link) = mallory(&format!("ln {CLIENT} {dir}/mallory-link"))?;
+    let _ = std::fs::remove_dir_all(dir.to_string());
     // The client run inside a user namespace mallory owns, where its setgid bit gives nothing. It connects without
     // checking the daemon (--hand-off), so its own check isn't what refuses it.
     let (userns_ok, userns) = mallory(&format!(
