@@ -121,7 +121,7 @@ Commands:
   envelopes rm <id>               Remove one (a dangerous action)
   pair [--name <name>] [--role <admin|viewer>]
                                   Pair a device (a phone, the desktop app elsewhere): prints a one-time link and its
-                                  QR code, valid for one pairing within 10 minutes (needs remote = true)
+                                  QR code, valid for one pairing within 10 minutes (needs snitchhiker-remote)
   devices                         The paired devices, and this node's id
   devices rm <id>                 Unpair a device; its connections close at once
   approvals                       Dangerous actions remote devices asked for, waiting for an approval here

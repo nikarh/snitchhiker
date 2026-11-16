@@ -77,8 +77,10 @@ pub fn spawn(daemon: &Arc<Daemon>) -> std::io::Result<()> {
             .name("api-agent".to_owned())
             .spawn(move || accept(&daemon, &agent, &Access::Agent))?;
     }
-    if daemon.shared.config.remote {
-        crate::remote::start(daemon)?;
+    // The remote service's, when it is installed: it serves only that service's user. Without it the node works
+    // locally, so failing to listen isn't a reason not to start (and, with fail = closed, to cut the machine off).
+    if let Err(error) = crate::remote::listen(daemon, std::path::Path::new(crate::remote::SOCKET)) {
+        warn!(%error, "listening for the remote service: remote access won't work");
     }
     Ok(())
 }
@@ -2239,7 +2241,7 @@ fn approved_locally(daemon: &Daemon, device: &str, key: &str, action: &str) -> b
         id: 0,
         action: action.to_owned(),
         device: device.to_owned(),
-        fingerprint: snitchhiker_remote::fingerprint(key),
+        fingerprint: crate::remote::fingerprint(key),
         requested_ms: now,
         expires_ms: now + u64::try_from(crate::approvals::WAIT.as_millis()).unwrap_or(u64::MAX),
     });

@@ -66,23 +66,13 @@ fail = "closed"
 # proposals marked as not from a known agent.
 #agent_programs = []
 
-# Accept paired devices over the network: phones, the desktop app on other machines. The relays (your own
-# snitchhiker-relay) the node keeps a connection to, so devices reach it behind NAT; the UDP port of the remote
-# endpoint (0: any free port); and whether the node announces itself on the local network (mDNS).
-#remote = false
-#relays = ["https://relay.example.org/"]
-#remote_port = 0
-#lan_discovery = true
+# Paired devices over the network (phones, the desktop app on other machines) come through the snitchhiker-remote
+# package, configured in /etc/snitchhiker/remote.toml: relays, port, push gateway.
 
 # Who is notified of a prompt: every client (all), or the clients on this machine first and the remote devices when
 # none listens, the sessions are locked or idle, or after escalate_after_secs (escalate).
 #prompt_routing = "all"
 #escalate_after_secs = 20
-
-# The push gateway's endpoint id (a snitchhiker-relay with [push], reached through relays): it wakes the devices for
-# prompts, and tells them when the node has been gone for offline_after_secs.
-#push_gateway = ""
-#offline_after_secs = 120
 
 # The largest blocklist fetched, in bytes.
 #blocklist_max_bytes = 67108864

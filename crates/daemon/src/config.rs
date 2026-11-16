@@ -52,12 +52,18 @@ pub enum StepUp {
     Off,
 }
 
+/// A setting that moved elsewhere: whatever its value, it is accepted and ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Moved;
+
+impl<'de> Deserialize<'de> for Moved {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Self)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "daemon.toml's settings: each is a switch of its own"
-)]
 pub struct Config {
     pub mode: Mode,
     /// What happens to a connection no rule decides.
@@ -99,27 +105,24 @@ pub struct Config {
     /// Programs that may propose rules on the agent socket (patterns as rules write them). Empty: any program, its
     /// proposals marked as not from a known agent.
     pub agent_programs: Vec<String>,
-    /// Accept paired devices over the network (iroh): phones, the desktop app on other machines.
-    pub remote: bool,
-    /// The relays (the user's own `snitchhiker-relay`) the node keeps a connection to, so devices reach it behind NAT.
-    /// None: direct connections only.
-    pub relays: Vec<String>,
-    /// The UDP port of the remote endpoint (0: any free port).
-    pub remote_port: u16,
-    /// Announce the node on the local network (mDNS), so devices there find it without a relay, and pairing codes
-    /// work there.
-    pub lan_discovery: bool,
     /// Which clients are notified of a prompt (all of them can answer it).
     pub prompt_routing: Routing,
     /// With `escalate`: how long a prompt waits for the clients on this machine before remote devices are notified.
     pub escalate_after_secs: u64,
-    /// The push gateway's endpoint id (a `snitchhiker-relay` with `[push]`, reached through `relays`): it wakes the
-    /// devices with prompts while they are asleep, and tells them when the node goes offline. Empty: none, devices
-    /// learn of prompts only while connected.
-    pub push_gateway: String,
-    /// How long the node may be gone from its push gateway before its devices are told it is offline (a restart
-    /// doesn't make them wonder).
-    pub offline_after_secs: u32,
+    /// Moved to `/etc/snitchhiker/remote.toml` (`snitchhiker-remote`, decision 0016): accepted, so a configuration
+    /// written before doesn't stop the daemon (and with `fail = closed`, the network), and ignored with a warning.
+    #[serde(skip_serializing)]
+    pub remote: Option<Moved>,
+    #[serde(skip_serializing)]
+    pub relays: Option<Moved>,
+    #[serde(skip_serializing)]
+    pub remote_port: Option<Moved>,
+    #[serde(skip_serializing)]
+    pub lan_discovery: Option<Moved>,
+    #[serde(skip_serializing)]
+    pub push_gateway: Option<Moved>,
+    #[serde(skip_serializing)]
+    pub offline_after_secs: Option<Moved>,
     /// Where alerts are sent (an HTTP POST of JSON), besides the clients and devices. Empty: nowhere.
     pub alert_webhook: String,
     /// A file with a secret that signs each webhook delivery (HMAC-SHA256 of the body, `X-Snitchhiker-Signature`).
@@ -166,14 +169,14 @@ impl Default for Config {
             rules_dir: PathBuf::from("/etc/snitchhiker/rules.d"),
             retention_days: 30,
             agent_programs: Vec::new(),
-            remote: false,
-            relays: Vec::new(),
-            remote_port: 0,
-            lan_discovery: true,
             prompt_routing: Routing::All,
             escalate_after_secs: 20,
-            push_gateway: String::new(),
-            offline_after_secs: 120,
+            remote: None,
+            relays: None,
+            remote_port: None,
+            lan_discovery: None,
+            push_gateway: None,
+            offline_after_secs: None,
             alert_webhook: String::new(),
             alert_webhook_secret_file: None,
             blocklist_max_bytes: 64 << 20,
@@ -198,6 +201,22 @@ pub enum Error {
 }
 
 impl Config {
+    /// The settings given that moved to `remote.toml`.
+    #[must_use]
+    pub fn moved(&self) -> Vec<&'static str> {
+        [
+            ("remote", self.remote.is_some()),
+            ("relays", self.relays.is_some()),
+            ("remote_port", self.remote_port.is_some()),
+            ("lan_discovery", self.lan_discovery.is_some()),
+            ("push_gateway", self.push_gateway.is_some()),
+            ("offline_after_secs", self.offline_after_secs.is_some()),
+        ]
+        .into_iter()
+        .filter_map(|(name, given)| given.then_some(name))
+        .collect()
+    }
+
     /// Reads the configuration; a missing file at the default path means the defaults.
     pub fn load(path: &Path) -> Result<Self, Error> {
         let text = match std::fs::read_to_string(path) {

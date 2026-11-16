@@ -25,8 +25,6 @@ MemoryHigh=256M
 MemoryMax=384M
 # Two malloc arenas rather than one per thread: memory one thread freed serves the others instead of staying resident.
 Environment=MALLOC_ARENA_MAX=2
-# The node's key, once sealed (snitchhikerd seal-key): decrypted by systemd into the service's own credentials.
-ImportCredential=snitchhiker.node-key
 RuntimeDirectory=snitchhiker
 RuntimeDirectoryMode=0755
 StateDirectory=snitchhiker

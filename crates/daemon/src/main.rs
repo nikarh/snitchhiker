@@ -32,8 +32,6 @@ enum Error {
     Trust(#[from] snitchhiker_daemon::trust::Error),
     #[error("{0} isn't a trusted client")]
     NotTrusted(PathBuf),
-    #[error("sealing the node's key: {0}")]
-    Seal(String),
     #[error("unknown command `{0}`; see --help")]
     UnknownCommand(String),
     #[error("signals: {0}")]
@@ -68,52 +66,6 @@ fn out(text: &str) -> Result<(), Error> {
         .map_err(Error::Stdout)
 }
 
-/// Seals the node's key with `systemd-creds` (to the TPM when the machine has one, else to the host's own key), into
-/// systemd's credential store, and deletes the plaintext: from the next start, the service's `ImportCredential=`
-/// gives the daemon the key, and the file is gone from the disk.
-fn seal_key(config: &Config) -> Result<(), Error> {
-    use std::process::Command;
-    let key = snitchhiker_daemon::remote::key_path(config);
-    if !key.exists() {
-        return Err(Error::Seal(format!(
-            "{} doesn't exist (it is made the first time the daemon starts with remote = true)",
-            key.display()
-        )));
-    }
-    let store = PathBuf::from("/etc/credstore.encrypted");
-    std::fs::create_dir_all(&store).map_err(|e| Error::Seal(e.to_string()))?;
-    let sealed = store.join(snitchhiker_daemon::remote::KEY_CREDENTIAL);
-    let tpm = Command::new("systemd-creds")
-        .arg("has-tpm2")
-        .output()
-        .is_ok_and(|o| o.status.success());
-    let status = Command::new("systemd-creds")
-        .args(["encrypt", "--with-key=auto"])
-        .arg(format!(
-            "--name={}",
-            snitchhiker_daemon::remote::KEY_CREDENTIAL
-        ))
-        .arg(&key)
-        .arg(&sealed)
-        .status()
-        .map_err(|e| Error::Seal(format!("running systemd-creds: {e}")))?;
-    if !status.success() {
-        return Err(Error::Seal(format!("systemd-creds encrypt: {status}")));
-    }
-    // The plaintext overwritten, then removed.
-    std::fs::write(&key, [0_u8; 32]).map_err(|e| Error::Seal(e.to_string()))?;
-    std::fs::remove_file(&key).map_err(|e| Error::Seal(e.to_string()))?;
-    out(&format!(
-        "sealed the node's key to {} in {}; restart the service (systemctl restart snitchhikerd)\n",
-        if tpm {
-            "this machine's TPM"
-        } else {
-            "this machine's host key (no TPM)"
-        },
-        sealed.display()
-    ))
-}
-
 fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     if args.contains(["-h", "--help"]) {
         return out(DAEMON_HELP);
@@ -143,7 +95,6 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
                     Err(Error::NotTrusted(path))
                 }
             }
-            "seal-key" => seal_key(&Config::load(&config_path)?),
             "trusted-clients" => {
                 let config = Config::load(&config_path)?;
                 let mut text = String::new();
@@ -173,6 +124,13 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     // TLS (the alert webhook) with the same provider as everything else: ring.
     let _ = rustls::crypto::ring::default_provider().install_default();
     info!(version = VERSION, "starting");
+    let moved = config.moved();
+    if !moved.is_empty() {
+        tracing::warn!(
+            settings = moved.join(", "),
+            "settings of daemon.toml that moved to /etc/snitchhiker/remote.toml (the snitchhiker-remote package) are ignored"
+        );
+    }
     let daemon = Daemon::start(config)?;
     snitchhiker_daemon::api::spawn(&daemon).map_err(snitchhiker_daemon::runtime::Error::from)?;
     write_pidfile();

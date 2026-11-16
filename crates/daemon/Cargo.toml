@@ -39,7 +39,6 @@ snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-ebpf = { version = "0.1.0", path = "../ebpf" }
 snitchhiker-netfilter = { version = "0.1.0", path = "../netfilter" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
-snitchhiker-remote = { version = "0.1.0", path = "../remote" }
 thiserror = "2.0.21"
 toml = "1.2.1"
 tracing = "0.1.44"

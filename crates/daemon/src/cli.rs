@@ -17,7 +17,6 @@ Usage: snitchhikerd [--config <path>]
        snitchhikerd [--config <path>] trust-client <path>
        snitchhikerd [--config <path>] untrust-client <path>
        snitchhikerd [--config <path>] trusted-clients
-       snitchhikerd [--config <path>] seal-key
        snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
 
 Commands:
@@ -26,9 +25,6 @@ Commands:
                          client group. Applies to the next connection; the daemon needn't run.
   untrust-client <path>  Stop trusting it
   trusted-clients        List the trusted client binaries
-  seal-key               Seal the node's remote key with systemd-creds (to the TPM, or the host's key without
-                         one) into /etc/credstore.encrypted, and delete the plaintext; the service imports it
-                         from the next start
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)
@@ -162,7 +158,7 @@ Commands:
   envelopes rm <id>               Remove one (a dangerous action)
   pair [--name <name>] [--role <admin|viewer>]
                                   Pair a device (a phone, the desktop app elsewhere): prints a one-time link and its
-                                  QR code, valid for one pairing within 10 minutes (needs remote = true)
+                                  QR code, valid for one pairing within 10 minutes (needs snitchhiker-remote)
   devices                         The paired devices, and this node's id
   devices rm <id>                 Unpair a device; its connections close at once
   approvals                       Dangerous actions remote devices asked for, waiting for an approval here
@@ -2165,7 +2161,8 @@ fn devices(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                     let mut text = if list.remote {
                         format!("this node: {} ({})\n", list.node_id, list.fingerprint)
                     } else {
-                        "remote devices are off (remote = true in daemon.toml)\n".to_owned()
+                        "remote access isn't running (install snitchhiker-remote, then systemctl enable --now snitchhiker-remote)\n"
+                            .to_owned()
                     };
                     for d in &list.devices {
                         let _ = writeln!(

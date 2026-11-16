@@ -4,6 +4,9 @@
 //! exactly, with no heartbeats to count. On it the node says who to tell (each device's push target, again on each
 //! change), who to wake, and why it stops, when it does.
 //!
+//! The stream goes through the node's remote service (`snitchhiker-remote`), whose endpoint the gateway knows the node
+//! by: the connection lives as long as the service's session with the daemon.
+//!
 //! The gateway learns the devices' push targets and when the node needs them. It learns nothing about prompts,
 //! connections or rules: a wake-up says only "connect".
 
@@ -18,8 +21,9 @@ use std::time::{Duration, Instant};
 
 use snitchhiker_proto::prost::Message;
 use snitchhiker_proto::{frame, v1};
-use snitchhiker_remote::{Listener, NodeAddress, PUSH_ALPN};
 use tracing::{debug, info, warn};
+
+use crate::remote::Bridge;
 
 /// What the gateway connection's thread is told.
 enum Event {
@@ -31,6 +35,8 @@ enum Event {
     Stopping(String, Sender<()>),
     /// The stream to the gateway ended.
     Lost,
+    /// The remote service went: the connection ends with it.
+    End,
 }
 
 /// The push side of the router: the devices that can be woken, and the gateway connection's thread.
@@ -115,29 +121,30 @@ impl Push {
         let _ = wait.recv_timeout(Duration::from_secs(1));
     }
 
-    /// Starts the gateway connection's thread: it connects through the listener's endpoint, registers, and reconnects
-    /// when the stream ends.
+    /// The remote service's session ended: so does the gateway connection's thread.
+    pub fn end(&self) {
+        if let Some(events) = lock(&self.events).take() {
+            let _ = events.send(Event::End);
+        }
+    }
+
+    /// Starts the gateway connection's thread for a session of the remote service: it connects through the service,
+    /// registers, and reconnects when the stream ends, until the session does.
     pub fn spawn(
         self: &Arc<Self>,
-        listener: Arc<Listener>,
-        gateway: NodeAddress,
+        bridge: Arc<Bridge>,
         node_name: String,
         offline_after_secs: u32,
     ) -> std::io::Result<()> {
         let (sender, receiver) = channel();
-        *lock(&self.events) = Some(sender.clone());
+        if let Some(previous) = lock(&self.events).replace(sender.clone()) {
+            let _ = previous.send(Event::End);
+        }
         let push = Arc::clone(self);
         thread::Builder::new()
             .name("push-gateway".to_owned())
             .spawn(move || {
-                push.run(
-                    &listener,
-                    &gateway,
-                    &node_name,
-                    offline_after_secs,
-                    &sender,
-                    &receiver,
-                );
+                push.run(&bridge, &node_name, offline_after_secs, &sender, &receiver);
             })?;
         Ok(())
     }
@@ -161,8 +168,7 @@ impl Push {
 
     fn run(
         &self,
-        listener: &Listener,
-        gateway: &NodeAddress,
+        bridge: &Bridge,
         node_name: &str,
         offline_after_secs: u32,
         sender: &Sender<Event>,
@@ -170,15 +176,13 @@ impl Push {
     ) {
         // Waits between attempts, doubling up to a minute.
         let mut retry = Duration::from_secs(1);
-        // The gateway is reached through the relays: once the endpoint has one.
-        let _ = listener.address();
         loop {
-            let connected = listener.open(gateway, PUSH_ALPN).and_then(|stream| {
+            let connected = bridge.open_gateway().and_then(|stream| {
                 self.serve(stream, node_name, offline_after_secs, sender, events)
             });
             self.up.store(false, Ordering::Relaxed);
             match connected {
-                Ok(Served::Stopped) => return,
+                Ok(Served::Stopped | Served::Ended) => return,
                 Ok(Served::Lost) => retry = Duration::from_secs(1),
                 Err(error) => info!(%error, retry_in = ?retry, "connecting to the push gateway"),
             }
@@ -189,8 +193,8 @@ impl Push {
                     let _ = done.send(());
                     return;
                 }
+                Ok(Event::End) | Err(RecvTimeoutError::Disconnected) => return,
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return,
             }
             retry = (retry * 2).min(Duration::from_secs(60));
         }
@@ -250,6 +254,10 @@ impl Push {
                     warn!("the push gateway connection ended");
                     return Ok(Served::Lost);
                 }
+                Event::End => {
+                    let _ = ending.shutdown(std::net::Shutdown::Both);
+                    return Ok(Served::Ended);
+                }
             };
             frame::write(&mut writer, &frame, &mut buffer)?;
         }
@@ -259,6 +267,8 @@ impl Push {
 enum Served {
     Stopped,
     Lost,
+    /// The remote service went.
+    Ended,
 }
 
 /// Decodes a stored push target.

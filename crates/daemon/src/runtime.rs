@@ -105,6 +105,9 @@ pub struct Shared {
     /// The executable recorded for connections whose process isn't known.
     unknown: Arc<str>,
     pub decided: AtomicU64,
+    /// The process of the node's remote service (`snitchhiker-remote`) while it is connected, 0 otherwise: its
+    /// traffic is the node's own, as the daemon's is.
+    pub remote_pid: std::sync::atomic::AtomicU32,
     pub hub: Arc<Hub>,
     pub broker: Broker,
     /// The policy in effect: daemon.toml's, with what clients changed.
@@ -192,6 +195,7 @@ impl Daemon {
             dropped_events: AtomicU64::new(0),
             unknown: Arc::from(""),
             decided: AtomicU64::new(0),
+            remote_pid: std::sync::atomic::AtomicU32::new(0),
             hub: Arc::new(Hub::default()),
             broker,
             alert_rules_changed: AtomicU64::new(0),
@@ -992,12 +996,8 @@ impl Daemon {
     /// nothing new gets out until the daemon is back.
     pub fn stop(&self) {
         // Clients are told before the connections end, so a planned stop isn't taken for a crash.
-        let reason = if std::process::Command::new("systemctl")
-            .arg("is-system-running")
-            .output()
-            .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "stopping")
-        {
-            "the machine is shutting down or restarting"
+        let reason = if shutting_down() {
+            SHUTDOWN
         } else {
             "the daemon was stopped (by an administrator, or for an upgrade)"
         };
@@ -1074,6 +1074,18 @@ fn compile(
     let set = RuleSet::compile_with(&folders, &rules, &blocklists.lists())?;
     blocklists.rules_compiled(&rules);
     Ok((set, agents))
+}
+
+/// Why the node goes when the machine does.
+pub const SHUTDOWN: &str = "the machine is shutting down or restarting";
+
+/// Whether the machine is shutting down or restarting, as systemd says.
+#[must_use]
+pub fn shutting_down() -> bool {
+    std::process::Command::new("systemctl")
+        .arg("is-system-running")
+        .output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "stopping")
 }
 
 /// The daemon's own cgroup, when it has one to itself: the service's (`…/snitchhikerd.service`), not a session's or a
@@ -1444,14 +1456,19 @@ fn owner_of(
 
 /// Packets never decided, sent by `pid` (when a program was found):
 ///
-/// - the daemon's own traffic (its remote endpoint: the relay, devices), as marked packets aren't queued: its sockets
-///   come from a library that can't mark them, but the kernel names their process;
+/// - the daemon's own traffic, as marked packets aren't queued: sockets a library opened, which it can't mark, but the
+///   kernel names their process;
+/// - the node's remote service's (`snitchhiker-remote`, `remote_pid` while it is connected: the relay, devices, the
+///   push gateway), the node's own as well: a prompt about it couldn't reach the devices it would cut off;
 /// - ICMP and IGMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"; its multicast
 ///   membership reports): no socket a program opened sent it (the queue names the owner of any socket backed by a
 ///   file, raw and ping sockets included), so there is no program to decide about or ask.
-fn never_decided(pid: Option<u32>, queued: &Packet<'_>, protocol: u8) -> bool {
+fn never_decided(shared: &Shared, pid: Option<u32>, queued: &Packet<'_>, protocol: u8) -> bool {
     match pid {
-        Some(pid) => pid == std::process::id(),
+        Some(pid) => {
+            pid == std::process::id()
+                || (pid != 0 && pid == shared.remote_pid.load(Ordering::Relaxed))
+        }
         None => {
             queued.hook == NF_INET_LOCAL_OUT
                 && queued.uid.is_none()
@@ -1487,7 +1504,7 @@ pub(crate) fn decide(
         Owner::Tap(tap) => (None, shared.contexts.vm_on_tap(&tap)),
         Owner::Unknown => (None, None),
     };
-    if never_decided(owner.map(|o| o.pid), queued, headers.protocol) {
+    if never_decided(shared, owner.map(|o| o.pid), queued, headers.protocol) {
         return (Some(Verdict::Accept), None);
     }
     let process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
