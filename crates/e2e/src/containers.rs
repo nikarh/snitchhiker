@@ -723,3 +723,77 @@ pub fn removed_containers_take_their_id_rules_and_net_admin_is_flagged() -> Resu
         &found,
     )
 }
+
+/// Docker programming its firewall with nftables (`"firewall-backend": "nftables"`, Docker 28 and later) rather than
+/// iptables: a bridged container's connection is still queued in the forward chain and decided by its program.
+pub fn docker_on_its_nftables_backend_is_decided_too() -> Result<(), String> {
+    docker()?;
+    let version = run("docker", &["version", "--format", "{{.Server.Version}}"])?;
+    let major: u32 = version
+        .trim()
+        .split('.')
+        .next()
+        .and_then(|m| m.parse().ok())
+        .unwrap_or(0);
+    if major < 28 {
+        // This distribution's Docker has no nftables backend: nothing to test here.
+        return Ok(());
+    }
+    std::fs::create_dir_all("/etc/docker").map_err(|e| e.to_string())?;
+    std::fs::write(
+        "/etc/docker/daemon.json",
+        "{\"firewall-backend\": \"nftables\"}\n",
+    )
+    .map_err(|e| e.to_string())?;
+    let restore = || {
+        let _ = std::fs::remove_file("/etc/docker/daemon.json");
+        let _ = run("systemctl", &["restart", "docker"]);
+    };
+    let result = (|| {
+        run("systemctl", &["restart", "docker"])?;
+        let backend = run(
+            "docker",
+            &["info", "--format", "{{.FirewallBackend.Driver}}"],
+        )?;
+        check(
+            backend.trim().starts_with("nftables"),
+            "Docker didn't switch to its nftables backend",
+            &backend,
+        )?;
+        let daemon = Running::start(
+            "docker-nftables",
+            "mode = \"enforce\"\nno_match = \"deny\"\n",
+        )?;
+        wget_in_container("http://203.0.113.80:8080/");
+        thread::sleep(Duration::from_millis(500));
+        daemon.cli(&[
+            "rules",
+            "add",
+            "allow",
+            "--exe",
+            "/bin/busybox",
+            "--any-context",
+        ])?;
+        wget_in_container("http://203.0.113.81:8080/");
+        thread::sleep(Duration::from_millis(500));
+        let denied = decisions(&daemon, "203.0.113.80:8080")?;
+        let allowed = decisions(&daemon, "203.0.113.81:8080")?;
+        let found = format!("{}\n{}", denied.join("\n"), allowed.join("\n"));
+        check(
+            denied
+                .iter()
+                .any(|l| l.contains("deny") && l.contains("/bin/busybox -> 203.0.113.80:8080")),
+            "with Docker on nftables, the container's connection wasn't decided by its program",
+            &found,
+        )?;
+        check(
+            allowed
+                .iter()
+                .any(|l| l.contains("allow") && l.contains("/bin/busybox -> 203.0.113.81:8080")),
+            "with Docker on nftables, a rule for the container's program didn't apply",
+            &found,
+        )
+    })();
+    restore();
+    result
+}

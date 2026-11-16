@@ -315,6 +315,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::removed_containers_take_their_id_rules_and_net_admin_is_flagged,
     ),
     (
+        "containers/docker-on-its-nftables-backend-is-decided-too",
+        containers::docker_on_its_nftables_backend_is_decided_too,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

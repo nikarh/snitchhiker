@@ -2229,7 +2229,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         libvirt's VMs already).
 - [x] **Forward-path interception**
   - [x] `forward` chain queueing from the bridges in `forward_from` (Docker, Podman, CNI, libvirt, LXD, Incus), at
-        mangle priority, before NAT; tested with Docker on iptables-nft. [ ] Docker's native nftables backend.
+        mangle priority, before NAT; tested with Docker on iptables-nft. [x] Docker's native nftables backend (tested).
   - [x] Per-namespace tables: rootless container namespaces (from their helper's first connection, until the
         container's process ends) and named namespaces (`/run/netns`, followed by the mount table's change
         notifications); tamper detection by nftables notifications, restore and alert. [x] `CAP_NET_ADMIN` container
