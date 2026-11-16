@@ -1921,10 +1921,10 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Write the connect kprobes in CO-RE C (`"Dual MIT/GPL"`), load them with aya, and get pid + exe for TCP and
         UDP flows on Arch (latest kernel) and Ubuntu 24.04 / Amazon Linux 2023 (6.1).
   - [x] Decide: C + clang CO-RE vs `aya-ebpf` (Rust). Record in `docs/decisions/0001-ebpf.md`.
-- [ ] **Spike: local auth**
+- [x] **Spike: local auth**
   - [x] Setgid test client: confirm non-dumpable (ptrace and `/proc/pid/mem` from the same uid fail), `SO_PEERPIDFD`
         and `/proc/pid/exe` checks, and the race re-check.
-  - [ ] polkit check from the daemon with `zbus_polkit` and a pidfd subject. *(Moved to M2, with step-up.)*
+  - [x] polkit check from the daemon with `zbus_polkit` and a pidfd subject. *(Done in M2, with step-up.)*
 - [ ] **Spike: GUI**
   - [x] gpui-ce hello world with a virtualized 1M-row table, a tree view and a text input, on Wayland (niri/KDE/GNOME)
         and X11.
@@ -1932,8 +1932,9 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] Run each setgid (done: renders on Wayland with Vulkan and fonts). Check that IME, clipboard, the notification D-Bus, the tray and portals
         (file chooser) all still work. *(Moved to M3, once the app exists.)*
   - [x] Decide the framework. Record in `docs/decisions/0004-desktop-ui.md`.
-- [ ] **Spike: remote** *(moved to the start of M5: M1–M4 don't depend on it)*
-  - [ ] iroh 1.x echo between the daemon on a NAT'd host and an Android emulator/device through the Rust core via
+- [x] **Spike: remote** *(moved to the start of M5, and done there: the remote e2e and the Android e2e connect through
+  a self-hosted relay)*
+  - [x] iroh 1.x echo between the daemon on a NAT'd host and an Android emulator/device through the Rust core via
         UniFFI. Use a self-hosted `iroh-relay`. Measure connect time (direct vs relayed) and idle battery cost.
 - **DoD:** four decision records written; the risky unknowns resolved or re-planned. *(Done: `docs/decisions/`
   0001–0004; polkit, the GUI's desktop integration and the remote spike re-planned as noted.)*
@@ -1943,15 +1944,16 @@ the security model, and the GUI framework are proven before the bulk of feature 
 - [ ] **`core` crate**
   - [x] Rule and folder model, matchers, compiled index, precedence, explain. Plus the rule file format
         (`spec`), used by managed files and later by import/export.
-  - [ ] Path generalisation and app-identity types.
-  - [ ] Query language parser (rules subset).
+  - [x] Path generalisation. [ ] App-identity types (with the `process.app` matcher, below).
+  - [x] Query language parser (rules subset).
   - [ ] proptest suites.
 - [ ] **Interception**
-  - [ ] nftables table lifecycle: create, verify, restore on change (netlink monitor), remove on stop.
+  - [x] nftables table lifecycle: create, verify, restore on change (netlink monitor), remove on stop.
   - [x] NFQUEUE workers with fanout, preallocated buffers, in-place parsing, verdicts, reject via `SOCK_DESTROY`,
         own-mark bypass.
-  - [ ] Runtime set changes through direct nfnetlink batches to our table only; table-filtered event subscription
-        ([§11.3](#113-never-pay-for-what-isnt-ours)).
+  - [x] Runtime set changes through direct nfnetlink batches to our table only; table-filtered event subscription
+        ([§11.3](#113-never-pay-for-what-isnt-ours)). *(The table is written and watched through nfnetlink, filtered
+        by table name; the daemon keeps no runtime sets, so there are no element changes to make.)*
   - [x] Fail-open and fail-closed policy wiring.
 - [ ] **Attribution**
   - [ ] eBPF connect/sendmsg programs, process exec/exit cache, `/proc` + `SOCK_DIAG` fallback. *(Done: the
@@ -1969,19 +1971,18 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [ ] Schema and migrations, interned dictionaries, the writer thread, events, rollups maintained at write time,
         fixed-window totals, retention, keyset queries, FTS5 trigram search.
   - [x] Statement registry with the `EXPLAIN QUERY PLAN` gate.
-  - [ ] eBPF byte counters → events and rollups.
-- [ ] **Policy and config**
+  - [x] eBPF byte counters → events and rollups.
+- [x] **Policy and config**
   - [x] `daemon.toml`, policy object, monitor/enforce/disabled modes, managed `rules.d`.
-- [ ] **Performance gates** ([§11](#11-performance-and-data-efficiency))
-  - [ ] Counting allocator test on the decision loop; criterion benches with thresholds in CI. *(Done: the
-        counting-allocator test on deciding.)*
-  - [ ] Foreign-table test (60k-range interval set, churning) on latency, ingestion and RSS.
-- [ ] **System firewall and defaults**
-  - [ ] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files). *(Blocklists: files and URLs, M8.)*
+- [x] **Performance gates** ([§11](#11-performance-and-data-efficiency))
+  - [x] Counting allocator test on the decision loop; benches with thresholds in CI (the budgets bench, M8).
+  - [x] Foreign-table test (60k-range interval set, churning) on latency, ingestion and RSS (`perf/` scenarios).
+- [x] **System firewall and defaults**
+  - [x] `snitchhiker_system` table with OpenSnitch's defaults; default rules folder; aliases; blocklists (files). *(Blocklists: files and URLs, M8.)*
 - [ ] **CLI (admin socket only in M1)**
   - [ ] `status`, `rules ls/add/rm/enable/disable/import/export`, `events --follow/--query`, `stats`, `explain`,
         `policy`, `learn`.
-- [ ] **Packaging**
+- [x] **Packaging**
   - [x] systemd unit (hardened), sysusers, tmpfiles, a PKGBUILD for local testing. *(nfpm builds .deb and Arch
         packages; the VM tests install them.)*
 - [ ] **Integration tests**
@@ -2060,7 +2061,7 @@ the security model, and the GUI framework are proven before the bulk of feature 
         by clients and as SQL by the node through the same matching functions, checked equal by a property test.
   - [x] Cache and replication ([§11.6](#116-client-cache-and-replication)).
 - [ ] **App shell**
-  - [x] Framework from M0, theme (light and dark), navigation, settings storage (cosmetic only). [ ] Sidebar with
+  - [x] Framework from M0, theme (light and dark), navigation, settings storage (cosmetic only). [x] Sidebar with
         several nodes (with M5).
   - [x] Environment scrubbing at start, the X11 banner, the compositor peer check.
 - [ ] **Shared widgets**
@@ -2182,7 +2183,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         Connections (close, CSV), Rules (folders, search, multi-select bulk enable/disable/move/delete, edit, lint,
         history and undo, import and export through the share sheet), Firewall, Alerts and alert rules, Devices (mute,
         unpair, pair), Settings, Proposals (edit, approve, deny).
-  - [ ] Containers & VMs view (M7).
+  - [x] Containers & VMs view (M7).
 - [x] **Notifications**
   - [x] Channels; prompt notifications with Allow/Deny answered in a receiver; cancellation when answered elsewhere;
         alerts, once each; offline and back online.
@@ -2267,8 +2268,8 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         editor; muting proposals of a process tree.
 - [x] **Blocklists from URLs**
   - [x] Refresh schedule, integrity (size limits, format checks), stats per list.
-- [ ] **Performance pass**
-  - [ ] Benches in CI with regression thresholds, a 10M-event dataset, memory caps in daemon and clients.
+- [x] **Performance pass**
+  - [x] Benches in CI with regression thresholds, a 10M-event dataset, memory caps in daemon and clients.
 - [ ] **Docs completeness**
   - [ ] Every page in [§10.7](#107-documentation-site)'s structure exists and is current; FAQ and troubleshooting;
         a full read-through for structure and tone; every screenshot regenerated.
