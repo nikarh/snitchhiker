@@ -48,7 +48,7 @@ All conditions of a rule must hold. A condition with several values holds when a
 | `context` | the process runs in that kind of namespace | `host`, `container`, `netns`, `any` |
 | `container.name`, `container.image`, `container.compose`, `container.label` | the container it runs in is that one | `web-1`, `glob:docker.io/library/node:*`, `shop/web`, `tier=front` |
 | `list` | the destination's name, a domain above it, or its address is on the [blocklist](/guides/blocklists/) | `ads`, `oisd` |
-| `app` | a stable identity of the program matches | reserved: not yet filled in, so it never matches today |
+| `app` | a stable identity of the program matches: its package, Nix name, system service or snap | `pkg:firefox`, `nix:git`, `unit:sshd.service`, `snap:spotify` |
 
 A rule must have at least one condition: a rule matching every connection is refused. Use the [`no_match` policy](/reference/configuration/#no_match) for that.
 
@@ -63,6 +63,17 @@ A rule must have at least one condition: a rule matching every connection is ref
 A pattern may start with `{home}`, the home directory of the user whose process is matched: `glob:{home}/.local/share/claude/versions/*/claude` covers that program for every user. Rules made from prompts and by `learn` write paths this way, with version numbers and hashes as `*`, so they survive updates.
 
 For a process in a container, `exe` is the path inside the container.
+
+### Apps
+
+An `app` condition names a program by something that survives updates and moves, set by root or the system's own tools, never by the program:
+
+- `pkg:<name>`: the package that installed the executable (pacman, dpkg or rpm), so `pkg:firefox` holds wherever the package puts its binary;
+- `nix:<name>`: a program in the Nix store, by its store path's name without the version;
+- `unit:<name>.service`: a system service, by the unit systemd runs it in (a user's own services can be named anything, so they have none);
+- `snap:<name>`: a snap, by the cgroup snapd runs it in.
+
+Flatpak and AppImage programs have no `app` identity: what marks them can be made by any user, so it would let any program pass as one. Name them by `exe`. Programs in containers have none either: a path inside a container names something else.
 
 ### Hosts and networks
 

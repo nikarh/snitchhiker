@@ -62,6 +62,7 @@ fun RuleEditor(
     var cmdline by remember { mutableStateOf(c.cmdline.joinToString(", ")) }
     var parent by remember { mutableStateOf(c.parent.joinToString(", ")) }
     var lists by remember { mutableStateOf(c.list.joinToString(", ")) }
+    var app by remember { mutableStateOf(c.app.joinToString(", ")) }
     var anyContext by remember { mutableStateOf(c.context == Context.CONTEXT_ANY) }
     var error by remember { mutableStateOf<String?>(null) }
 
@@ -77,6 +78,7 @@ fun RuleEditor(
                 cmdline = list(cmdline),
                 parent = list(parent),
                 list = list(lists),
+                app = list(app),
                 context = if (anyContext) Context.CONTEXT_ANY else Context.CONTEXT_UNSPECIFIED,
             )
         val edited =
@@ -128,6 +130,7 @@ fun RuleEditor(
                     }
                 }
                 field("Program", exe, "/usr/bin/curl, glob:{home}/.cargo/bin/*") { exe = it }
+                field("App", app, "pkg:firefox, unit:sshd.service") { app = it }
                 field("Host", host, "example.com, *.example.org, re:…") { host = it }
                 field("Network", net, "192.0.2.0/24, lan, loopback") { net = it }
                 field("Port", port, "443, 8000-8999") { port = it }

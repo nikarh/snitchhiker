@@ -40,8 +40,13 @@ impl SearchableListItem for FolderItem {
 }
 
 /// The condition fields, in the order shown: (key, label, placeholder).
-const FIELDS: [(&str, &str, &str); 9] = [
+const FIELDS: [(&str, &str, &str); 10] = [
     ("exe", "Program", "/usr/bin/curl, glob:{home}/.cargo/bin/*"),
+    (
+        "app",
+        "App",
+        "pkg:firefox, unit:sshd.service, nix:git, snap:…",
+    ),
     ("host", "Host", "example.com, *.example.org, re:..."),
     ("net", "Network", "192.0.2.0/24, lan, loopback"),
     ("port", "Port", "443, 8000-8999"),
@@ -66,6 +71,7 @@ pub struct RuleEditor {
 fn values(conditions: &v1::Conditions, key: &str) -> String {
     match key {
         "exe" => conditions.exe.join(", "),
+        "app" => conditions.app.join(", "),
         "host" => conditions.host.join(", "),
         "net" => conditions.net.join(", "),
         "port" => conditions.port.join(", "),
@@ -155,6 +161,7 @@ impl RuleEditor {
             let values = split(&text);
             match *key {
                 "exe" => conditions.exe = values,
+                "app" => conditions.app = values,
                 "host" => conditions.host = values,
                 "net" => conditions.net = values,
                 "port" => conditions.port = values,

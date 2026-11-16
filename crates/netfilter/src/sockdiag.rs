@@ -117,6 +117,42 @@ impl SockDiag {
         Ok(found)
     }
 
+    /// The socket of exactly this flow (local and remote address and port), if there is one: its owner's uid, inode
+    /// and cookie.
+    pub fn find(&mut self, id: &SocketId) -> io::Result<Option<LiveSocket>> {
+        self.sequence = self.sequence.wrapping_add(1);
+        encode_destroy(&mut self.request, id, self.sequence);
+        // The same request as a destroy, as a lookup: SOCK_DIAG_BY_FAMILY without DUMP.
+        if let Some(kind) = self.request.get_mut(4..6) {
+            kind.copy_from_slice(&SOCK_DIAG_BY_FAMILY.to_ne_bytes());
+        }
+        if let Some(flags) = self.request.get_mut(6..8) {
+            flags.copy_from_slice(&NLM_F_REQUEST.to_ne_bytes());
+        }
+        self.socket.send(&self.request, 0)?;
+        loop {
+            self.receive.clear();
+            self.receive.reserve(4096);
+            self.socket.recv(&mut self.receive, 0)?;
+            for message in messages(&self.receive) {
+                if message.sequence != self.sequence {
+                    continue;
+                }
+                match message.kind {
+                    SOCK_DIAG_BY_FAMILY => return Ok(decode(message.body, id.protocol)),
+                    NLMSG_ERROR => {
+                        return match ack_error(message.body) {
+                            0 => Ok(None),
+                            code if -code == 2 => Ok(None),
+                            code => Err(io::Error::from_raw_os_error(-code)),
+                        };
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
     /// Closes the socket; `NotFound` when there is none (it may have closed already).
     pub fn destroy(&mut self, id: &SocketId) -> io::Result<()> {
         self.sequence = self.sequence.wrapping_add(1);

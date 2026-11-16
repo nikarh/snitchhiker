@@ -118,6 +118,8 @@ pub struct Shared {
     pub webhook: crate::webhook::Webhook,
     /// The blocklists rules name.
     pub blocklists: crate::blocklists::Blocklists,
+    /// Programs' packages, for `pkg:` identities.
+    pub packages: Arc<crate::apps::Packages>,
     /// Agents whose proposals are denied without asking anyone (muted by a person).
     pub muted_agents: Mutex<HashSet<ProcessRef>>,
     /// Counts changes of proposals, for requests waiting for one.
@@ -203,6 +205,7 @@ impl Daemon {
             namespaces: crate::namespaces::Namespaces::default(),
             webhook: crate::webhook::Webhook::default(),
             blocklists,
+            packages: Arc::new(crate::apps::Packages::load()),
             muted_agents: Mutex::default(),
             config,
         });
@@ -259,6 +262,7 @@ impl Daemon {
         self.spawn_table_watch()?;
         self.spawn_agent_watch()?;
         self.spawn_blocklist_refresh()?;
+        self.shared.packages.watch()?;
         if self.shared.config.learn_dns {
             // Names programs resolved through systemd-resolved's cache or its library interface: no packet shows them.
             let shared = Arc::clone(&self.shared);
@@ -1130,7 +1134,8 @@ fn dns_loop(shared: &Shared, mut queue: Queue) -> Result<(), Error> {
 }
 
 fn decide_loop(shared: &Shared, mut queue: Queue, offset: usize) -> Result<(), Error> {
-    let mut processes = ProcessCache::new(shared.host);
+    let mut processes =
+        ProcessCache::with_packages(shared.host, Some(Arc::clone(&shared.packages)));
     let mut senders = crate::forward::Senders::default();
     let mut verdicts: Vec<(u32, Verdict)> = Vec::with_capacity(64);
     let mut rejected: Vec<SocketId> = Vec::with_capacity(8);
@@ -1309,14 +1314,22 @@ fn owner_of(
     shared: &Shared,
     senders: &mut crate::forward::Senders,
     queued: &Packet<'_>,
-    key: &FlowKey,
+    (key, source): (&FlowKey, std::net::IpAddr),
 ) -> Owner {
     if queued.hook == NF_INET_FORWARD {
         forwarded_owner(shared, senders, queued, key)
     } else {
+        // A flow the programs didn't record: its socket, if exactly one process holds it.
         shared
             .attribution
             .owner(key)
+            .or_else(|| {
+                crate::fallback::owner(
+                    key.protocol,
+                    (source, key.source_port),
+                    (key.destination, key.destination_port),
+                )
+            })
             .map_or(Owner::Unknown, Owner::Process)
     }
 }
@@ -1340,7 +1353,7 @@ pub(crate) fn decide(
         destination: headers.destination,
         destination_port: headers.destination_port,
     };
-    let (owner, vm) = match owner_of(shared, senders, queued, &key) {
+    let (owner, vm) = match owner_of(shared, senders, queued, (&key, headers.source)) {
         Owner::Process(owner) => (Some(owner), None),
         Owner::Tap(tap) => (None, shared.contexts.vm_on_tap(&tap)),
         Owner::Unknown => (None, None),
@@ -1384,7 +1397,7 @@ pub(crate) fn decide(
         .flatten();
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
-        apps: empty,
+        apps: process.as_ref().map_or(&[], |p| p.apps.as_slice()),
         cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
         lineage: process.as_ref().map_or(&[], |p| p.lineage.as_slice()),

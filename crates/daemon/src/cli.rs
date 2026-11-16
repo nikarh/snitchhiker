@@ -45,6 +45,8 @@ Commands:
   rules add <allow|deny|reject> [conditions] [--name <n>] [--tier <override|normal|fallback>]
                                   Add a rule. Conditions (all must hold; repeat for alternatives):
                                     --exe <path>      the executable (glob: --exe 'glob:/usr/bin/*')
+                                    --app <identity>  the program's package, Nix name, service or snap
+                                                      (pkg:curl, nix:git, unit:sshd.service, snap:firefox)
                                     --host <name>     a host name or *.domain
                                     --net <cidr>      an address, a range, or an alias (lan, loopback, imds, ...)
                                     --port <n[-m]>    a port or range
@@ -118,8 +120,12 @@ Commands:
                                   Close a live connection, as a reject does
   history [--limit <n>]           The changes to rules and folders, newest first, and who made them
   undo <change>                   Undo the changes of a change's batch (refused if changed again since)
-  events [--limit <n>] [--query <q>]
-                                  The newest connections; with a query, those it matches among the newest 50000
+  events [--limit <n>] [--query <q>] [--follow]
+                                  The newest connections; with a query, those it matches among the newest 50000;
+                                  with --follow, connections as they are decided (those the query matches), until
+                                  interrupted
+  stats [--hours <n>]             The last n hours (default 24) at a glance: connections allowed and blocked, bytes,
+                                  and the busiest programs and hosts
   explain <seq>                   Which rules match a recorded connection now, the deciding one first
   learn [--hours <n>] [--folder <name>]
                                   Rules for the connections no rule decided in the last n hours (default 24), as a
@@ -266,8 +272,12 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("events") => {
             let limit: u32 = args.opt_value_from_str("--limit")?.unwrap_or(50);
             let query: String = args.opt_value_from_str("--query")?.unwrap_or_default();
+            let follow = args.contains("--follow");
             reject_rest(args)?;
             let mut client = connect(version)?;
+            if follow {
+                return follow_events(&mut client, &query);
+            }
             match client.call(Method::ListEvents(v1::ListEvents {
                 before: 0,
                 limit,
@@ -277,6 +287,11 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 v1::response::Result::Events(page) => out(&format_events(&page.events)),
                 _ => Err(unexpected()),
             }
+        }
+        Some("stats") => {
+            let hours: u64 = args.opt_value_from_str("--hours")?.unwrap_or(24);
+            reject_rest(args)?;
+            stats(&mut connect(version)?, hours)
         }
         Some("learn") => {
             let hours: u32 = args.opt_value_from_str("--hours")?.unwrap_or(24);
@@ -292,6 +307,103 @@ pub fn run(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
             "unknown command `{other}`; see --help"
         ))),
     }
+}
+
+/// Prints events as they are decided, those `query` matches (all when empty), until interrupted.
+fn follow_events(client: &mut snitchhiker_client::Client, query: &str) -> Result<(), Error> {
+    let cx = snitchhiker_core::query::Context {
+        now_ms: crate::runtime::now_ms(),
+        uid_of: &crate::process::uid_of,
+    };
+    let filter = if query.trim().is_empty() {
+        None
+    } else {
+        Some(
+            snitchhiker_core::query::EventFilter::parse(query, &cx)
+                .map_err(|e| Error::Usage(format!("query: {}", e.message)))?,
+        )
+    };
+    client.subscribe(v1::Topic::Events)?;
+    loop {
+        let Some(v1::notice::Body::Event(event)) = client.notice()?.body else {
+            continue;
+        };
+        let address = convert::address_from(&event.address)
+            .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+        let matches = filter.as_ref().is_none_or(|f| {
+            f.matches(&snitchhiker_core::query::EventView {
+                time_ms: event.time_ms,
+                exe: &event.exe,
+                host: &event.host,
+                address,
+                port: u16::try_from(event.port).unwrap_or(0),
+                protocol: u8::try_from(event.protocol).unwrap_or(0),
+                uid: event.uid,
+                action: u8::try_from(event.action).unwrap_or(0),
+                rule: event.rule.unwrap_or(0),
+                context: u8::try_from(event.context.saturating_sub(1)).unwrap_or(0),
+                bytes_out: event.bytes_out,
+                bytes_in: event.bytes_in,
+            })
+        });
+        if matches {
+            out(&format_events(std::slice::from_ref(&event)))?;
+        }
+    }
+}
+
+/// The last `hours` at a glance: connections allowed and blocked, and the busiest programs and hosts.
+fn stats(client: &mut snitchhiker_client::Client, hours: u64) -> Result<(), Error> {
+    use v1::request::Method;
+    let to_ms = crate::runtime::now_ms();
+    let from_ms = to_ms.saturating_sub(hours * 3_600_000);
+    let mut top = |group: v1::Dimension, limit: u32| -> Result<Vec<v1::ExploreRow>, Error> {
+        match client.call(Method::Explore(v1::Explore {
+            from_ms,
+            to_ms,
+            group_by: group.into(),
+            filter: None,
+            limit,
+            by_bytes: false,
+        }))? {
+            v1::response::Result::Explored(page) => Ok(page.rows),
+            _ => Err(unexpected()),
+        }
+    };
+    // Every connection has one user: the users' rows add up to the whole.
+    let users = top(v1::Dimension::User, 1000)?;
+    let (allowed, blocked) = users
+        .iter()
+        .fold((0, 0), |(a, b), r| (a + r.allowed, b + r.blocked));
+    let (sent, received) = users
+        .iter()
+        .fold((0, 0), |(s, r), row| (s + row.bytes_out, r + row.bytes_in));
+    let mut text = format!(
+        "last {hours} h: {} connections, {allowed} allowed, {blocked} blocked; {} kB sent, {} kB received\n",
+        allowed + blocked,
+        sent / 1000,
+        received / 1000
+    );
+    for (title, group) in [
+        ("programs", v1::Dimension::Program),
+        ("hosts", v1::Dimension::Host),
+    ] {
+        let _ = writeln!(text, "\nbusiest {title}:");
+        for row in top(group, 10)? {
+            let _ = writeln!(
+                text,
+                "  {:>8} allowed {:>8} blocked  {}",
+                row.allowed,
+                row.blocked,
+                if row.key.is_empty() {
+                    "(no name)"
+                } else {
+                    &row.key
+                }
+            );
+        }
+    }
+    out(&text)
 }
 
 fn format_lint(report: &v1::LintReport) -> String {
@@ -1564,6 +1676,7 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
         },
         netns: args.values_from_str("--netns")?,
         list: args.values_from_str("--list")?,
+        app: args.values_from_str("--app")?,
         ..Conditions::default()
     };
     Ok(RuleSpec {

@@ -162,6 +162,15 @@ const SCENARIOS: &[Scenario] = &[
         daemon::memory_stays_within_budget,
     ),
     (
+        "daemon/events-follow-and-stats",
+        daemon::events_follow_and_stats,
+    ),
+    ("daemon/rules-on-packages", daemon::rules_on_packages),
+    (
+        "daemon/a-connection-from-before-the-daemon-is-attributed",
+        daemon::a_connection_from_before_the_daemon_is_attributed,
+    ),
+    (
         "daemon/monitor-records-but-never-blocks",
         daemon::monitor_records_but_never_blocks,
     ),

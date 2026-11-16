@@ -14,7 +14,7 @@ use snitchhiker_core::rule::{ContextKind, ProcessRef};
 
 /// The unit of the start time in `/proc/<pid>/stat`: clock ticks of `USER_HZ`, 100 on Linux (fixed for
 /// userspace whatever the kernel's tick rate).
-const NANOS_PER_TICK: u64 = 1_000_000_000 / 100;
+pub const NANOS_PER_TICK: u64 = 1_000_000_000 / 100;
 /// How many ancestors are recorded.
 const MAX_ANCESTORS: usize = 16;
 /// Entries kept before the oldest are dropped.
@@ -31,6 +31,8 @@ pub struct ProcessInfo {
     /// The process and its ancestors, nearest first.
     pub lineage: Vec<ProcessRef>,
     pub context: ContextKind,
+    /// Stable identities of the program (`pkg:curl`, `unit:sshd.service`): see `apps`. None in a container.
+    pub apps: Vec<String>,
 }
 
 /// The host's namespaces, to tell containers and other namespaces from the host.
@@ -60,6 +62,7 @@ impl HostNamespaces {
 #[derive(Debug)]
 pub struct ProcessCache {
     host: HostNamespaces,
+    packages: Option<Arc<crate::apps::Packages>>,
     entries: HashMap<(u32, u64), (u64, Arc<ProcessInfo>)>,
     homes: HashMap<u32, Option<Arc<str>>>,
     clock: u64,
@@ -68,8 +71,18 @@ pub struct ProcessCache {
 impl ProcessCache {
     #[must_use]
     pub fn new(host: HostNamespaces) -> Self {
+        Self::with_packages(host, None)
+    }
+
+    /// A cache that also names programs by their package (`pkg:`) from `packages`.
+    #[must_use]
+    pub fn with_packages(
+        host: HostNamespaces,
+        packages: Option<Arc<crate::apps::Packages>>,
+    ) -> Self {
         Self {
             host,
+            packages,
             entries: HashMap::with_capacity(CAPACITY),
             homes: HashMap::new(),
             clock: 0,
@@ -121,13 +134,23 @@ impl ProcessCache {
         );
         let (ancestors, mut lineage) = ancestors(pid);
         lineage.insert(0, ProcessRef { pid, start });
+        let context = context_of(pid, self.host);
+        let apps = match (&self.packages, context) {
+            (Some(packages), ContextKind::Host) => crate::apps::identities(
+                packages,
+                &exe,
+                &fs::read_to_string(format!("/proc/{pid}/cgroup")).unwrap_or_default(),
+            ),
+            _ => Vec::new(),
+        };
         Some(ProcessInfo {
             pid,
             exe,
             cmdline,
             ancestors,
             lineage,
-            context: context_of(pid, self.host),
+            context,
+            apps,
         })
     }
 

@@ -121,10 +121,18 @@ snitchhiker undo <change>
 ## `events`
 
 ```text
-snitchhiker events [--limit <n>] [--query <query>]
+snitchhiker events [--limit <n>] [--query <query>] [--follow]
 ```
 
-The newest connections (50 by default): sequence number, action, user, program, destination (the name the program looked up, or the address), port, protocol, and the bytes sent and received so far. With `--query`, only those the [query](/reference/query-language/) matches, looked for among the newest 50 000.
+The newest connections (50 by default): sequence number, action, user, program, destination (the name the program looked up, or the address), port, protocol, and the bytes sent and received so far. With `--query`, only those the [query](/reference/query-language/) matches, looked for among the newest 50 000. With `--follow`, connections are printed as they are decided (only those the query matches) until interrupted: `snitchhiker events --follow --query action:deny` shows what is blocked as it happens.
+
+## `stats`
+
+```text
+snitchhiker stats [--hours <n>]
+```
+
+The last `n` hours (24 by default) at a glance: how many connections were allowed and blocked, the bytes sent and received, and the ten busiest programs and hosts. It reads the same rollups as [`explore`](#explore).
 
 ## `explain`
 

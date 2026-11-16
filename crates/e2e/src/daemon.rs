@@ -1215,6 +1215,94 @@ fn busy_history(dir: &str) -> Result<(), String> {
     store.record(&batch, &mut recorded).map_err(error)
 }
 
+/// A rule on a program's package (`pkg:`) holds for the program the package installed, and for no other.
+pub fn rules_on_packages() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let daemon = Running::start("packages", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--app",
+        "pkg:curl",
+        "--port",
+        &port.to_string(),
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let curl = |extra: &[&str]| -> Result<bool, String> {
+        let mut args = vec!["-u", "mallory", "--"];
+        args.extend_from_slice(extra);
+        let url = format!("http://127.0.0.1:{port}/");
+        args.extend_from_slice(&[
+            "-s",
+            "-m",
+            "2",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_connect}%{remote_port}",
+            &url,
+        ]);
+        let output = Command::new("runuser")
+            .args(&args)
+            .output()
+            .map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&output.stdout).contains(&port.to_string()))
+    };
+    let packaged = curl(&["curl"])?;
+    // The same program, copied where no package put it.
+    std::fs::copy("/usr/bin/curl", "/tmp/unpackaged-curl").map_err(|e| e.to_string())?;
+    let copied = curl(&["/tmp/unpackaged-curl"])?;
+    let events = daemon.cli(&["events", "--limit", "10"])?;
+    check(packaged, "curl from its package was blocked", &events)?;
+    check(
+        !copied,
+        "a copy of curl outside its package was let through",
+        &events,
+    )
+}
+
+/// `events --follow` prints connections as they are decided, only those its query matches; `stats` sums them up.
+pub fn events_follow_and_stats() -> Result<(), String> {
+    let (_denied_target, denied) = listener()?;
+    let (_allowed_target, allowed) = listener()?;
+    let daemon = Running::start("follow", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--net",
+        "127.0.0.1",
+        "--port",
+        &allowed.to_string(),
+    ])?;
+    let mut follow = Command::new("snitchhiker")
+        .args(["events", "--follow", "--query", "action:deny"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    thread::sleep(Duration::from_millis(500));
+    mallory_connects(denied)?;
+    mallory_connects(allowed)?;
+    thread::sleep(Duration::from_millis(800));
+    let _ = follow.kill();
+    let output = follow.wait_with_output().map_err(|e| e.to_string())?;
+    let followed = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stats = daemon.cli(&["stats", "--hours", "1"])?;
+    check(
+        followed.contains(&format!(":{denied} ")) && !followed.contains(&format!(":{allowed} ")),
+        "--follow didn't print the denied connection alone",
+        &followed,
+    )?;
+    check(
+        stats.contains("allowed")
+            && stats.contains("busiest programs")
+            && !stats.contains(" 0 connections"),
+        "stats doesn't sum up the connections",
+        &stats,
+    )
+}
+
 /// A blocklist read from a file blocks what is on it through a rule naming it; a version that isn't a list is refused
 /// and the one before stays; a new version applies once fetched.
 pub fn blocklists_block_what_is_on_them() -> Result<(), String> {
@@ -1350,4 +1438,71 @@ pub fn alerts_reach_the_webhook_signed() -> Result<(), String> {
         "no alert reached the webhook, or its signature doesn't verify",
         &found,
     )
+}
+
+/// A connection whose first SYN left before the daemon started (so the attribution programs never saw it open) is
+/// still attributed when its retransmitted SYN is decided: through its socket, held by one process.
+pub fn a_connection_from_before_the_daemon_is_attributed() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    // Hold the SYNs back while the daemon starts.
+    let hold = format!(
+        "table inet e2e_hold {{\n  chain out {{\n    type filter hook output priority -400; policy accept;\n    tcp dport {port} drop\n  }}\n}}"
+    );
+    run_nft(&hold)?;
+    let mut connecting = Command::new("runuser")
+        .args([
+            "-u",
+            "mallory",
+            "--",
+            "python3",
+            "-c",
+            &format!("import socket\nsocket.create_connection(('127.0.0.1', {port}), timeout=20)\nprint('connected')"),
+        ])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    thread::sleep(Duration::from_millis(300));
+    let daemon = Running::start("before", "mode = \"monitor\"\n");
+    let released = run_nft("delete table inet e2e_hold");
+    let daemon = daemon?;
+    released?;
+    let output = connecting.wait_with_output().map_err(|e| e.to_string())?;
+    thread::sleep(Duration::from_millis(500));
+    let events = daemon.cli(&["events", "--limit", "20"])?;
+    check(
+        String::from_utf8_lossy(&output.stdout).contains("connected"),
+        "the held connection never connected",
+        &events,
+    )?;
+    check(
+        events
+            .lines()
+            .any(|l| l.contains(&format!(":{port} ")) && l.contains("python")),
+        "the connection's program wasn't found through its socket",
+        &events,
+    )
+}
+
+fn run_nft(script: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let mut nft = Command::new("nft")
+        .args(["-f", "-"])
+        .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    nft.stdin
+        .take()
+        .ok_or("no stdin")?
+        .write_all(format!("{script}\n").as_bytes())
+        .map_err(|e| e.to_string())?;
+    let output = nft.wait_with_output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "nft {script}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
 }
