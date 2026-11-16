@@ -140,7 +140,7 @@ Why a recorded connection (by its sequence number, from `events`) is decided as 
 snitchhiker learn [--hours <n>] [--folder <name>]
 ```
 
-Prints a rule file with a rule for each program, destination and port that no rule decided in the last `n` hours (default 24), in a folder named `name` (default "Learned"). Program paths are generalised as in [prompts](/guides/prompts/#what-a-prompt-offers). Review it, then `rules import` it.
+Prints a rule file with a rule for each program, destination and port that no rule decided in the last `n` hours (default 24), in a folder named `name` (default "Learned"). Program paths are generalised as in [prompts](/guides/prompts/#what-a-prompt-offers). Connections from a container, a VM or a named network namespace get rules for that place only (a container by its Compose service, name or image). Review it, then `rules import` it.
 
 ## `prompts`
 

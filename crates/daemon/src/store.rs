@@ -621,9 +621,10 @@ pub const STATEMENTS: &[(&str, &str)] = &[
     // Connections no rule decided, since a time: what `learn` turns into rules.
     (
         "events.undecided_since",
-        "SELECT x.value, h.value, e.uid, e.protocol, e.address, e.port
+        "SELECT x.value, h.value, e.uid, e.protocol, e.address, e.port, e.context, c.value
          FROM events e INDEXED BY events_time
               CROSS JOIN strings x ON x.id = e.exe LEFT JOIN strings h ON h.id = e.host
+              LEFT JOIN strings c ON c.id = e.container
          WHERE e.time_ms >= ?1 AND e.source != 1",
     ),
     (
@@ -1537,6 +1538,10 @@ pub struct Undecided {
     pub protocol: u8,
     pub address: std::net::IpAddr,
     pub port: u16,
+    /// Where it came from: 0 the host, 1 a container, 2 a VM, 3 another network namespace.
+    pub context: u8,
+    /// The container's, VM's or named namespace's identity, as the history keeps it.
+    pub container: Option<String>,
 }
 
 /// A paired remote device.
@@ -2494,6 +2499,8 @@ impl Store {
                 protocol: row.get(3)?,
                 address: address_from(&address),
                 port: row.get(5)?,
+                context: row.get(6)?,
+                container: row.get(7)?,
             })
         })?;
         Ok(rows.collect::<Result<_, _>>()?)

@@ -1,5 +1,7 @@
 //! Turning what the daemon saw (connections no rule decided) into rules to review: one rule per program,
-//! destination and port, with the program's path generalised so updates don't break it.
+//! destination and port, where it came from, with the program's path generalised so updates don't break it. A
+//! container's connections get rules for that container (its Compose service, else its name, else its image), a VM's
+//! for that VM, a named namespace's for it: a rule learned from a container never applies to the host.
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -17,16 +19,20 @@ pub fn suggest(
     home_of: impl Fn(u32) -> Option<String>,
 ) -> RuleFile {
     let mut homes: HashMap<u32, Option<String>> = HashMap::new();
-    // (exe pattern, destination, port, protocol) -> how many connections; ordered for a stable file.
-    let mut groups: BTreeMap<(String, String, bool, u16, u8), usize> = BTreeMap::new();
+    // (where, exe pattern, destination, port, protocol) -> how many connections; ordered for a stable file.
+    let mut groups: BTreeMap<(Where, String, String, bool, u16, u8), usize> = BTreeMap::new();
     for connection in seen {
-        if connection.exe.is_empty() || connection.port == 0 {
+        let place = Where::of(connection);
+        // A program the node couldn't know: on the host no rule could name it; elsewhere (a VM's traffic, a rootless
+        // container's first connection) the rule names the place alone.
+        if connection.port == 0 || (connection.exe.is_empty() && place == Where::Host) {
             continue;
         }
         let home = homes
             .entry(connection.uid)
             .or_insert_with(|| home_of(connection.uid));
         let exe = match generalize::executable(&connection.exe, home.as_deref()) {
+            _ if connection.exe.is_empty() => String::new(),
             PatternSource::Glob(glob) => format!("glob:{glob}"),
             PatternSource::Exact(exact) => exact,
             PatternSource::Regex(regex) => format!("re:{regex}"),
@@ -37,6 +43,7 @@ pub fn suggest(
         );
         *groups
             .entry((
+                place,
                 exe,
                 destination,
                 is_host,
@@ -47,22 +54,24 @@ pub fn suggest(
     }
     let rule = groups
         .into_iter()
-        .map(|((exe, destination, is_host, port, protocol), count)| {
-            let program = exe.rsplit('/').next().unwrap_or(&exe).to_owned();
-            RuleSpec {
-                name: format!("{program} to {destination}:{port}"),
-                action: Action::Allow,
-                tier: snitchhiker_core::rule::Tier::Normal,
-                enabled: true,
-                notes: format!("Learned from {count} connection(s)."),
-                conditions: Conditions {
-                    exe: vec![exe],
+        .map(
+            |((place, exe, destination, is_host, port, protocol), count)| {
+                let program = match exe.rsplit('/').next() {
+                    Some(name) if !name.is_empty() => name.to_owned(),
+                    _ => "anything".to_owned(),
+                };
+                let mut conditions = Conditions {
+                    exe: if exe.is_empty() { vec![] } else { vec![exe] },
                     host: if is_host {
                         vec![destination.clone()]
                     } else {
                         vec![]
                     },
-                    net: if is_host { vec![] } else { vec![destination] },
+                    net: if is_host {
+                        vec![]
+                    } else {
+                        vec![destination.clone()]
+                    },
                     port: vec![port.to_string()],
                     protocol: vec![match protocol {
                         6 => "tcp".to_owned(),
@@ -70,9 +79,18 @@ pub fn suggest(
                         other => other.to_string(),
                     }],
                     ..Conditions::default()
-                },
-            }
-        })
+                };
+                let within = place.apply(&mut conditions);
+                RuleSpec {
+                    name: format!("{within}{program} to {destination}:{port}"),
+                    action: Action::Allow,
+                    tier: snitchhiker_core::rule::Tier::Normal,
+                    enabled: true,
+                    notes: format!("Learned from {count} connection(s)."),
+                    conditions,
+                }
+            },
+        )
         .collect();
     RuleFile {
         folder: Some(FolderSpec {
@@ -80,6 +98,84 @@ pub fn suggest(
             scope: Conditions::default(),
         }),
         rule,
+    }
+}
+
+/// Where connections came from, as rules name it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum Where {
+    Host,
+    /// A container named by `container.compose`, `.name` or `.image`: (which, value).
+    Container(&'static str, String),
+    /// A container nothing names (its identity couldn't be read): any container.
+    AnyContainer,
+    Vm(String),
+    Netns(String),
+    /// Another context with no name.
+    Unnamed(u8),
+}
+
+impl Where {
+    fn of(connection: &Undecided) -> Self {
+        let identity = connection
+            .container
+            .as_deref()
+            .map(snitchhiker_core::context::Container::from_key);
+        match (connection.context, identity) {
+            (0, _) => Self::Host,
+            (1, Some(c)) => {
+                if let Some(compose) = c.compose {
+                    Self::Container("compose", compose)
+                } else if !c.name.is_empty() {
+                    Self::Container("name", c.name)
+                } else if !c.image.is_empty() {
+                    Self::Container("image", c.image)
+                } else {
+                    Self::AnyContainer
+                }
+            }
+            (1, None) => Self::AnyContainer,
+            (2, Some(c)) if !c.name.is_empty() => Self::Vm(c.name),
+            (3, Some(c)) if c.runtime == "netns" && !c.name.is_empty() => Self::Netns(c.name),
+            (other, _) => Self::Unnamed(other),
+        }
+    }
+
+    /// Limits `conditions` to this place; the prefix of the rule's name.
+    fn apply(&self, conditions: &mut Conditions) -> String {
+        use snitchhiker_core::rule::ContextKind;
+        match self {
+            Self::Host => String::new(),
+            Self::Container(which, value) => {
+                let field = match *which {
+                    "compose" => &mut conditions.container.compose,
+                    "name" => &mut conditions.container.name,
+                    _ => &mut conditions.container.image,
+                };
+                *field = vec![value.clone()];
+                format!("in {value}: ")
+            }
+            Self::AnyContainer => {
+                conditions.context = Some(ContextKind::Container);
+                "in a container: ".to_owned()
+            }
+            Self::Vm(name) => {
+                conditions.vm.name = vec![name.clone()];
+                format!("in {name}: ")
+            }
+            Self::Netns(name) => {
+                conditions.netns = vec![name.clone()];
+                format!("in {name}: ")
+            }
+            Self::Unnamed(code) => {
+                conditions.context = Some(match code {
+                    2 => ContextKind::Vm,
+                    3 => ContextKind::Netns,
+                    _ => ContextKind::Container,
+                });
+                "elsewhere: ".to_owned()
+            }
+        }
     }
 }
 
@@ -95,7 +191,54 @@ mod tests {
             protocol: 6,
             address: address.parse().unwrap(),
             port,
+            context: 0,
+            container: None,
         }
+    }
+
+    #[test]
+    fn containers_vms_and_namespaces_get_rules_of_their_own() {
+        let mut web = seen(
+            "/usr/local/bin/node",
+            Some("api.example.com"),
+            "198.51.100.7",
+            443,
+        );
+        web.context = 1;
+        web.container = Some("docker\tabc\tshop-web-1\tnode:22\tshop/web\t".to_owned());
+        let mut vm = seen("", Some("deb.debian.org"), "198.51.100.8", 80);
+        vm.context = 2;
+        vm.exe = String::new();
+        vm.container = Some("qemu\tuuid\tbuilder\t\t\t".to_owned());
+        let mut ns = seen("/usr/bin/curl", None, "203.0.113.9", 443);
+        ns.context = 3;
+        ns.container = Some("netns\t\tvpn\t\t\t".to_owned());
+        let host = seen(
+            "/usr/local/bin/node",
+            Some("api.example.com"),
+            "198.51.100.7",
+            443,
+        );
+        let file = suggest(&[web, vm, ns, host], "Learned", |_| None);
+        let names: Vec<&str> = file.rule.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names.len(), 4, "{names:?}");
+        let by_name = |prefix: &str| {
+            file.rule
+                .iter()
+                .find(|r| r.name.starts_with(prefix))
+                .unwrap()
+        };
+        assert_eq!(
+            by_name("in shop/web").conditions.container.compose,
+            vec!["shop/web"]
+        );
+        assert_eq!(by_name("in builder").conditions.vm.name, vec!["builder"]);
+        assert_eq!(by_name("in builder").conditions.exe, Vec::<String>::new());
+        assert_eq!(by_name("in vpn").conditions.netns, vec!["vpn"]);
+        let on_host = by_name("node to");
+        assert!(
+            on_host.conditions.container.compose.is_empty() && on_host.conditions.context.is_none()
+        );
     }
 
     #[test]
