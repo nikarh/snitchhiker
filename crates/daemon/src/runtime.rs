@@ -57,6 +57,11 @@ const PRUNE_CHUNK: u32 = 10_000;
 pub enum Error {
     #[error("{0}")]
     Io(#[from] std::io::Error),
+    #[error(
+        "NFQUEUE {0} is bound by another program (OpenSnitch's daemon, or another firewall using queues): stop it, \
+         or set `queue` in daemon.toml to queues it doesn't use"
+    )]
+    QueueTaken(u16),
     #[error("eBPF: {0}")]
     Ebpf(#[from] snitchhiker_ebpf::Error),
     #[error("store: {0}")]
@@ -164,6 +169,8 @@ impl Daemon {
         agents.extend(waiting_agents(&store)?);
         // The programs first: from the moment the table is in place, every new flow's owner must be known.
         let attribution = Attribution::load()?;
+        // The queues before the table: a queue another program holds fails the start with nothing put in place.
+        let (queues, writers) = bind_queues(&config)?;
         let table = table_of(&config);
         install(&table)?;
         info!(queues = config.queues, mode = ?config.mode, "table installed");
@@ -173,13 +180,6 @@ impl Daemon {
         store.delete_until_restart()?;
         let (sender, receiver) = sync_channel(EVENT_QUEUE);
         let store = Arc::new(crate::locked::Locked::new(store));
-        let mut queues = Vec::with_capacity(usize::from(config.queues));
-        let mut writers = Vec::with_capacity(usize::from(config.queues));
-        for offset in 0..config.queues {
-            let queue = Queue::bind(config.queue + offset)?;
-            writers.push(queue.verdict_writer()?);
-            queues.push(queue);
-        }
         let policy = Effective::of(&config, &store.lock().policy()?);
         let broker = Broker::new(writers, Duration::from_secs(policy.prompt_timeout_secs));
         let shared = Arc::new(Shared {
@@ -224,7 +224,7 @@ impl Daemon {
                 })?;
         }
         if let Some(number) = shared.config.dns_queue() {
-            let queue = Queue::bind_copying(number, DNS_COPY)?;
+            let queue = Queue::bind_copying(number, DNS_COPY).map_err(queue_error(number))?;
             let shared = Arc::clone(&shared);
             thread::Builder::new()
                 .name("dns".to_owned())
@@ -1090,6 +1090,33 @@ fn own_cgroup() -> Option<snitchhiker_netfilter::nftables::Cgroup> {
         .ino();
     let level = u32::try_from(path.split('/').filter(|part| !part.is_empty()).count()).ok()?;
     Some(snitchhiker_netfilter::nftables::Cgroup { level, id })
+}
+
+/// The deciding queues, bound, with their verdict writers.
+fn bind_queues(
+    config: &Config,
+) -> Result<(Vec<Queue>, Vec<snitchhiker_netfilter::queue::VerdictWriter>), Error> {
+    let mut queues = Vec::with_capacity(usize::from(config.queues));
+    let mut writers = Vec::with_capacity(usize::from(config.queues));
+    for offset in 0..config.queues {
+        let number = config.queue + offset;
+        let queue = Queue::bind(number).map_err(queue_error(number))?;
+        writers.push(queue.verdict_writer()?);
+        queues.push(queue);
+    }
+    Ok((queues, writers))
+}
+
+/// The error of binding NFQUEUE `number`. The kernel refuses a queue another process has bound with EPERM, which
+/// says nothing on its own: the error names the queue and the likely holder.
+fn queue_error(number: u16) -> impl Fn(std::io::Error) -> Error {
+    move |error| {
+        if error.raw_os_error() == Some(nix::libc::EPERM) {
+            Error::QueueTaken(number)
+        } else {
+            Error::Io(error)
+        }
+    }
 }
 
 /// The daemon's table, as its configuration has it.

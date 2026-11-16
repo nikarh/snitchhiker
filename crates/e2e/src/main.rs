@@ -197,6 +197,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::service_starts_ready_and_stops,
     ),
     (
+        "daemon/a-taken-queue-fails-the-start-with-nothing-in-place",
+        daemon::a_taken_queue_fails_the_start_with_nothing_in_place,
+    ),
+    (
         "daemon/the-node-key-is-sealed-and-keeps-its-id",
         daemon::the_node_key_is_sealed_and_keeps_its_id,
     ),

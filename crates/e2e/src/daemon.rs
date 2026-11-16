@@ -1660,3 +1660,41 @@ pub fn the_node_key_is_sealed_and_keeps_its_id() -> Result<(), String> {
     let _ = std::fs::remove_file("/etc/credstore.encrypted/snitchhiker.node-key");
     result
 }
+
+/// A queue another program holds (as OpenSnitch's daemon holds queue 0): the daemon doesn't start, says which queue
+/// and why, and leaves no table behind that would hold connections for queues nobody reads.
+pub fn a_taken_queue_fails_the_start_with_nothing_in_place() -> Result<(), String> {
+    let _ = run("systemctl", &["stop", "snitchhikerd"]);
+    let _ = run("nft", &["delete", "table", "inet", "snitchhiker"]);
+    let holder = snitchhiker_netfilter::queue::Queue::bind(0)
+        .map_err(|e| format!("binding queue 0: {e}"))?;
+    let dir = format!("{DIR}/taken-queue");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let config = format!("{dir}/daemon.toml");
+    std::fs::write(
+        &config,
+        format!(
+            "database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\nfail = \"closed\"\n"
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    let started = Command::new("timeout")
+        .args(["20", "snitchhikerd", "--config", &config])
+        .output()
+        .map_err(|e| e.to_string())?;
+    let tables = run("nft", &["list", "tables"])?;
+    drop(holder);
+    let log = String::from_utf8_lossy(&started.stderr).into_owned();
+    let found = format!("{}\n{log}\n{tables}", started.status);
+    check(
+        !started.status.success() && log.contains("NFQUEUE 0 is bound by another program"),
+        "the daemon didn't fail, or didn't say a queue was taken",
+        &found,
+    )?;
+    check(
+        !tables.contains("inet snitchhiker\n"),
+        "a failed start left the table in place",
+        &found,
+    )
+}
