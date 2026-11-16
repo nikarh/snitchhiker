@@ -1320,6 +1320,8 @@ fn context_of(
 
 /// The netfilter hook of forwarded packets.
 const NF_INET_FORWARD: u8 = 2;
+/// `NF_INET_LOCAL_OUT`: the netfilter hook of packets this host sends.
+const NF_INET_LOCAL_OUT: u8 = 3;
 
 /// The owner of a forwarded packet's flow, as its sender's namespace recorded it (see [`crate::forward`]).
 fn forwarded_owner(
@@ -1382,6 +1384,24 @@ fn owner_of(
     }
 }
 
+/// Packets never decided, sent by `pid` (when a program was found):
+///
+/// - the daemon's own traffic (its remote endpoint: the relay, devices), as marked packets aren't queued: its sockets
+///   come from a library that can't mark them, but the kernel names their process;
+/// - ICMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"): no socket a program
+///   opened sent it (the queue names the owner of any socket backed by a file, raw and ping sockets included), so there
+///   is no program to decide about or ask.
+fn never_decided(pid: Option<u32>, queued: &Packet<'_>, protocol: u8) -> bool {
+    match pid {
+        Some(pid) => pid == std::process::id(),
+        None => {
+            queued.hook == NF_INET_LOCAL_OUT
+                && queued.uid.is_none()
+                && matches!(protocol, packet::IPPROTO_ICMP | packet::IPPROTO_ICMPV6)
+        }
+    }
+}
+
 pub(crate) fn decide(
     shared: &Shared,
     processes: &mut ProcessCache,
@@ -1406,9 +1426,7 @@ pub(crate) fn decide(
         Owner::Tap(tap) => (None, shared.contexts.vm_on_tap(&tap)),
         Owner::Unknown => (None, None),
     };
-    // The daemon's own traffic (its remote endpoint: the relay, devices) is never decided, as marked packets aren't
-    // queued: its sockets come from a library that can't mark them, but the kernel names their process.
-    if owner.is_some_and(|o| o.pid == std::process::id()) {
+    if never_decided(owner.map(|o| o.pid), queued, headers.protocol) {
         return (Some(Verdict::Accept), None);
     }
     let process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));

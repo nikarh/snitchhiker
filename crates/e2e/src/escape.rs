@@ -122,6 +122,35 @@ pub fn icmp_ping_socket() -> Result<(), String> {
     )
 }
 
+/// The kernel's own ICMP (here "port unreachable", about a datagram a rule allowed) isn't a program's: it passes
+/// undecided, so the sender learns the port is closed rather than waiting, and no prompt asks about "no program".
+pub fn the_kernels_own_icmp_passes() -> Result<(), String> {
+    let closed = UdpSocket::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = closed.local_addr().map_err(|e| e.to_string())?.port();
+    drop(closed);
+    let daemon = Running::start("kernel-icmp", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "glob:/usr/bin/python3*",
+        "--port",
+        &port.to_string(),
+        "--protocol",
+        "udp",
+    ])?;
+    thread::sleep(Duration::from_millis(300));
+    let out = python(&format!(
+        "import socket\ns = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\ns.settimeout(2)\ns.connect(('127.0.0.1', {port}))\ns.send(b'hello')\ntry:\n    s.recv(64)\n    print('answered')\nexcept ConnectionRefusedError:\n    print('refused')\nexcept OSError as e:\n    print('no answer', e)"
+    ))?;
+    check(
+        out.contains("refused"),
+        "the kernel's port unreachable didn't reach the sender",
+        &out,
+    )
+}
+
 pub fn raw_sockets_need_privileges() -> Result<(), String> {
     let out = python(
         "import socket\nfor kind in (socket.SOCK_RAW,):\n    try:\n        socket.socket(socket.AF_INET, kind, socket.IPPROTO_TCP)\n        print('opened raw')\n    except OSError as e:\n        print('refused', e.errno)\ntry:\n    socket.socket(socket.AF_PACKET, socket.SOCK_RAW)\n    print('opened packet')\nexcept OSError as e:\n    print('refused', e.errno)",
