@@ -138,8 +138,16 @@ fn lex(query: &str) -> Result<Vec<Token>, QueryError> {
     let mut tokens = Vec::new();
     let mut i = 0;
     while let Some(&c) = bytes.get(i) {
+        // Any whitespace separates, as the word reader stops at any: a no-break space is no word.
+        if let Some(space) = query
+            .get(i..)
+            .and_then(|rest| rest.chars().next())
+            .filter(|c| c.is_whitespace())
+        {
+            i += space.len_utf8();
+            continue;
+        }
         match c {
-            b' ' | b'\t' | b'\n' | b'\r' => i += 1,
             b'(' => {
                 tokens.push(Token {
                     lexeme: Lexeme::Open,
@@ -166,6 +174,10 @@ fn lex(query: &str) -> Result<Vec<Token>, QueryError> {
             _ => {
                 let start = i;
                 let (token, end) = word(query, start)?;
+                if end <= start {
+                    // Never stand still: a character no rule reads ends the query with an error.
+                    return Err(error("unexpected character", start..start + 1));
+                }
                 tokens.push(token);
                 i = end;
             }
@@ -1059,6 +1071,21 @@ fn rule_matches(c: &RuleCond, r: &RuleView<'_>) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn any_whitespace_separates_and_lexing_always_ends() {
+        // A no-break space and other Unicode spaces made the lexer loop for ever.
+        for query in [
+            "exe:curl\u{a0}port:443",
+            "\u{a0}",
+            "\u{2028}x",
+            "a\u{3000}b",
+        ] {
+            let lexed = lex(query).unwrap();
+            assert!(lexed.len() <= 2, "{query:?}: {}", lexed.len());
+        }
+        assert!(parse("exe:curl\u{a0}port:443").is_ok());
+    }
+
     use super::*;
 
     fn cx() -> Context<'static> {
