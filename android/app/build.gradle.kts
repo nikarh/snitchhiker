@@ -62,7 +62,8 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
+            // Signed with the release key when it is given; unsigned otherwise (F-Droid builds and signs its own).
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 

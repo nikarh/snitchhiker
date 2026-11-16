@@ -47,7 +47,7 @@ dir = "android"
 run = "./gradlew spotlessCheck :core:test :app:lintFossDebug :app:lintPlayDebug :app:assembleFossDebug :app:assemblePlayDebug"
 
 [tasks."android:build"]
-description = "The Android app's release APK (signed with ANDROID_KEYSTORE when set, the debug key otherwise)"
+description = "The Android app's release APK (signed with ANDROID_KEYSTORE when set, unsigned otherwise)"
 depends = ["android:core"]
 dir = "android"
 run = "./gradlew :app:assembleFossRelease :app:assemblePlayRelease"

@@ -1,0 +1,49 @@
+# Draft of the app's build metadata for F-Droid's fdroiddata repository (metadata/dev.nikarh.snitchhiker.yml), to
+# submit as a merge request once the source is public and v1.0.0 is tagged. The app's texts, icon, screenshots and
+# changelogs are read from fastlane/ in this repository. Check it with `fdroid lint` and `fdroid build -v -l
+# dev.nikarh.snitchhiker` in an fdroidserver checkout before submitting.
+Categories:
+  - Security
+  - Connectivity
+License: Apache-2.0
+AuthorName: Nikolay Arhipov
+WebSite: https://nikarh.github.io/snitchhiker/
+SourceCode: https://github.com/nikarh/snitchhiker
+IssueTracker: https://github.com/nikarh/snitchhiker/issues
+Changelog: https://github.com/nikarh/snitchhiker/blob/HEAD/CHANGELOG.md
+
+AutoName: Snitchhiker
+
+RepoType: git
+Repo: https://github.com/nikarh/snitchhiker.git
+
+Builds:
+  - versionName: 1.0.0
+    versionCode: 10000
+    commit: v1.0.0
+    subdir: android/app
+    sudo:
+      - apt-get update
+      - apt-get install -y build-essential
+    gradle:
+      - foss
+    srclibs:
+      - rustup@1.28.2
+    build:
+      # The Rust core (crates/mobile), with the toolchain rust-toolchain.toml pins, built for the APK's ABIs.
+      - $$rustup$$/rustup-init.sh -y --profile minimal --default-toolchain none
+      - source $HOME/.cargo/env
+      - cd ../..
+      - rustup show active-toolchain || rustup toolchain install
+      - rustup target add aarch64-linux-android x86_64-linux-android
+      - cargo install --locked cargo-ndk --version 4.1.2
+      - cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --locked --release -p snitchhiker-mobile
+      - find android/app/src/main/jniLibs -name 'lib*.so' ! -name libsnitchhiker_mobile.so -delete
+    ndk: 30.0.16248370
+
+AllowedAPKSigningKeys: ""
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+CurrentVersion: 1.0.0
+CurrentVersionCode: 10000

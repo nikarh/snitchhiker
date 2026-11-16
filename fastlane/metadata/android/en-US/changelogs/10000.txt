@@ -1,0 +1,1 @@
+The first stable release. Answer a node's prompts from the notification, browse its rules by folder, its history and the Explorer, its containers and VMs, alerts, settings and agent proposals, for every node you pair, through your own relay. Woken by UnifiedPush; the app can be locked.

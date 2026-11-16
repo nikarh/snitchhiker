@@ -2299,7 +2299,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 - [ ] **Go public**, once everything above and in M0–M8 is done: scan the whole history for secrets, then the
       `public-github-project` settings that need a public repository (auto-merge, secret scanning, vulnerability
       alerts and reporting, code scanning, the `main` ruleset), and the docs on GitHub Pages.
-- [ ] F-Droid submission (needs the public source).
+- [ ] F-Droid submission (needs the public source). Prepared: the build recipe for fdroiddata
+      (`docs/fdroid/dev.nikarh.snitchhiker.yml`), fastlane texts, icon, screenshots and the 1.0.0 changelog; release
+      builds are unsigned without the release key, as F-Droid builds them.
 - [ ] Release 1.0.0.
 
 ### M10. Later / nice-to-have
