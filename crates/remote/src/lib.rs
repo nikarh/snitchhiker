@@ -216,6 +216,8 @@ fn builder(key: &Key, options: &Options) -> io::Result<iroh::endpoint::Builder> 
 pub struct Listener {
     endpoint: Endpoint,
     runtime: tokio::runtime::Runtime,
+    /// The streams this endpoint opened, until each has ended.
+    opened: std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>,
 }
 
 impl Listener {
@@ -272,7 +274,11 @@ impl Listener {
                 }
             });
         }
-        Ok(Self { endpoint, runtime })
+        Ok(Self {
+            endpoint,
+            runtime,
+            opened: std::sync::Mutex::default(),
+        })
     }
 
     /// The node's id.
@@ -303,7 +309,7 @@ impl Listener {
     pub fn open(&self, peer: &NodeAddress, alpn: &[u8]) -> io::Result<UnixStream> {
         let addr = peer.endpoint_addr()?;
         let endpoint = self.endpoint.clone();
-        self.runtime.block_on(async move {
+        let (stream, task) = self.runtime.block_on(async move {
             let connection = tokio::time::timeout(
                 std::time::Duration::from_secs(20),
                 endpoint.connect(addr, alpn),
@@ -313,12 +319,38 @@ impl Listener {
             .map_err(other)?;
             let (send, receive) = connection.open_bi().await.map_err(other)?;
             let (near, far) = UnixStream::pair()?;
-            tokio::spawn(async move {
+            let task = tokio::spawn(async move {
                 let _ = bridge(send, receive, near).await;
                 connection.close(0_u32.into(), b"done");
             });
-            Ok(far)
-        })
+            Ok::<_, io::Error>((far, task))
+        })?;
+        let mut opened = self
+            .opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        opened.retain(|task| !task.is_finished());
+        opened.push(task);
+        Ok(stream)
+    }
+
+    /// Waits, up to `wait`, for the streams this endpoint opened to end and their last bytes to reach the peer: what
+    /// was written to one just before stopping (a node's last word to its push gateway) isn't cut off.
+    pub fn finish_opened(&self, wait: std::time::Duration) {
+        let tasks: Vec<_> = self
+            .opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .drain(..)
+            .collect();
+        self.runtime.block_on(async move {
+            let _ = tokio::time::timeout(wait, async move {
+                for task in tasks {
+                    let _ = task.await;
+                }
+            })
+            .await;
+        });
     }
 }
 

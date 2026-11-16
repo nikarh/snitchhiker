@@ -1,0 +1,28 @@
+# Snitchhiker's remote access (snitchhiker-remote): how paired devices (phones, the desktop app on other machines)
+# reach this node. Change it, then `systemctl restart snitchhiker-remote`. Who may pair, and what devices may do, is
+# the daemon's: `snitchhiker pair`, `snitchhiker devices`.
+#
+# Every setting is shown at its default.
+
+# The relays (your own snitchhiker-relay) the node keeps a connection to, so devices reach it behind NAT. None: direct
+# connections only.
+#relays = ["https://relay.example.org/"]
+
+# The UDP port of the endpoint (0: any free port).
+#port = 0
+
+# Announce the node on the local network (mDNS), so devices there find it without a relay, and pairing codes work
+# there.
+#lan_discovery = true
+
+# The push gateway's endpoint id (a snitchhiker-relay with [push], reached through relays): it wakes the devices for
+# prompts, and tells them when the node has been gone for offline_after_secs.
+#push_gateway = ""
+#offline_after_secs = 120
+
+# The node's key: made the first time, readable by the service's user only. Sealed with `snitchhiker-remote
+# seal-key`, systemd gives it to the service instead and the file is gone.
+#key = "/var/lib/snitchhiker-remote/node.key"
+
+# The daemon's socket for its remote endpoint.
+#socket = "/run/snitchhiker/remote.sock"

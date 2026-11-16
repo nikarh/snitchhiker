@@ -8077,6 +8077,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "snitchhiker-bridge"
+version = "0.1.0"
+dependencies = [
+ "nix",
+ "pico-args",
+ "serde",
+ "snitchhiker-client",
+ "snitchhiker-proto",
+ "snitchhiker-remote",
+ "thiserror 2.0.21",
+ "toml 1.2.1+spec-1.1.0",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "snitchhiker-client"
 version = "0.1.0"
 dependencies = [

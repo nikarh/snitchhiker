@@ -1,6 +1,6 @@
 ---
 title: Configuration
-description: Every setting of /etc/snitchhiker/daemon.toml, with its default and what it does.
+description: Every setting of /etc/snitchhiker/daemon.toml and remote.toml, with its default and what it does.
 sidebar:
   order: 1
 ---
@@ -8,6 +8,7 @@ sidebar:
 import { Code } from '@astrojs/starlight/components';
 import defaults from '../../../generated/config-defaults.toml?raw';
 import packaged from '../../../../../dist/daemon.toml?raw';
+import remote from '../../../../../dist/remote/remote.toml?raw';
 
 
 The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `snitchhikerd --config <path>`). Only root can change it. After a change, `sudo systemctl restart snitchhikerd`.
@@ -186,3 +187,37 @@ The largest [blocklist](/guides/blocklists/) fetched, in bytes: a larger one is 
 ### `retention_days`
 
 How long connection history is kept. Default `30`.
+
+## remote.toml
+
+`/etc/snitchhiker/remote.toml` belongs to [remote access](/guides/remote/), the `snitchhiker-remote` service: how paired devices reach the node. Only root can change it. After a change, `sudo systemctl restart snitchhiker-remote`. Who may pair and what devices may do is the daemon's, in `daemon.toml` and the paired devices. Every key is optional, and unknown keys are errors.
+
+<Code code={remote} lang="toml" title="/etc/snitchhiker/remote.toml" />
+
+### `relays`
+
+The relays the node keeps a connection to, so devices reach it behind NAT: the URLs of your own [`snitchhiker-relay`](/install/relay/) deployments. Default none: devices connect directly, which works on the same network or when the node's port is reachable.
+
+### `port`
+
+The UDP port of the endpoint. Default `0`: any free port (fine with a relay). Set one to open it in a firewall or forward it from a router for direct connections from outside. The service has no privileges: a port below 1024 can't be bound.
+
+### `lan_discovery`
+
+Announce the node on the local network (mDNS), so devices there find it without a relay, and [pairing codes](/guides/remote/#pairing-by-code) work there. Default `true`.
+
+### `push_gateway`
+
+The id of a push gateway: a [relay](/install/relay/#push-notifications) with its push service on, which `snitchhiker-relay push-id` prints there. It is reached through [`relays`](#relays). The gateway wakes your devices when a prompt waits for them and they aren't connected, and tells them when the node goes offline ([Phones and remote nodes](/guides/remote/#while-the-phone-sleeps)). Default empty: no gateway; devices learn of prompts only while connected.
+
+### `offline_after_secs`
+
+How long the node may be gone from its push gateway before your devices are told it is offline. Default `120`: a restart or an upgrade doesn't wake anyone.
+
+### `key`
+
+The node's key, made the first time, readable by the service's user only. Default `/var/lib/snitchhiker-remote/node.key`. Once [sealed](/guides/remote/#where-the-keys-are), systemd gives the key to the service and this file is gone.
+
+### `socket`
+
+The daemon's socket for its remote endpoint. Default `/run/snitchhiker/remote.sock`.
