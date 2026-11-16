@@ -15,6 +15,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .boxed(".snitchhiker.v1.ConnectionEvent.container")
         .boxed(".snitchhiker.v1.Prompt.container")
         .boxed(".snitchhiker.v1.LiveConnection.container")
+        // Only a merge finding has merged conditions: boxed, so a report of thousands of findings stays small.
+        .boxed(".snitchhiker.v1.LintFinding.merged")
         .compile_fds(descriptors)?;
     Ok(())
 }

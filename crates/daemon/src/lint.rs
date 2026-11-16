@@ -176,9 +176,9 @@ pub fn report(
                     .map_or_else(String::new, |s| s.to_string()),
                 description,
                 merged: finding.merged.map(|conditions| {
-                    snitchhiker_proto::convert::conditions(
+                    Box::new(snitchhiker_proto::convert::conditions(
                         &snitchhiker_core::spec::Conditions::from_conditions(&conditions),
-                    )
+                    ))
                 }),
             }
         })

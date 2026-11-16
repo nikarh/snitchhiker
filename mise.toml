@@ -69,8 +69,16 @@ description = "Run the host-safe tests (unit, property): nothing privileged"
 run = "cargo test --locked"
 
 [tasks.perf]
-description = "The performance checks too heavy for every test run (a million events through the Explorer), in release"
-run = "cargo test --locked --release -p snitchhiker-daemon -- --ignored --nocapture"
+description = "The performance budgets (plan §11.1), in release: deciding, ingestion and every kind of query on a million events; fails when one is over"
+run = [
+  "cargo test --locked --release -p snitchhiker-daemon -- --ignored --nocapture",
+  "cargo bench --locked -p snitchhiker-daemon --bench budgets",
+]
+
+[tasks."perf:full"]
+description = "The budgets on ten million events (about 1.5 GB in TMPDIR, a few minutes)"
+env = { SNITCHHIKER_BENCH_EVENTS = "10000000" }
+run = "cargo bench --locked -p snitchhiker-daemon --bench budgets"
 
 [tasks.deny]
 description = "Audit dependencies: advisories, licenses, duplicates, sources"

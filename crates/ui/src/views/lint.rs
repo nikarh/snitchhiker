@@ -92,7 +92,7 @@ impl Lint {
                 .label("Merge")
                 .on_click(move |_, _, _| {
                     let _ = requests.send(Request::UpdateRule(v1::Rule {
-                        conditions: Some(merged.clone()),
+                        conditions: Some(*merged.clone()),
                         ..other.clone()
                     }));
                     let _ = requests.send(Request::DeleteRule { id: gone });

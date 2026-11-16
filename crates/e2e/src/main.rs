@@ -158,6 +158,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::blocklists_block_what_is_on_them,
     ),
     (
+        "daemon/memory-stays-within-budget",
+        daemon::memory_stays_within_budget,
+    ),
+    (
         "daemon/monitor-records-but-never-blocks",
         daemon::monitor_records_but_never_blocks,
     ),

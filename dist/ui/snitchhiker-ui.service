@@ -10,6 +10,9 @@ After=graphical-session.target
 ExecStart=/usr/bin/snitchhiker-ui
 Restart=on-failure
 RestartSec=5s
+# A backstop against a leak, far above what the app uses.
+MemoryHigh=1G
+MemoryMax=2G
 
 [Install]
 WantedBy=graphical-session.target

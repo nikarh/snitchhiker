@@ -63,6 +63,25 @@ jobs:
       # ktlint, Android Lint, the JVM tests and a debug build.
       - run: mise run android:check
 
+  perf:
+    # The performance budgets (plan §11.1): fails when deciding, ingestion or a query is over. On main, to save
+    # runner minutes; `mise run perf` locally before changing the store or the engine.
+    if: github.event_name != 'pull_request'
+    name: performance budgets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: perf
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install: false
+      - run: mise run perf
+
   deny:
     name: dependency audit
     runs-on: ubuntu-24.04

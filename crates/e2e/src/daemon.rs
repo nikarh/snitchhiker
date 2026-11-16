@@ -20,6 +20,15 @@ pub struct Running {
 
 impl Running {
     pub fn start(name: &str, settings: &str) -> Result<Self, String> {
+        Self::start_with(name, settings, |_| Ok(()))
+    }
+
+    /// [`Running::start`], with `prepare` given the daemon's directory first (to put a database there).
+    pub fn start_with(
+        name: &str,
+        settings: &str,
+        prepare: impl FnOnce(&str) -> Result<(), String>,
+    ) -> Result<Self, String> {
         // The packaged service must not run next to a test daemon (they would share queues and the table).
         let _ = run("systemctl", &["stop", "snitchhikerd"]);
         let _ = run("systemctl", &["reset-failed", "snitchhikerd"]);
@@ -40,9 +49,12 @@ impl Running {
             ),
         )
         .map_err(|e| e.to_string())?;
+        prepare(&dir)?;
         let _ = std::fs::remove_file(PIDFILE);
         let child = Command::new("snitchhikerd")
             .args(["--config", &config])
+            // As the service unit runs it.
+            .env("MALLOC_ARENA_MAX", "2")
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(format!("{dir}/daemon.log")).map_err(|e| e.to_string())?)
             .spawn()
@@ -65,6 +77,31 @@ impl Running {
     }
 
     /// The command line, which talks to the running daemon (there is one at a time).
+    /// The daemon's own resident memory (anonymous: its heap and stacks, not the pages of its executable and
+    /// libraries, which the page cache shares and drops under pressure), in kB.
+    pub fn rss_kb(&self) -> Result<u64, String> {
+        let pid = self.child.as_ref().ok_or("not running")?.id();
+        let status =
+            std::fs::read_to_string(format!("/proc/{pid}/status")).map_err(|e| e.to_string())?;
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix("RssAnon:"))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+            .ok_or_else(|| "no RssAnon".to_owned())
+    }
+
+    /// The memory lines of the daemon's `/proc/<pid>/status`.
+    pub fn status_lines(&self) -> Result<String, String> {
+        let pid = self.child.as_ref().ok_or("not running")?.id();
+        let status =
+            std::fs::read_to_string(format!("/proc/{pid}/status")).map_err(|e| e.to_string())?;
+        Ok(status
+            .lines()
+            .filter(|l| l.starts_with("Rss") || l.starts_with("VmData") || l.starts_with("Threads"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    }
+
     pub fn cli(&self, args: &[&str]) -> Result<String, String> {
         debug_assert!(self.child.is_some(), "the daemon isn't running");
         run("snitchhiker", args)
@@ -1057,6 +1094,125 @@ fn webhook_server() -> Result<(u16, Hooked), String> {
         });
     }
     Ok((hook_port, received))
+}
+
+/// With 10 000 rules and a million events in its history, the daemon's own memory stays under 50 MB (plan §11.1)
+/// while it decides connections and answers the history, the Explorer and a rules check.
+pub fn memory_stays_within_budget() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let daemon = Running::start_with(
+        "memory",
+        "mode = \"enforce\"\nno_match = \"allow\"\n",
+        busy_history,
+    )?;
+    let mut steps = vec![("started", daemon.rss_kb()?)];
+    for _ in 0..50 {
+        mallory_connects(port)?;
+    }
+    steps.push(("50 connections", daemon.rss_kb()?));
+    let commands: [&[&str]; 5] = [
+        &["events", "--limit", "500"],
+        &["events", "--query", "action:deny", "--limit", "200"],
+        &["explore", "--by", "host", "--hours", "720"],
+        &["explore", "--by", "program", "--hours", "168", "--bytes"],
+        &["rules", "lint"],
+    ];
+    for command in commands {
+        daemon.cli(command)?;
+        steps.push((
+            command.first().copied().unwrap_or_default(),
+            daemon.rss_kb()?,
+        ));
+    }
+    let after = steps.iter().map(|(_, kb)| *kb).max().unwrap_or(0);
+    let status = daemon.status_lines()?;
+    let found = format!("RSS (kB) after each step: {steps:?}\n{status}");
+    std::fs::write(format!("{DIR}/memory.txt"), &found).map_err(|e| e.to_string())?;
+    check(after < 50 * 1024, "the daemon is over 50 MB", &found)
+}
+
+/// A database in `dir` with 10 000 rules and a month of a million events: 300 programs, each to its own hosts.
+fn busy_history(dir: &str) -> Result<(), String> {
+    use snitchhiker_core::destination::HostPattern;
+    use snitchhiker_core::pattern::PatternSource;
+    use snitchhiker_core::rule::{Action, Condition, Expiry, Rule, Tier};
+    use snitchhiker_daemon::store::{Event, Source, Store};
+    use std::sync::Arc;
+    let error = |e: snitchhiker_daemon::store::Error| e.to_string();
+    let mut store = Store::open(std::path::Path::new(&format!("{dir}/state.db"))).map_err(error)?;
+    for i in 0..10_000_u64 {
+        let rule = Rule {
+            id: 0,
+            folder: None,
+            name: format!("rule {i}"),
+            enabled: true,
+            action: if i % 7 == 0 {
+                Action::Deny
+            } else {
+                Action::Allow
+            },
+            tier: Tier::Normal,
+            expiry: Expiry::Never,
+            log: true,
+            notes: String::new(),
+            conditions: vec![
+                Condition::Exe(vec![PatternSource::Exact(format!(
+                    "/usr/bin/app{}",
+                    i % 200
+                ))]),
+                Condition::Host(vec![
+                    HostPattern::try_from(format!("*.service{}.example.com", i % 500))
+                        .map_err(|e| e.to_string())?,
+                ]),
+                Condition::Port(vec![(443, 443)]),
+            ],
+        };
+        store.insert_rule(&rule, 0).map_err(error)?;
+    }
+    let now = u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_millis(),
+    )
+    .unwrap_or(0);
+    let month = 30 * 86_400_000;
+    let count = 1_000_000_u64;
+    let mut batch = Vec::with_capacity(8192);
+    let mut recorded = Vec::new();
+    for i in 0..count {
+        let mix = i.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 17;
+        let program = (mix % 1000) * (mix % 1000) * 300 / 1_000_000;
+        batch.push(Event {
+            time_ms: now - month + i * month / count,
+            exe: Arc::from(format!("/usr/bin/program{program}").as_str()),
+            host: (mix % 100 != 0).then(|| {
+                Arc::from(format!("host{}.example.net", program * 10 + (mix >> 20) % 10).as_str())
+            }),
+            uid: 1000,
+            pid: u32::try_from(mix % 30_000).unwrap_or(0),
+            protocol: 6,
+            address: std::net::IpAddr::V4(std::net::Ipv4Addr::from(
+                u32::try_from(mix & 0x00ff_ffff).unwrap_or(0) | 0x0100_0000,
+            )),
+            port: 443,
+            context: 0,
+            action: if mix % 9 == 0 {
+                Action::Deny
+            } else {
+                Action::Allow
+            },
+            source: Source::Rule,
+            rule: Some(program + 1),
+            cookie: None,
+            container: None,
+        });
+        if batch.len() == batch.capacity() {
+            store.record(&batch, &mut recorded).map_err(error)?;
+            batch.clear();
+        }
+    }
+    store.record(&batch, &mut recorded).map_err(error)
 }
 
 /// A blocklist read from a file blocks what is on it through a rule naming it; a version that isn't a list is refused

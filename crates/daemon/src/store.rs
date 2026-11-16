@@ -259,6 +259,55 @@ CREATE TABLE envelopes (
     envelope TEXT NOT NULL
 );
 ",
+    r"
+INSERT INTO rollups_by
+SELECT dimension + 100, hour - hour % 24, key, action, sum(count), sum(bytes_out), sum(bytes_in)
+FROM rollups_by WHERE dimension < 100 GROUP BY 1, 2, 3, 4;
+INSERT INTO rollups_by
+SELECT dimension + 200, hour - hour % 168, key, action, sum(count), sum(bytes_out), sum(bytes_in)
+FROM rollups_by WHERE dimension < 100 GROUP BY 1, 2, 3, 4;
+",
+    // The Explorer within one program, host, port or user: its rollup rows, by hour, without reading the others'.
+    r"
+CREATE INDEX rollups_exe ON rollups(exe, hour);
+CREATE INDEX rollups_host ON rollups(host, hour);
+CREATE INDEX rollups_port ON rollups(port, hour);
+CREATE INDEX rollups_uid ON rollups(uid, hour);
+",
+    // Running totals of the last 24 hours, 7 days and 30 days (`window`: 24, 168, 720) for each program, host, port,
+    // user and container, ending at the newest hour written (`totals_hour`): the busiest of a window is an index walk
+    // (plan §11.4). `count` counts connections, `blocked` those not allowed, `bytes` both directions.
+    r"
+CREATE TABLE totals_hour (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    hour INTEGER NOT NULL
+);
+CREATE TABLE totals (
+    window INTEGER NOT NULL,
+    dimension INTEGER NOT NULL,
+    key INTEGER NOT NULL,
+    count INTEGER NOT NULL,
+    blocked INTEGER NOT NULL,
+    bytes_out INTEGER NOT NULL,
+    bytes_in INTEGER NOT NULL,
+    bytes INTEGER NOT NULL,
+    PRIMARY KEY (window, dimension, key)
+) WITHOUT ROWID;
+CREATE INDEX totals_count ON totals(window, dimension, count);
+CREATE INDEX totals_bytes ON totals(window, dimension, bytes);
+INSERT INTO totals_hour SELECT 1, max(hour) FROM rollups_by WHERE dimension < 100 HAVING max(hour) IS NOT NULL;
+INSERT INTO totals
+SELECT w.window, dimension, key, sum(count), sum(CASE WHEN action = 1 THEN 0 ELSE count END),
+       sum(bytes_out), sum(bytes_in), sum(bytes_out + bytes_in)
+FROM rollups_by r, (SELECT 24 AS window UNION ALL SELECT 168 UNION ALL SELECT 720) w, totals_hour t
+WHERE r.dimension < 100 AND r.hour >= t.hour - w.window
+GROUP BY w.window, dimension, key;
+",
+    // Indexes no statement reads, which every event paid for: the history's pages are by sequence number and time.
+    r"
+DROP INDEX events_exe;
+DROP INDEX events_host;
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`, the busiest
@@ -608,18 +657,85 @@ pub const STATEMENTS: &[(&str, &str)] = &[
         "rollups_by.prune",
         "DELETE FROM rollups_by WHERE dimension = ?1 AND hour < ?2",
     ),
+    ("totals_hour.get", "SELECT hour FROM totals_hour WHERE id = 1"),
+    (
+        "totals_hour.set",
+        "INSERT INTO totals_hour (id, hour) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET hour = excluded.hour",
+    ),
+    (
+        "totals.add",
+        "INSERT INTO totals (window, dimension, key, count, blocked, bytes_out, bytes_in, bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?6 + ?7)
+         ON CONFLICT (window, dimension, key) DO UPDATE SET
+             count = count + excluded.count,
+             blocked = blocked + excluded.blocked,
+             bytes_out = bytes_out + excluded.bytes_out,
+             bytes_in = bytes_in + excluded.bytes_in,
+             bytes = bytes + excluded.bytes",
+    ),
+    // An hour leaving a window: its rollups taken from the window's totals.
+    (
+        "totals.subtract",
+        "INSERT INTO totals (window, dimension, key, count, blocked, bytes_out, bytes_in, bytes)
+         SELECT ?1, dimension, key, -sum(count), -sum(CASE WHEN action = 1 THEN 0 ELSE count END),
+                -sum(bytes_out), -sum(bytes_in), -sum(bytes_out + bytes_in)
+         FROM rollups_by WHERE dimension = ?2 AND hour = ?3 GROUP BY key
+         ON CONFLICT (window, dimension, key) DO UPDATE SET
+             count = count + excluded.count,
+             blocked = blocked + excluded.blocked,
+             bytes_out = bytes_out + excluded.bytes_out,
+             bytes_in = bytes_in + excluded.bytes_in,
+             bytes = bytes + excluded.bytes",
+    ),
+    (
+        "totals.drop_empty",
+        "DELETE FROM totals WHERE window = ?1 AND dimension = ?2 AND count <= 0 AND bytes <= 0",
+    ),
+    ("totals.clear", "DELETE FROM totals WHERE window = ?1"),
+    (
+        "totals.top",
+        "SELECT key, count - blocked, blocked, bytes_out, bytes_in FROM totals
+         WHERE window = ?1 AND dimension = ?2 ORDER BY count DESC LIMIT ?3",
+    ),
+    (
+        "totals.top_bytes",
+        "SELECT key, count - blocked, blocked, bytes_out, bytes_in FROM totals
+         WHERE window = ?1 AND dimension = ?2 ORDER BY bytes DESC LIMIT ?3",
+    ),
     (
         "explore.by",
         "SELECT key, sum(CASE WHEN action = 1 THEN count ELSE 0 END),
                 sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
-         FROM rollups_by WHERE dimension = ?4 AND hour >= ?1 AND hour < ?2
+         FROM (
+             SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 AND hour >= ?1 AND hour < ?5
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 100 AND hour >= ?5 AND hour < ?7
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 200 AND hour >= ?7 AND hour < ?8
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 100 AND hour >= ?8 AND hour < ?6
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 AND hour >= ?6 AND hour < ?2
+         )
          GROUP BY key ORDER BY sum(count) DESC LIMIT ?3",
     ),
     (
         "explore.by.bytes",
         "SELECT key, sum(CASE WHEN action = 1 THEN count ELSE 0 END),
                 sum(CASE WHEN action = 1 THEN 0 ELSE count END), sum(bytes_out), sum(bytes_in)
-         FROM rollups_by WHERE dimension = ?4 AND hour >= ?1 AND hour < ?2
+         FROM (
+             SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 AND hour >= ?1 AND hour < ?5
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 100 AND hour >= ?5 AND hour < ?7
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 200 AND hour >= ?7 AND hour < ?8
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 + 100 AND hour >= ?8 AND hour < ?6
+             UNION ALL SELECT key, action, count, bytes_out, bytes_in FROM rollups_by
+                 WHERE dimension = ?4 AND hour >= ?6 AND hour < ?2
+         )
          GROUP BY key ORDER BY sum(bytes_out) + sum(bytes_in) DESC LIMIT ?3",
     ),
     // A socket's bytes go to its newest event: an unconnected UDP socket may have several, one per destination.
@@ -1441,6 +1557,8 @@ pub struct Device {
 pub struct Store {
     connection: Connection,
     strings: HashMap<(StringKind, std::sync::Arc<str>), i64>,
+    /// The newest hour written: where the running totals' windows end.
+    totals_hour: Option<u64>,
 }
 
 fn sql(name: &'static str) -> Result<&'static str, Error> {
@@ -1466,6 +1584,9 @@ impl Store {
         connection.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA wal_autocheckpoint = 16384;
+             PRAGMA cache_size = -8192;
+             PRAGMA journal_size_limit = 67108864;
              PRAGMA foreign_keys = ON;
              PRAGMA temp_store = MEMORY;
              PRAGMA busy_timeout = 5000;",
@@ -1483,9 +1604,14 @@ impl Store {
             )?;
             transaction.commit()?;
         }
+        let totals_hour: Option<i64> = connection
+            .prepare_cached(sql("totals_hour.get")?)?
+            .query_row([], |row| row.get(0))
+            .optional()?;
         Ok(Self {
             connection,
             strings: HashMap::new(),
+            totals_hour: totals_hour.map(id_of),
         })
     }
 
@@ -1635,6 +1761,9 @@ impl Store {
     pub fn record(&mut self, events: &[Event], recorded: &mut Vec<Recorded>) -> Result<(), Error> {
         recorded.clear();
         let mut hits: HashMap<RuleId, u64> = HashMap::new();
+        // The batch's rollups, summed before they are written: a burst of the same connection is one row.
+        let mut rollups: HashMap<RollupKey, i64> = HashMap::new();
+        let mut by: HashMap<(i64, u64, i64, u8), i64> = HashMap::new();
         let transaction = self.connection.unchecked_transaction()?;
         for event in events {
             let (exe, new_exe) = intern(
@@ -1684,34 +1813,30 @@ impl Store {
                     container,
                 ])?;
             let seq = self.connection.last_insert_rowid();
-            self.connection
-                .prepare_cached(sql("rollups.add")?)?
-                .execute(params![
-                    db_id(event.time_ms / HOUR_MS),
+            let hour = event.time_ms / HOUR_MS;
+            let action = action_code(event.action);
+            *rollups
+                .entry((
+                    hour,
                     exe,
                     host.unwrap_or(0),
                     event.port,
                     event.protocol,
                     event.uid,
-                    action_code(event.action),
-                    1,
-                    0,
-                    0,
+                    action,
                     container.unwrap_or(0),
-                ])?;
-            add_by(
-                &self.connection,
-                event.time_ms / HOUR_MS,
-                [
-                    exe,
-                    host.unwrap_or(0),
-                    i64::from(event.port),
-                    i64::from(event.uid),
-                    container.unwrap_or(0),
-                ],
-                action_code(event.action),
-                (1, 0, 0),
-            )?;
+                ))
+                .or_insert(0) += 1;
+            let keys = [
+                exe,
+                host.unwrap_or(0),
+                i64::from(event.port),
+                i64::from(event.uid),
+                container.unwrap_or(0),
+            ];
+            for (dimension, start, key) in by_rows(hour, keys) {
+                *by.entry((dimension, start, key, action)).or_insert(0) += 1;
+            }
             recorded.push(Recorded {
                 seq,
                 exe: u32::try_from(exe).unwrap_or(0),
@@ -1724,6 +1849,7 @@ impl Store {
                 *hit = (*hit).max(event.time_ms);
             }
         }
+        write_rollups(&self.connection, &mut self.totals_hour, rollups, by)?;
         // Once per rule and batch, not per event.
         let mut hit = self.connection.prepare_cached(sql("rules.hit")?)?;
         for (rule, time_ms) in hits {
@@ -2408,6 +2534,18 @@ impl Store {
                 update.execute(params![seq, sent, read])?;
                 let [hour, exe, host, port, protocol, uid, action, container] = key;
                 let (out, inn) = ((sent - old_out).max(0), (read - old_in).max(0));
+                let hour_number = u64::try_from(hour).unwrap_or(0);
+                let window_end = self.totals_hour.unwrap_or(0);
+                let mut totals = self.connection.prepare_cached(sql("totals.add")?)?;
+                for window in TOTALS_WINDOWS
+                    .into_iter()
+                    .filter(|w| hour_number + w >= window_end)
+                {
+                    for (dimension, key) in (1..).zip([exe, host, port, uid, container]) {
+                        totals.execute(params![db_id(window), dimension, key, 0, 0, out, inn])?;
+                    }
+                }
+                drop(totals);
                 add_by(
                     &self.connection,
                     u64::try_from(hour).unwrap_or(0),
@@ -2444,6 +2582,44 @@ impl Store {
         filter: Option<(Dimension, i64)>,
         (limit, by_bytes): (u32, bool),
     ) -> Result<Vec<Explored>, Error> {
+        // The last 24 hours, 7 days or 30 days up to the newest hour written: the running totals.
+        if filter.is_none()
+            && let Some(end) = self.totals_hour
+            && to_hour > end
+            && let Some(window) = TOTALS_WINDOWS
+                .into_iter()
+                .find(|w| end.checked_sub(*w) == Some(from_hour))
+        {
+            let name = if by_bytes {
+                "totals.top_bytes"
+            } else {
+                "totals.top"
+            };
+            let mut statement = self.connection.prepare_cached(sql(name)?)?;
+            let rows =
+                statement.query_map(params![db_id(window), group.number(), limit], |row| {
+                    Ok(Explored {
+                        key: row.get(0)?,
+                        allowed: id_of(row.get(1)?),
+                        blocked: id_of(row.get(2)?),
+                        bytes_out: id_of(row.get(3)?),
+                        bytes_in: id_of(row.get(4)?),
+                    })
+                })?;
+            return Ok(rows.collect::<Result<_, _>>()?);
+        }
+        self.explore_buckets(from_hour, to_hour, group, filter, (limit, by_bytes))
+    }
+
+    /// [`Store::explore`] from the hourly, daily and weekly rollups.
+    fn explore_buckets(
+        &self,
+        from_hour: u64,
+        to_hour: u64,
+        group: Dimension,
+        filter: Option<(Dimension, i64)>,
+        (limit, by_bytes): (u32, bool),
+    ) -> Result<Vec<Explored>, Error> {
         let name = match (group, filter.map(|(d, _)| d)) {
             (_, None) => "explore.by".to_owned(),
             (g, Some(f)) if g != f => format!("explore.{}.{}", g.column(), f.column()),
@@ -2471,7 +2647,13 @@ impl Store {
         };
         let (from, to) = (db_id(from_hour), db_id(to_hour));
         let rows = match filter {
-            None => statement.query_map(params![from, to, limit, group.number()], row)?,
+            None => {
+                let [d1, d2, w1, w2] = cover(from_hour, to_hour).map(db_id);
+                statement.query_map(
+                    params![from, to, limit, group.number(), d1, d2, w1, w2],
+                    row,
+                )?
+            }
             Some((_, value)) => statement.query_map(params![from, to, limit, value], row)?,
         };
         Ok(rows.collect::<Result<_, _>>()?)
@@ -2486,12 +2668,38 @@ impl Store {
             .optional()?)
     }
 
-    /// Deletes the rollups of the hours before `before_ms`.
+    /// Deletes the rollups of the weeks that ended by `before_ms` (with their days and hours): rollups go a whole
+    /// week at a time, so every hourly, daily and weekly bucket the Explorer reads is either whole or gone, and any
+    /// range adds up the same however it is split. They are kept up to a week longer than the events.
     pub fn prune_rollups(&mut self, before_ms: u64) -> Result<usize, Error> {
-        let hour = db_id(before_ms / HOUR_MS);
+        let cut = before_ms / HOUR_MS;
+        let cut = cut - cut % WEEK_HOURS;
+        // Hours still in a window go from its totals too, so a window never counts what the history no longer has.
+        if let Some(end) = self.totals_hour {
+            let mut subtract = self.connection.prepare_cached(sql("totals.subtract")?)?;
+            let mut drop_empty = self.connection.prepare_cached(sql("totals.drop_empty")?)?;
+            for window in TOTALS_WINDOWS {
+                let first = end.saturating_sub(window);
+                let last = cut.min(end + 1);
+                if first >= last {
+                    continue;
+                }
+                for hour in first..last {
+                    for dimension in 1..=5 {
+                        subtract.execute(params![db_id(window), dimension, db_id(hour)])?;
+                    }
+                }
+                for dimension in 1..=5 {
+                    drop_empty.execute(params![db_id(window), dimension])?;
+                }
+            }
+        }
+        let hour = db_id(cut);
         let mut by = self.connection.prepare_cached(sql("rollups_by.prune")?)?;
         for dimension in 1..=5 {
             by.execute(params![dimension, hour])?;
+            by.execute(params![dimension + DAYS, hour])?;
+            by.execute(params![dimension + WEEKS, hour])?;
         }
         let mut statement = self.connection.prepare_cached(sql("rollups.prune")?)?;
         Ok(statement.execute(params![hour])?)
@@ -2520,10 +2728,10 @@ fn add_by(
     counts: (i64, i64, i64),
 ) -> Result<(), Error> {
     let mut statement = connection.prepare_cached(sql("rollups_by.add")?)?;
-    for (dimension, key) in (1..).zip(keys) {
+    for (dimension, start, key) in by_rows(hour, keys) {
         statement.execute(params![
             dimension,
-            db_id(hour),
+            db_id(start),
             key,
             action,
             counts.0,
@@ -2532,6 +2740,146 @@ fn add_by(
         ])?;
     }
     Ok(())
+}
+
+/// The `rollups_by` rows an hour's connection adds to: each dimension's key, in its hour, its day and its week (the
+/// Explorer reads the coarsest that fit a range).
+fn by_rows(hour: u64, keys: [i64; 5]) -> impl Iterator<Item = (i64, u64, i64)> {
+    let buckets = [
+        (0, hour),
+        (DAYS, hour - hour % 24),
+        (WEEKS, hour - hour % WEEK_HOURS),
+    ];
+    (1..).zip(keys).flat_map(move |(dimension, key)| {
+        buckets
+            .into_iter()
+            .map(move |(level, start)| (dimension + level, start, key))
+    })
+}
+
+/// `rollups_by` keeps each dimension by hour (its number), by day (its number plus this, at the day's first hour)
+/// and by week (plus [`WEEKS`], at the week's first hour; weeks of 168 hours from the epoch).
+const DAYS: i64 = 100;
+/// Moves the running totals' windows to end at `hour` (if it is newer): the hours leaving each window are taken
+/// from it, a window left entirely is emptied.
+fn advance_totals(
+    connection: &Connection,
+    totals_hour: &mut Option<u64>,
+    hour: u64,
+) -> Result<(), Error> {
+    let Some(from) = *totals_hour else {
+        *totals_hour = Some(hour);
+        connection
+            .prepare_cached(sql("totals_hour.set")?)?
+            .execute(params![db_id(hour)])?;
+        return Ok(());
+    };
+    if hour <= from {
+        return Ok(());
+    }
+    let mut subtract = connection.prepare_cached(sql("totals.subtract")?)?;
+    let mut drop_empty = connection.prepare_cached(sql("totals.drop_empty")?)?;
+    for window in TOTALS_WINDOWS {
+        if hour - from > window {
+            connection
+                .prepare_cached(sql("totals.clear")?)?
+                .execute(params![db_id(window)])?;
+            continue;
+        }
+        // The window held [from - window, from]; it holds [hour - window, hour].
+        for leaving in from.saturating_sub(window)..hour.saturating_sub(window) {
+            for dimension in 1..=5 {
+                subtract.execute(params![db_id(window), dimension, db_id(leaving)])?;
+            }
+        }
+        for dimension in 1..=5 {
+            drop_empty.execute(params![db_id(window), dimension])?;
+        }
+    }
+    drop((subtract, drop_empty));
+    *totals_hour = Some(hour);
+    connection
+        .prepare_cached(sql("totals_hour.set")?)?
+        .execute(params![db_id(hour)])?;
+    Ok(())
+}
+
+/// A batch's rollups: `rollups` in their hours, `by` in each dimension's hours, days and weeks, and the running
+/// totals of the windows their hours are in (moved to end at the batch's newest hour first).
+fn write_rollups(
+    connection: &Connection,
+    totals_hour: &mut Option<u64>,
+    rollups: HashMap<RollupKey, i64>,
+    by: HashMap<(i64, u64, i64, u8), i64>,
+) -> Result<(), Error> {
+    let mut add = connection.prepare_cached(sql("rollups.add")?)?;
+    for ((hour, exe, host, port, protocol, uid, action, container), count) in rollups {
+        add.execute(params![
+            db_id(hour),
+            exe,
+            host,
+            port,
+            protocol,
+            uid,
+            action,
+            count,
+            0,
+            0,
+            container,
+        ])?;
+    }
+    drop(add);
+    if let Some(newest) = by.keys().map(|(_, hour, _, _)| *hour).max() {
+        advance_totals(connection, totals_hour, newest)?;
+    }
+    let window_end = totals_hour.unwrap_or(0);
+    let mut totals: HashMap<(u64, i64, i64), (i64, i64)> = HashMap::new();
+    let mut add = connection.prepare_cached(sql("rollups_by.add")?)?;
+    for ((dimension, start, key, action), count) in by {
+        add.execute(params![dimension, db_id(start), key, action, count, 0, 0])?;
+        if dimension < DAYS {
+            for window in TOTALS_WINDOWS
+                .into_iter()
+                .filter(|w| start + w >= window_end)
+            {
+                let total = totals.entry((window, dimension, key)).or_insert((0, 0));
+                total.0 += count;
+                if action != 1 {
+                    total.1 += count;
+                }
+            }
+        }
+    }
+    drop(add);
+    let mut add = connection.prepare_cached(sql("totals.add")?)?;
+    for ((window, dimension, key), (count, blocked)) in totals {
+        add.execute(params![db_id(window), dimension, key, count, blocked, 0, 0])?;
+    }
+    drop(add);
+    Ok(())
+}
+
+/// A `rollups` row's key: hour, program, host, port, protocol, user, action, container.
+type RollupKey = (u64, i64, i64, u16, u8, u32, u8, i64);
+
+/// Program and host names whose ids the writer keeps, at most.
+const STRINGS_CACHED: usize = 32_768;
+
+/// The running totals' windows, in hours.
+const TOTALS_WINDOWS: [u64; 3] = [24, 168, 720];
+const WEEKS: i64 = 200;
+const WEEK_HOURS: u64 = 168;
+
+/// How the hours `[from, to)` split into whole weeks, whole days around them and hours at the ends: `[d1, d2, w1,
+/// w2]` for hours `[from, d1)` and `[d2, to)`, days `[d1, w1)` and `[w2, d2)`, weeks `[w1, w2)`.
+fn cover(from: u64, to: u64) -> [u64; 4] {
+    let up = |hour: u64, size: u64| hour.div_ceil(size) * size;
+    let down = |hour: u64, size: u64| hour - hour % size;
+    let d1 = up(from, 24).min(to).max(from);
+    let d2 = down(to, 24).max(d1);
+    let w1 = up(d1, WEEK_HOURS).min(d2);
+    let w2 = down(d2, WEEK_HOURS).max(w1);
+    [d1, d2, w1, w2]
 }
 
 /// The id of a string, adding it if new. Cached, so repeated strings cost no query.
@@ -2556,6 +2904,11 @@ fn intern(
             .execute(params![kind as u8, &**value])?;
         (connection.last_insert_rowid(), true)
     };
+    // Bounded: a history with ever new names (CDN shards, trackers) mustn't grow the daemon. Emptied when full; the
+    // names in use come back on their next event.
+    if cache.len() >= STRINGS_CACHED {
+        cache.clear();
+    }
     cache.insert((kind, std::sync::Arc::clone(value)), id);
     Ok((id, inserted))
 }
@@ -2651,7 +3004,7 @@ fn stored_event(row: &rusqlite::Row<'_>) -> rusqlite::Result<StoredEvent> {
 }
 
 /// Sequence numbers a filtered page of history examines at most.
-pub const SCAN_WINDOW: i64 = 100_000;
+pub const SCAN_WINDOW: i64 = 50_000;
 
 /// The query language's matching functions, for the SQL it compiles to: the same code the clients run.
 fn register_query_functions(connection: &Connection) -> rusqlite::Result<()> {
@@ -2713,6 +3066,81 @@ mod tests {
             cookie: Some(seq),
             container: None,
         }
+    }
+
+    #[test]
+    fn running_totals_answer_as_the_rollups_do() {
+        let mut store = Store::in_memory().unwrap();
+        let hour = |h: u64| h * HOUR_MS;
+        // 40 days, a few connections an hour, some blocked, with bytes counted after them.
+        let mut cookie = 0;
+        let mut write = |store: &mut Store, from: u64, to: u64| {
+            for h in from..to {
+                let events: Vec<Event> = (0..=(h % 4))
+                    .map(|i| {
+                        cookie += 1;
+                        Event {
+                            time_ms: hour(h) + i * 1000,
+                            action: if (h + i) % 5 == 0 {
+                                Action::Deny
+                            } else {
+                                Action::Allow
+                            },
+                            port: [443, 80, 22][(h % 3) as usize],
+                            cookie: Some(cookie),
+                            ..event(
+                                cookie,
+                                &format!("/usr/bin/p{}", (h + i) % 7),
+                                Some(&format!("h{}.example", h % 11)),
+                            )
+                        }
+                    })
+                    .collect();
+                store.record(&events, &mut Vec::new()).unwrap();
+                if h % 3 == 0 {
+                    store.record_bytes(&[(cookie, 100 * h, 7)]).unwrap();
+                }
+            }
+        };
+        let check = |store: &Store, why: &str| {
+            let end = store.totals_hour.unwrap();
+            for window in TOTALS_WINDOWS {
+                for group in [
+                    Dimension::Exe,
+                    Dimension::Host,
+                    Dimension::Port,
+                    Dimension::Uid,
+                    Dimension::Container,
+                ] {
+                    for by_bytes in [false, true] {
+                        let sorted = |mut rows: Vec<Explored>| {
+                            rows.sort_by_key(|r| r.key);
+                            rows
+                        };
+                        let totals = store
+                            .explore(end - window, end + 1, group, None, (1000, by_bytes))
+                            .unwrap();
+                        let buckets = store
+                            .explore_buckets(end - window, end + 1, group, None, (1000, by_bytes))
+                            .unwrap();
+                        assert_eq!(
+                            sorted(totals),
+                            sorted(buckets),
+                            "{why}: {window} h by {group:?}"
+                        );
+                    }
+                }
+            }
+        };
+        let start = 490_000;
+        write(&mut store, start, start + 40 * 24);
+        check(&store, "after 40 days");
+        // Retention shorter than a window: what is pruned leaves the totals too.
+        store.prune_rollups(hour(start + 40 * 24 - 100)).unwrap();
+        check(&store, "after pruning");
+        // A gap longer than the longest window, then new hours.
+        write(&mut store, start + 80 * 24, start + 80 * 24 + 30);
+        check(&store, "after a gap");
     }
 
     #[test]
@@ -3257,11 +3685,12 @@ mod tests {
         store.record(&events, &mut Vec::new()).unwrap();
         store.connection().execute_batch("ANALYZE").unwrap();
         for (name, sql) in STATEMENTS {
-            let params = sql.matches('?').count();
             let mut plan = store
                 .connection()
                 .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
                 .unwrap();
+            // Numbered parameters may be used more than once.
+            let params = plan.parameter_count();
             let values: Vec<rusqlite::types::Value> = (0..params)
                 .map(|_| rusqlite::types::Value::Integer(1))
                 .collect();
@@ -3273,17 +3702,21 @@ mod tests {
                 .collect::<Result<_, _>>()
                 .unwrap();
             for detail in &details {
-                // A constant row is no table: the frame of scalar subqueries.
+                // A constant row is no table: the frame of scalar subqueries. A subquery's rows are what its own
+                // (checked) searches yielded.
                 let scans_growing_table = detail.starts_with("SCAN")
                     && detail != "SCAN CONSTANT ROW"
+                    && !detail.starts_with("SCAN (subquery-")
                     && !SCANNABLE.iter().any(|t| detail == &format!("SCAN {t}"));
                 assert!(!scans_growing_table, "{name} scans: {details:?}");
                 let sorts_within_range = GROUPS_IN_RANGE
                     .iter()
                     .any(|prefix| name.starts_with(prefix))
-                    && details.first().is_some_and(|first| {
-                        first.starts_with("SEARCH") && first.contains("hour>? AND hour<?")
-                    });
+                    && details.iter().any(|d| d.starts_with("SEARCH"))
+                    && details
+                        .iter()
+                        .filter(|d| d.starts_with("SEARCH"))
+                        .all(|d| d.contains("hour>? AND hour<?"));
                 assert!(
                     !detail.contains("TEMP B-TREE") || sorts_within_range,
                     "{name} sorts: {details:?}"

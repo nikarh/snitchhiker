@@ -16,6 +16,12 @@ use tracing::warn;
 
 use crate::store::Event;
 
+/// Prompts open at once at most: past this, connections are decided as if their prompt timed out. A flood of new
+/// destinations costs a bounded amount of memory and queue space.
+pub const MAX_PROMPTS: usize = 1024;
+/// Packets one prompt holds at most (retransmissions, a burst of datagrams); the rest are decided the same way.
+pub const MAX_HELD: usize = 64;
+
 /// A packet waiting for a prompt's answer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Held {
@@ -83,6 +89,8 @@ pub enum Hold {
     Opened(v1::Prompt),
     /// It joined the open prompt with this id.
     Joined(u64),
+    /// Too many prompts are open, or this one holds too many packets: not held.
+    Full,
 }
 
 impl Broker {
@@ -157,9 +165,15 @@ impl Broker {
             .copied()
             .and_then(|id| state.pending.get_mut(&id))
         {
+            if pending.packets.len() >= MAX_HELD {
+                return Hold::Full;
+            }
             pending.packets.push(packet);
             pending.prompt.waiting = u32::try_from(pending.packets.len()).unwrap_or(u32::MAX);
             return Hold::Joined(pending.prompt.id);
+        }
+        if state.pending.len() >= MAX_PROMPTS {
+            return Hold::Full;
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let NewPrompt {
@@ -354,6 +368,33 @@ mod tests {
             broker.hold(key(443), Held { queue: 0, id: 4 }, 2000, new_prompt),
             Hold::Opened(_)
         ));
+    }
+
+    #[test]
+    fn prompts_and_their_packets_are_bounded() {
+        let broker = Broker::new(vec![], Duration::from_secs(30));
+        for id in 0..MAX_HELD {
+            let id = u32::try_from(id).unwrap();
+            assert_ne!(
+                broker.hold(key(443), Held { queue: 0, id }, 0, new_prompt),
+                Hold::Full
+            );
+        }
+        assert_eq!(
+            broker.hold(key(443), Held { queue: 0, id: 999 }, 0, new_prompt),
+            Hold::Full
+        );
+        for port in 2000..2000 + u16::try_from(MAX_PROMPTS).unwrap() - 1 {
+            assert!(matches!(
+                broker.hold(key(port), Held { queue: 0, id: 1 }, 0, new_prompt),
+                Hold::Opened(_)
+            ));
+        }
+        assert_eq!(broker.count(), MAX_PROMPTS);
+        assert_eq!(
+            broker.hold(key(9999), Held { queue: 0, id: 1 }, 0, new_prompt),
+            Hold::Full
+        );
     }
 
     #[test]

@@ -46,3 +46,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt"] }
 zbus = "6.3.0"
 zbus_polkit = "6.0.0"
+
+[[bench]]
+name = "budgets"
+harness = false

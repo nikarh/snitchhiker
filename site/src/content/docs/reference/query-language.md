@@ -56,6 +56,6 @@ value matches anywhere in it: `host:example` matches `api.example.com`.
 
 ## Searching a long history
 
-A filtered page of history looks through at most 100 000 connections. A query matching few of them can give a short
+A filtered page of history looks through at most 50 000 connections. A query matching few of them can give a short
 page, or an empty one, while older ones match: the answer says how far back it looked, and the next page continues
 from there. The desktop app keeps looking until it has a screenful or reaches the start of the history.

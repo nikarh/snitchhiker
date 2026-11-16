@@ -9,6 +9,9 @@ Wants=network-online.target
 ExecStart=/usr/bin/snitchhiker-relay --config /etc/snitchhiker/relay.toml
 Restart=on-failure
 RestartSec=2s
+# A backstop against a leak: the relay needs a few tens of MB.
+MemoryHigh=256M
+MemoryMax=512M
 DynamicUser=yes
 # ACME's account and certificates.
 StateDirectory=snitchhiker-relay

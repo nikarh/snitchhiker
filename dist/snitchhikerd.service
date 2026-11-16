@@ -19,6 +19,12 @@ ExecStart=/usr/bin/snitchhikerd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=1s
+# A backstop: the daemon stays far below this (under 50 MB with 10 000 rules and a million events); a leak is
+# throttled, then restarted, rather than starving the machine.
+MemoryHigh=256M
+MemoryMax=384M
+# Two malloc arenas rather than one per thread: memory one thread freed serves the others instead of staying resident.
+Environment=MALLOC_ARENA_MAX=2
 RuntimeDirectory=snitchhiker
 RuntimeDirectoryMode=0755
 StateDirectory=snitchhiker

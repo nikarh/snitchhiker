@@ -57,9 +57,9 @@ The query also says which process asked. A connection is matched first against t
 
 ## Deciding
 
-The rules are compiled into an immutable set, indexed by port, and replaced as a whole when they change: deciding takes no lock and allocates nothing. The highest tier with a matching rule decides, blocking beats allowing within it, and the most specific match is recorded ([Precedence](/guides/rules/#precedence)).
+The rules are compiled into an immutable set and replaced as a whole when they change: deciding takes no lock and allocates nothing. Each rule is filed under its most selective key: the host names it is limited to (`*.example.com` under `example.com`), else its exact programs, else its ports; a connection checks only the rules under its own names and the domains above them, its program and its port, and the few rules with none of these. With 10 000 rules a decision takes about a microsecond. The highest tier with a matching rule decides, blocking beats allowing within it, and the most specific match is recorded ([Precedence](/guides/rules/#precedence)).
 
-With no matching rule, `no_match` decides, or the connection is held for a [prompt](/guides/prompts/). A held packet stays in the queue: the deciding thread goes on with the next one, and the answer, or the timeout, gives the held packets their verdict later.
+With no matching rule, `no_match` decides, or the connection is held for a [prompt](/guides/prompts/). A held packet stays in the queue: the deciding thread goes on with the next one, and the answer, or the timeout, gives the held packets their verdict later. At most 1024 prompts are open at once, each holding at most 64 packets; past that, connections are decided as if their prompt had timed out (`on_timeout`), so a flood of new destinations can't exhaust memory or the queue.
 
 ## Verdicts
 
@@ -73,6 +73,6 @@ In monitor mode every packet is accepted and the decision only recorded.
 
 Every decision goes to a bounded queue that a writer thread empties into SQLite in batches; a full queue drops entries (counted as `dropped events` in `status`) rather than holding packets. Each entry has the program, user, destination, rule and how it was decided. Bytes sent and received are counted per socket by more eBPF programs and added to the entry as the connection goes on. Entries older than `retention_days` are deleted.
 
-**Rollups.** As events are recorded, the writer also adds them to hourly rollups: one row per hour, program, host, port, protocol, user and action, and one per hour and value of each of these alone, with connection and byte counts. The [Explorer](/reference/cli/#explore) groups these, never the events: a month of a million connections groups by program in about 50 ms, and drills into one program in about 30. Rollups are pruned with the history.
+**Rollups.** As events are recorded, the writer also adds them to hourly rollups: one row per hour, program, host, port, protocol, user, container and action, and one per value of each of these alone by hour, by day and by week, with connection and byte counts. A batch's events are summed first, so a burst of the same connection is one write. The [Explorer](/reference/cli/#explore) groups these, never the events, reading whole weeks and days where a range has them and hours at its ends. **Running totals** of the last 24 hours, 7 days and 30 days for each program, host, port, user and container are kept as well, indexed by connections and by bytes: the busiest of those windows are an index walk, whatever the history holds. Rollups are pruned a whole week at a time, kept up to a week longer than the events.
 
 Every query the daemon makes is checked by SQLite's query planner, in the tests, to use an index: the history can grow without the daemon slowing down.

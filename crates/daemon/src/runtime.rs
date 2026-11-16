@@ -36,10 +36,12 @@ use crate::process::{HostNamespaces, ProcessCache};
 use crate::prompts::{Broker, Held, Hold, NewPrompt, Pending, PromptKey};
 use crate::store::{Event, Source, Store};
 
-/// Events waiting for the writer; beyond this they are dropped (and counted).
-const EVENT_QUEUE: usize = 65_536;
-/// Events written per transaction at most.
-const BATCH: usize = 1024;
+/// Events waiting for the writer; beyond this they are dropped (and counted). Allocated up front (128 bytes each):
+/// enough for 300 ms of 50 000 connections a second while the writer commits.
+const EVENT_QUEUE: usize = 16_384;
+/// Events written per transaction at most. Large, so that at a high rate the index pages a transaction changes are
+/// shared by many events (the writer still waits at most `BATCH_WAIT`).
+pub const BATCH: usize = 8192;
 /// How long the writer waits to fill a batch.
 const BATCH_WAIT: Duration = Duration::from_millis(100);
 /// How much of a DNS answer is copied: a whole UDP answer, as large as resolvers send without EDNS tricks.
@@ -1405,22 +1407,14 @@ pub(crate) fn decide(
     let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
         (decision.action, Source::Rule, Some(decision.rule))
     } else {
-        if asks(shared) {
-            let prompt = hold(
-                shared,
-                &facts,
-                &event,
-                Held {
-                    queue,
-                    id: queued.id,
-                },
-            );
-            remember(shared, &facts, &event, Some(prompt));
-            return (None, None);
+        let held = Held {
+            queue,
+            id: queued.id,
+        };
+        match undecided(shared, &facts, &event, held) {
+            Some(decided) => decided,
+            None => return (None, None),
         }
-        let policy = shared.policy.load();
-        let action = policy_action(policy.no_match, policy.no_client);
-        (action, Source::Policy, None)
     };
     conclude(shared, &facts, event, &headers, (action, source, rule))
 }
@@ -1487,9 +1481,31 @@ fn remember(shared: &Shared, facts: &Facts<'_>, event: &Event, prompt: Option<u6
     });
 }
 
+/// A connection no rule decides: held for a prompt (`None`), or decided by the policy (by `on_timeout` when asking
+/// but too many prompts are open).
+fn undecided(
+    shared: &Shared,
+    facts: &Facts<'_>,
+    event: &Event,
+    held: Held,
+) -> Option<(Action, Source, Option<RuleId>)> {
+    let asking = asks(shared);
+    if asking && let Some(prompt) = hold(shared, facts, event, held) {
+        remember(shared, facts, event, Some(prompt));
+        return None;
+    }
+    let policy = shared.policy.load();
+    Some(if asking {
+        (policy.on_timeout, Source::Timeout, None)
+    } else {
+        let action = policy_action(policy.no_match, policy.no_client);
+        (action, Source::Policy, None)
+    })
+}
+
 /// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open; the
-/// prompt's id.
-fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 {
+/// prompt's id, or `None` when the broker is full (see [`crate::prompts::MAX_PROMPTS`]).
+fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> Option<u64> {
     let destination = facts
         .hosts
         .first()
@@ -1550,9 +1566,10 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> u64 
     match opened {
         Hold::Opened(prompt) => {
             shared.router.opened(&shared.hub, &prompt);
-            prompt.id
+            Some(prompt.id)
         }
-        Hold::Joined(id) => id,
+        Hold::Joined(id) => Some(id),
+        Hold::Full => None,
     }
 }
 
