@@ -13,7 +13,7 @@ sidebar:
 | `mise run fmt` | Format the Rust code |
 | `mise run test` | The host-safe tests: unit and property tests, nothing privileged |
 | `mise run build` | Release build of the binaries |
-| `mise run package` | The `.deb`, rpm and Arch packages of a release build, into `out/` |
+| `mise run package` | The `.deb`, rpm and Arch packages of the daemon, the desktop app and the relay, from a release build, into `out/` |
 | `mise run e2e [filter]` | The end-to-end scenarios, in a throwaway VM |
 | `mise run vm:up`, `vm:ssh`, `vm:down` | The test VM by hand |
 | `mise run docs`, `docs:build` | The documentation: see [Writing the docs](/project/docs/) |

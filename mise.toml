@@ -111,9 +111,10 @@ description = "Release build of the binaries"
 run = "cargo build --locked --release"
 
 [tasks.package]
-description = "Build the .deb and Arch packages of a release build into out/"
+description = "The .deb, rpm and Arch packages of the daemon, the desktop app and the relay, from a release build, into out/"
 depends = ["build"]
-run = "scripts/package.sh x86_64 target/release/snitchhikerd out"
+env = { SNITCHHIKER_RELAY = "target/release/snitchhiker-relay" }
+run = "scripts/package.sh x86_64 target/release/snitchhikerd out target/release/snitchhiker-ui"
 
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from the commits"
