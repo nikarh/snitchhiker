@@ -311,6 +311,10 @@ const SCENARIOS: &[Scenario] = &[
         containers::a_vm_on_a_bridge_is_decided_by_its_name,
     ),
     (
+        "containers/removed-containers-take-their-id-rules-and-net-admin-is-flagged",
+        containers::removed_containers_take_their_id_rules_and_net_admin_is_flagged,
+    ),
+    (
         "remote/a-paired-device-connects-and-is-unpaired",
         remote::a_paired_device_connects_and_is_unpaired,
     ),

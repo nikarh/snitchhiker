@@ -655,3 +655,71 @@ pub fn a_vm_on_a_bridge_is_decided_by_its_name() -> Result<(), String> {
         &found,
     )
 }
+
+/// A rule naming a container by its id goes when Docker removes the container (its id can never come back); a
+/// container started with `CAP_NET_ADMIN` is flagged, once, with an alert.
+pub fn removed_containers_take_their_id_rules_and_net_admin_is_flagged() -> Result<(), String> {
+    docker()?;
+    let daemon = Running::start("container-ids", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let id = run(
+        "docker",
+        &["run", "-d", "--name", "e2e-bound", IMAGE, "sleep", "60"],
+    )?
+    .trim()
+    .to_owned();
+    let short = id.get(..12).unwrap_or(&id).to_owned();
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--container-id",
+        &short,
+        "--port",
+        "8090",
+        "--name",
+        "this one",
+    ])?;
+    let before = daemon.cli(&["rules"])?;
+    run("docker", &["rm", "-f", "e2e-bound"])?;
+    let mut after = String::new();
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(250));
+        after = daemon.cli(&["rules"])?;
+        if !after.contains("this one") {
+            break;
+        }
+    }
+    let _ = Command::new("docker")
+        .args([
+            "run",
+            "--rm",
+            "--cap-add",
+            "NET_ADMIN",
+            "--name",
+            "e2e-admin",
+            IMAGE,
+        ])
+        .args([
+            "wget",
+            "-T",
+            "2",
+            "-q",
+            "-O",
+            "/dev/null",
+            "http://203.0.113.90:8080/",
+        ])
+        .output();
+    thread::sleep(Duration::from_millis(1500));
+    let alerts = daemon.cli(&["alerts"])?;
+    let found = format!("before:\n{before}\nafter:\n{after}\nalerts:\n{alerts}");
+    check(
+        before.contains("this one") && !after.contains("this one"),
+        "the removed container's rule stayed",
+        &found,
+    )?;
+    check(
+        alerts.contains("e2e-admin (") && alerts.contains("can change its network"),
+        "a container with CAP_NET_ADMIN wasn't flagged",
+        &found,
+    )
+}

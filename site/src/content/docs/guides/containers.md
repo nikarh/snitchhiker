@@ -15,7 +15,7 @@ Every connection has a **context**: the host, a container, a VM, or a named netw
 | `container.name = ["shop-web-1"]` | the container of that name |
 | `container.image = ["glob:docker.io/library/node:*"]` | containers from those images |
 | `container.label = ["tier=front"]` | containers with that label |
-| `container.runtime`, `container.owner`, `container.id` | a runtime; the user a rootless container runs as; one container (ids change when it is recreated) |
+| `container.runtime`, `container.owner`, `container.id` | a runtime; the user a rootless container runs as; one container (ids change when it is recreated, and a rule naming one goes when Docker or Podman removes the container) |
 | `vm.name = ["web"]`, `vm.uuid`, `vm.hypervisor` | a VM |
 | `netns = ["vpn"]` | a named network namespace |
 | `context = "any"` | everywhere, the host included |
@@ -28,14 +28,14 @@ Any of these limits the rule to that kind of context. A prompt from a container 
 
 - **Bridge networks** (the default, and Compose's): container traffic is forwarded from the bridge (`docker0`, `br-…`) and never passes the host's own sockets. Snitchhiker queues it in a `forward` chain and finds the sending container exactly: the frame's source address in the bridge's forwarding database gives the veth it came through, the veth names the container's namespace, and the connection is looked up as the program in it opened it, before NAT ([`forward_from`](/reference/configuration/#forward_from)).
 - **`--network host`**: ordinary host sockets, decided in the host's `output` chain, with the container from the process's cgroup.
-- Names, images, labels and Compose services come from Docker's API (`/run/docker.sock`).
+- Names, images, labels and Compose services come from Docker's API (`/run/docker.sock`), and Snitchhiker follows its event stream: a renamed container is described anew, and a removed one's id is taken out of the rules that name it (`--container-id`; a rule left with none is deleted, as a change in the history by `docker`). Rootful Podman's socket (`/run/podman/podman.sock`, when the service is enabled) is followed the same way.
 
 ### Podman
 
 - **Rootful** containers on Podman's bridge (`podman0`, netavark) are decided as Docker's; their details come from Podman's own database (`/var/lib/containers/storage/db.sql`), with no socket to run.
 - **Rootless** containers (as a user, with pasta or slirp4netns) reach the network through a helper that makes their connections on the host. Snitchhiker ties the helper to the container it serves, and from the container's first connection on decides **inside the container's own network namespace**: its table and queue there see each connection with its program, before the helper relays it. The first connection is decided as the container's alone (only rules on the container hold for it). The details come from the user's Podman database (`~/.local/share/containers/storage/db.sql`).
 
-A process in a container holding `CAP_NET_ADMIN` in its namespace could delete Snitchhiker's table there: it is put back at once, with an alert. Docker and Podman don't grant that capability unless asked (`--cap-add NET_ADMIN`, `--privileged`).
+A process in a container holding `CAP_NET_ADMIN` in its namespace could delete Snitchhiker's table there: it is put back at once, with an alert. Docker and Podman don't grant that capability unless asked (`--cap-add NET_ADMIN`, `--privileged`). A container whose connecting process holds it is flagged: once with an alert, and on its prompts ("can change its own network").
 
 ### systemd-nspawn, LXC
 

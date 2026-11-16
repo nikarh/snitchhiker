@@ -253,6 +253,7 @@ pub fn container(container: &snitchhiker_core::context::Container) -> v1::Contai
         image: container.image.clone(),
         compose: container.compose.clone().unwrap_or_default(),
         owner: container.owner,
+        net_admin: container.net_admin,
     }
 }
 

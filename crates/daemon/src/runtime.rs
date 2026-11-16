@@ -120,6 +120,8 @@ pub struct Shared {
     pub blocklists: crate::blocklists::Blocklists,
     /// Programs' packages, for `pkg:` identities.
     pub packages: Arc<crate::apps::Packages>,
+    /// Containers seen with `CAP_NET_ADMIN`: those alerted about, and those to alert about (by the writer).
+    pub net_admin: Mutex<(HashSet<String>, Vec<snitchhiker_core::context::Container>)>,
     /// Agents whose proposals are denied without asking anyone (muted by a person).
     pub muted_agents: Mutex<HashSet<ProcessRef>>,
     /// Counts changes of proposals, for requests waiting for one.
@@ -207,6 +209,7 @@ impl Daemon {
             blocklists,
             packages: Arc::new(crate::apps::Packages::load()),
             muted_agents: Mutex::default(),
+            net_admin: Mutex::default(),
             config,
         });
         for (offset, queue) in queues.into_iter().enumerate() {
@@ -263,6 +266,7 @@ impl Daemon {
         self.spawn_agent_watch()?;
         self.spawn_blocklist_refresh()?;
         self.shared.packages.watch()?;
+        crate::container_events::spawn(self)?;
         if self.shared.config.learn_dns {
             // Names programs resolved through systemd-resolved's cache or its library interface: no packet shows them.
             let shared = Arc::clone(&self.shared);
@@ -1196,6 +1200,48 @@ fn context_code(context: ContextKind) -> u8 {
     }
 }
 
+/// Notes a container seen with `CAP_NET_ADMIN`, for the writer to alert about once.
+fn note_net_admin(shared: &Shared, found: &crate::contexts::Identified) {
+    if !found.container.net_admin {
+        return;
+    }
+    let mut seen = shared
+        .net_admin
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if seen.0.len() < 4096 && seen.0.insert(found.container.id.clone()) {
+        seen.1.push(found.container.clone());
+    }
+}
+
+/// Raises the alerts about containers newly seen with `CAP_NET_ADMIN`.
+fn alert_net_admin(shared: &Shared, store: &Store) {
+    let seen = std::mem::take(
+        &mut shared
+            .net_admin
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .1,
+    );
+    for container in seen {
+        crate::alerts::raise(
+            shared,
+            store,
+            &crate::alerts::NewAlert {
+                kind: "container_net_admin",
+                title: format!("{} can change its network", container.label()),
+                body: format!(
+                    "A process of {} container {} holds CAP_NET_ADMIN: it can change its own network, and remove \
+                     the table the node keeps in it (which is put back, with an alert).",
+                    container.runtime,
+                    container.label()
+                ),
+                rule: None,
+            },
+        );
+    }
+}
+
 /// The history's record of a connection, before it is decided.
 fn undecided_event(
     facts: &Facts<'_>,
@@ -1402,6 +1448,9 @@ pub(crate) fn decide(
         .as_ref()
         .filter(|_| shared.rules.load().needs_sha256())
         .and_then(|p| crate::process::sha256_of(p.pid));
+    if let Some(found) = container.as_deref() {
+        note_net_admin(shared, found);
+    }
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: process.as_ref().map_or(&[], |p| p.apps.as_slice()),
@@ -1577,10 +1626,16 @@ fn hold(shared: &Shared, facts: &Facts<'_>, event: &Event, packet: Held) -> Opti
                 port: u32::from(facts.port),
                 protocol: u32::from(facts.protocol),
                 context: convert::context(facts.context).into(),
-                container: event
+                // As found (with what it can do), else as the history keeps it.
+                container: facts
                     .container
-                    .as_deref()
-                    .map(|key| Box::new(convert::container_from_key(key))),
+                    .map(|c| Box::new(convert::container(c)))
+                    .or_else(|| {
+                        event
+                            .container
+                            .as_deref()
+                            .map(|key| Box::new(convert::container_from_key(key)))
+                    }),
                 exe_writable: crate::process::writable_by_others(event.pid),
                 suggestions: suggestions
                     .iter()
@@ -1816,6 +1871,7 @@ fn write_loop(shared: &Shared, store: &crate::locked::Locked, events: &Receiver<
                     for alert in engine.check(&batch, &recorded) {
                         crate::alerts::raise(shared, &store, &alert);
                     }
+                    alert_net_admin(shared, &store);
                 }
                 Err(error) => error!(%error, events = batch.len(), "recording events"),
             }

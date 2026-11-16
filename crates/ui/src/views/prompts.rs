@@ -253,6 +253,15 @@ fn header(prompt: &v1::Prompt, theme: &gpui_component::theme::Theme) -> AnyEleme
         .when(prompt.exe_writable, |info| {
             info.child(Tag::warning().child("Its executable is writable by a user other than root"))
         })
+        .when(
+            prompt.container.as_ref().is_some_and(|c| c.net_admin),
+            |info| {
+                info.child(
+                    Tag::warning()
+                        .child("Its container can change its own network (CAP_NET_ADMIN)"),
+                )
+            },
+        )
         .into_any_element()
 }
 

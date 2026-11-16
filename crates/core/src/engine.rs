@@ -1096,6 +1096,7 @@ mod tests {
             compose: Some("shop/web".to_owned()),
             labels: vec![("tier".to_owned(), "front".to_owned())],
             owner: None,
+            net_admin: false,
         };
         let other = crate::context::Container {
             name: "db".to_owned(),

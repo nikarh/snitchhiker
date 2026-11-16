@@ -150,6 +150,9 @@ private fun PromptCard(
             )}), ${prompt.waiting} waiting",
         )
         if (prompt.exe_writable) Text("Its executable is writable by a user other than root", color = MaterialTheme.colorScheme.tertiary)
+        if (prompt.container?.net_admin == true) {
+            Text("Its container can change its own network (CAP_NET_ADMIN)", color = MaterialTheme.colorScheme.tertiary)
+        }
         if (prompt.agent_note.isNotEmpty()) {
             Muted("The agent that started it says (not verified):")
             Text(prompt.agent_note)

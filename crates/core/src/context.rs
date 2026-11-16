@@ -15,6 +15,9 @@ pub struct Container {
     pub labels: Vec<(String, String)>,
     /// For a rootless runtime: the user it runs as.
     pub owner: Option<u32>,
+    /// A process of it holds `CAP_NET_ADMIN` in its namespace: it can change its own network (and remove the table
+    /// the daemon keeps there, which is put back). Not part of the identity: [`Container::key`] leaves it out.
+    pub net_admin: bool,
 }
 
 impl Container {
@@ -48,6 +51,7 @@ impl Container {
             compose: (!compose.is_empty()).then_some(compose),
             labels: Vec::new(),
             owner: owner.parse().ok(),
+            net_admin: false,
         }
     }
 
@@ -86,6 +90,7 @@ mod tests {
             compose: Some("shop/db".to_owned()),
             labels: vec![("a".to_owned(), "b".to_owned())],
             owner: Some(1001),
+            net_admin: false,
         };
         assert_eq!(
             Container::from_key(&container.key()),

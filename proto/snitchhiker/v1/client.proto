@@ -310,6 +310,9 @@ message ContainerIdentity {
   string compose = 5;
   // For a rootless runtime: the user it runs as.
   optional uint32 owner = 6;
+  // A process of it holds CAP_NET_ADMIN in its namespace: it can change its own network, and remove the table the
+  // node keeps there (which is put back, with an alert).
+  bool net_admin = 7;
 }
 
 // Patterns as rules write them (exact, `glob:`, `re:`); a list means any of its items.

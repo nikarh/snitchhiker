@@ -20,7 +20,6 @@ use tracing::{debug, info, warn};
 
 use crate::dns::Answer;
 
-const DIR: &str = "/run/systemd/resolve";
 const SOCKET: &str = "/run/systemd/resolve/io.systemd.Resolve.Monitor";
 
 /// Follows the monitor for as long as the daemon runs, giving each answer to `learn`.
@@ -39,7 +38,7 @@ pub fn spawn(learn: impl Fn(&Answer) + Send + 'static) -> std::io::Result<()> {
                     Err(error) => debug!(%error, "systemd-resolved's monitor isn't there"),
                 }
                 // Gone, or never there: wait until its socket is (re)created.
-                if let Err(error) = wait_for_socket() {
+                if let Err(error) = crate::sockets::wait_for(Path::new(SOCKET)) {
                     warn!(%error, "waiting for systemd-resolved; its answers are no longer followed");
                     return;
                 }
@@ -134,40 +133,6 @@ fn answer(parameters: &Value) -> Option<Answer> {
 
 fn normalize(name: &str) -> String {
     name.trim_end_matches('.').to_ascii_lowercase()
-}
-
-/// Blocks until resolved's monitor socket exists (watching its directory, or `/run/systemd` until that exists).
-fn wait_for_socket() -> std::io::Result<()> {
-    use rustix::fs::inotify;
-    let fd = inotify::init(inotify::CreateFlags::CLOEXEC)?;
-    let watch_dir = if Path::new(DIR).exists() {
-        DIR
-    } else {
-        "/run/systemd"
-    };
-    inotify::add_watch(
-        &fd,
-        watch_dir,
-        inotify::WatchFlags::CREATE | inotify::WatchFlags::MOVED_TO,
-    )?;
-    // Created between the failed connect and the watch.
-    if Path::new(SOCKET).exists() {
-        return Ok(());
-    }
-    let mut buffer = [std::mem::MaybeUninit::<u8>::uninit(); 4096];
-    let mut reader = inotify::Reader::new(&fd, &mut buffer);
-    loop {
-        let event = reader.next()?;
-        let created = event.file_name().map(std::ffi::CStr::to_bytes);
-        if Path::new(SOCKET).exists() || (watch_dir != DIR && created == Some(b"resolve")) {
-            // Resolved binds its sockets right after making the directory: watch it from here.
-            return if Path::new(SOCKET).exists() {
-                Ok(())
-            } else {
-                wait_for_socket()
-            };
-        }
-    }
 }
 
 #[cfg(test)]

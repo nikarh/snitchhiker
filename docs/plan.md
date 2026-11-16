@@ -2232,16 +2232,16 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         mangle priority, before NAT; tested with Docker on iptables-nft. [ ] Docker's native nftables backend.
   - [x] Per-namespace tables: rootless container namespaces (from their helper's first connection, until the
         container's process ends) and named namespaces (`/run/netns`, followed by the mount table's change
-        notifications); tamper detection by nftables notifications, restore and alert. [ ] `CAP_NET_ADMIN` container
+        notifications); tamper detection by nftables notifications, restore and alert. [x] `CAP_NET_ADMIN` container
         flagging in the view.
   - [x] Host-side container-level enforcement of pasta/slirp4netns sockets (the outer layer), let through once the
         namespace is decided inside.
 - [x] **Identity**
   - [x] Docker (its API), Podman rootful and rootless (its database), nspawn and LXC (cgroup), QEMU (command line);
-        cached by cgroup id. [ ] Docker's event stream (lookups are on first connection).
+        cached by cgroup id. [x] Docker's (and rootful Podman's) event stream: renamed and removed containers forgotten.
   - [x] Container filesystem view: programs are their paths inside the container (`/proc/<pid>/exe`).
 - [x] **Rules and prompts**
-  - [x] `container.*`, `vm.*`, `netns` conditions (they imply their context); `context` semantics; [ ] id-bound rules
+  - [x] `container.*`, `vm.*`, `netns` conditions (they imply their context); `context` semantics; [x] id-bound rules
         expiring on removal.
   - [x] Suggestion ladder for containers (service, any program in it, image, this container) and VMs; prompts per
         container; answers' rules in `Containers/<service>` and `VMs/<name>` folders.

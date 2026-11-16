@@ -58,6 +58,9 @@ Commands:
                                     --any-context     also for containers, VMs and other namespaces
                                     --container <name>, --image <reference>, --compose <project/service>
                                                       in that container only (patterns: glob:..., re:...)
+                                    --container-id <id>
+                                                      in that container only, until it is removed (an id or the
+                                                      start of one, as docker ps shows it)
                                     --vm <name>       in that VM only
                                     --netns <name>    in that named network namespace only (ip netns)
                                     --list <name>     the destination is on that blocklist (see `lists`)
@@ -1705,6 +1708,7 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
             name: args.values_from_str("--container")?,
             image: args.values_from_str("--image")?,
             compose: args.values_from_str("--compose")?,
+            id: args.values_from_str("--container-id")?,
             ..Default::default()
         },
         vm: snitchhiker_core::spec::VmSpec {

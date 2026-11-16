@@ -131,6 +131,23 @@ pub struct Contexts {
 }
 
 impl Contexts {
+    /// Forgets container `id` (it was renamed or removed): its next connection is described as it is then.
+    pub fn forget(&self, id: &str) {
+        let gone = |found: &Option<Arc<Identified>>| {
+            found.as_ref().is_some_and(|f| {
+                !f.container.id.is_empty() && id.starts_with(f.container.id.as_str())
+            })
+        };
+        self.containers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, found| !gone(found));
+        self.helpers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|_, found| !gone(found));
+    }
+
     /// The container process `pid` (in cgroup `cgroup`) runs in, if it runs in one that can be named.
     pub fn container(&self, pid: u32, cgroup: u64) -> Option<Arc<Identified>> {
         if let Some(known) = self
@@ -149,7 +166,8 @@ impl Contexts {
                     .find_map(|line| line.strip_prefix("0::").and_then(named))
             })
             .map(|named| {
-                let container = describe(named);
+                let mut container = describe(named);
+                container.net_admin = has_net_admin(pid);
                 Arc::new(Identified {
                     key: Arc::from(container.key()),
                     container,
@@ -183,7 +201,8 @@ impl Contexts {
         }
         let found = served_namespace(helper).and_then(|inode| {
             let (pid, named) = container_in_namespace(inode)?;
-            let container = describe(named);
+            let mut container = describe(named);
+            container.net_admin = has_net_admin(pid);
             debug!(helper, pid, name = %container.name, "a network helper's container");
             Some(Arc::new(Identified {
                 key: Arc::from(container.key()),
@@ -470,6 +489,21 @@ fn describe(named: Named) -> Container {
         container.labels = details.labels;
     }
     container
+}
+
+/// Whether process `pid` holds `CAP_NET_ADMIN` (capability 12) in its effective set.
+fn has_net_admin(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok()
+        .and_then(|status| {
+            let hex = status
+                .lines()
+                .find_map(|l| l.strip_prefix("CapEff:"))?
+                .trim()
+                .to_owned();
+            u64::from_str_radix(&hex, 16).ok()
+        })
+        .is_some_and(|caps| caps & (1 << 12) != 0)
 }
 
 /// What a runtime says of a container.
