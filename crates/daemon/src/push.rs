@@ -79,7 +79,7 @@ impl Push {
     }
 
     /// Wakes devices (those with a target; the others are skipped by the gateway). A device woken within the last
-    /// [`WAKE_AGAIN`], and not connected since, isn't woken again: it is connecting, and will be sent everything that
+    /// `WAKE_AGAIN`, and not connected since, isn't woken again: it is connecting, and will be sent everything that
     /// waits.
     pub fn wake(&self, devices: Vec<String>) {
         let now = Instant::now();

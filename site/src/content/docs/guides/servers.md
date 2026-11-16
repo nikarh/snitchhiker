@@ -1,6 +1,6 @@
 ---
 title: Servers
-description: Running Snitchhiker on a headless machine, such as a cloud instance: monitor first, learn the rules, provision them as files, and answer from a phone.
+description: 'Running Snitchhiker on a headless machine, such as a cloud instance: monitor first, learn the rules, provision them as files, and answer from a phone.'
 ---
 
 A server has no screen to ask on and is usually reached over the network, so the way onto it is slower than on a workstation: watch, learn, then enforce, with a way back in kept open throughout.

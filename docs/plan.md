@@ -1462,7 +1462,10 @@ directory per version. The README only gives an overview and links to it.
 - Pull requests only build the site. Broken internal links and anchors fail them.
 - `mise run docs` serves it locally; `mise run docs:build` builds it as CI does.
 
-**Structure.** Each directory is a sidebar group; every page has `title` and `description` frontmatter and no H1.
+**Structure.** Each directory is a sidebar group; every page has `title` and `description` frontmatter and no H1. As
+built, some planned pages are sections of one: the installs are one Linux page (every distribution's repository and the
+desktop app), the headless quick start is the servers guide, interception, attribution, storage and performance are
+sections of How it works, and the protocol messages are the protocol page's schema.
 
 | Directory | For |
 | --- | --- |
@@ -1470,7 +1473,7 @@ directory per version. The README only gives an overview and links to it.
 | `install/` | One page per system (Arch, Debian/Ubuntu, Fedora/Amazon Linux), the desktop app, the Android app, the relay, verifying downloads |
 | `guides/` | Answering prompts, rules and folders, the query language, the Explorer, containers and VMs, phones and remote nodes, alerts, agents and MCP, servers (monitor mode and `learn`), importing from OpenSnitch |
 | `reference/` | Configuration, command line, protocol specification, protocol messages, MCP tools, rule matchers, query language grammar, default rules and aliases, events, changelog |
-| `internals/` | How it works, interception and attribution, the security model, the remote protocol and relay, storage and performance |
+| `internals/` | How it works, interception and attribution, the security model, the threat model, the remote protocol and relay, storage and performance |
 | `project/` | Development, writing the docs, releasing |
 
 **Generated references.** These pages are generated from the source, never written by hand, so they cannot drift.

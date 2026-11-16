@@ -78,3 +78,16 @@ Every decision goes to a bounded queue that a writer thread empties into SQLite 
 **Rollups.** As events are recorded, the writer also adds them to hourly rollups: one row per hour, program, host, port, protocol, user, container and action, and one per value of each of these alone by hour, by day and by week, with connection and byte counts. A batch's events are summed first, so a burst of the same connection is one write. The [Explorer](/reference/cli/#explore) groups these, never the events, reading whole weeks and days where a range has them and hours at its ends. **Running totals** of the last 24 hours, 7 days and 30 days for each program, host, port, user and container are kept as well, indexed by connections and by bytes: the busiest of those windows are an index walk, whatever the history holds. Rollups are pruned a whole week at a time, kept up to a week longer than the events.
 
 Every query the daemon makes is checked by SQLite's query planner, in the tests, to use an index: the history can grow without the daemon slowing down.
+
+## Performance
+
+The budgets below are measured by `cargo bench -p snitchhiker-daemon --bench budgets` over a synthetic history of ten million connections, and CI fails when one is missed:
+
+| What | Budget |
+| --- | --- |
+| Deciding a connection with 10 000 rules (receive, attribute, match, verdict) | p99 under 50 µs |
+| Recording the history | 50 000 events a second |
+| A query of the history or the Explorer, over ten million events | under 20 ms |
+| The daemon's memory, with 10 000 rules and a million stored events | under 50 MB (`daemon/memory-stays-within-budget`) |
+
+The service's unit caps its memory at 384 MB (`MemoryMax`), throttling it from 256 MB: far above what it uses, so a leak is throttled and restarted rather than starving the machine.
