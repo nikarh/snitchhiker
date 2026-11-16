@@ -1963,10 +1963,10 @@ the security model, and the GUI framework are proven before the bulk of feature 
         whose markers users can make: decision 0014), writable check, sha256 on demand.
   - [x] Context detection, basic: (netns, tuple) keys; cgroup and mount namespace mark a connection as
         `container`/`vm`/`netns`; host-only default for rules. Full identity comes in [M7](#m7-containers-vms-and-network-namespaces).
-- [ ] **DNS**
-  - [ ] UDP/53 answer sniffing, the resolved varlink monitor, getaddrinfo uprobes, the TTL'd map. *(Done: sniffing,
-        only answers to queries the asker really sent, names per process and per address, kept at least 10 minutes.
-        Remaining: the resolved monitor, uprobes.)*
+- [x] **DNS**
+  - [x] UDP/53 answer sniffing (only answers to queries the asker really sent, names per process and per address, kept
+        at least 10 minutes), the resolved varlink monitor, the TTL'd map. No getaddrinfo uprobes: what they report
+        the process can steer ([decision 0015](decisions/0015-no-getaddrinfo-probes.md)).
 - [x] **Store**
   - [x] Schema and migrations, interned dictionaries, the writer thread, events, rollups maintained at write time,
         fixed-window totals, retention, keyset queries, FTS5 trigram search.
