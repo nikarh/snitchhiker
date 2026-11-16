@@ -126,6 +126,65 @@ const PROGRAMS: [Program; 10] = [
     ),
 ];
 
+/// Connections from elsewhere than the host: (program, destination, address, port, context, identity key as the
+/// history keeps it, blocked). One connection in five comes from these.
+const ELSEWHERE: [(&str, &str, &str, u16, u8, &str, bool); 6] = [
+    (
+        "/usr/local/bin/node",
+        "api.stripe.example",
+        "203.0.113.70",
+        443,
+        1,
+        "docker\t4f1a2b3c4d5e\tshop-web-1\tdocker.io/library/node:22\tshop/web\t",
+        false,
+    ),
+    (
+        "/usr/local/bin/node",
+        "registry.npmjs.org",
+        "203.0.113.71",
+        443,
+        1,
+        "docker\t4f1a2b3c4d5e\tshop-web-1\tdocker.io/library/node:22\tshop/web\t",
+        false,
+    ),
+    (
+        "/usr/lib/postgresql/17/bin/postgres",
+        "telemetry.example.com",
+        "203.0.113.53",
+        443,
+        1,
+        "docker\t9c0d1e2f3a4b\tshop-db-1\tdocker.io/library/postgres:17\tshop/db\t",
+        true,
+    ),
+    (
+        "/usr/bin/dnf",
+        "mirrors.fedoraproject.org",
+        "203.0.113.72",
+        443,
+        1,
+        "podman\t7e8f9a0b1c2d\tfedora-toolbox-41\tregistry.fedoraproject.org/fedora-toolbox:41\t\t1000",
+        false,
+    ),
+    (
+        "",
+        "deb.debian.org",
+        "203.0.113.73",
+        80,
+        2,
+        "qemu\t5a1c7d0e-3b2f-4c6d-9e8f-0a1b2c3d4e5f\tbuilder\t\t\t",
+        false,
+    ),
+    (
+        "/usr/bin/curl",
+        "ifconfig.example",
+        "203.0.113.74",
+        443,
+        3,
+        "netns\t\tvpn\t\t\t",
+        false,
+    ),
+];
+
 /// Writes `count` connections over the last `days` into the database at `path`.
 pub fn seed(path: &str, count: u64, days: u64) -> Result<(), String> {
     let mut store = Store::open(Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
@@ -172,6 +231,28 @@ pub fn seed(path: &str, count: u64, days: u64) -> Result<(), String> {
             .get(at(ports.len(), next(ports.len() as u64)))
             .copied()
             .unwrap_or(443);
+        let elsewhere = (next(5) == 0)
+            .then(|| ELSEWHERE.get(at(ELSEWHERE.len(), next(ELSEWHERE.len() as u64))))
+            .flatten();
+        if let Some(&(exe, host, address, port, context, key, blocked)) = elsewhere {
+            batch.push(Event {
+                time_ms: time,
+                exe: Arc::from(exe),
+                host: Some(Arc::from(host)),
+                uid: 0,
+                pid: 1000 + u32::try_from(next(30_000)).unwrap_or(0),
+                protocol: 6,
+                address: address.parse::<IpAddr>().map_err(|e| e.to_string())?,
+                port,
+                context,
+                action: if blocked { Action::Deny } else { Action::Allow },
+                source: Source::Rule,
+                rule: None,
+                cookie: None,
+                container: Some(Arc::from(key)),
+            });
+            continue;
+        }
         batch.push(Event {
             time_ms: time,
             exe: Arc::from(exe.replace("{home}", "/home/ada")),

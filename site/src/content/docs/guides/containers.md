@@ -7,6 +7,8 @@ sidebar:
 
 Every connection has a **context**: the host, a container, a VM, or a named network namespace. Rules without a context hold on the host only, so allowing `/usr/bin/curl` doesn't let every `curl` in every container out. A container's connections are decided by the program in it (its path inside the container) and by the container itself: its runtime, name, image, labels and Compose service. Attribution is exact or it isn't made: what can't be known for certain is shown as unknown, and rules that need it don't match.
 
+![The Containers & VMs page: the containers, VM and named namespace connections came from, with their trends](../../../assets/screenshots/containers-light.png)
+
 ## Naming them in rules
 
 | Key | Holds for |

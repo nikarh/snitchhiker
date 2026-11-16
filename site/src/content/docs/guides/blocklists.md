@@ -5,6 +5,8 @@ description: Lists of ad, tracker and malware domains and addresses, fetched on 
 
 A blocklist is a list of domains or addresses kept up to date by someone else: ad and tracker lists, malware feeds, a team's own list on an internal server. The node fetches each list on a schedule, checks it, and keeps it; rules name it with the `list` condition.
 
+![The Blocklists page: a list, its source, entries and last fetch, and the rules naming it](../../../assets/screenshots/blocklists-light.png)
+
 ## Adding a list
 
 ```sh
