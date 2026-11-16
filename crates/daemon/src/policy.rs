@@ -77,7 +77,7 @@ pub const SETTINGS: [&str; 6] = [
 
 /// Prompts wait at least this long, and at most this long: a client must have time to show one, and a connection
 /// can't be held forever.
-pub const PROMPT_TIMEOUT_SECS: std::ops::RangeInclusive<u64> = 5..=3_600;
+pub const PROMPT_TIMEOUT_SECS: std::ops::RangeInclusive<u64> = 1..=3_600;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Invalid {
@@ -85,7 +85,7 @@ pub enum Invalid {
     Unknown(String),
     #[error("no such value for {0}")]
     Value(&'static str),
-    #[error("prompts wait 5 to 3600 seconds")]
+    #[error("prompts wait 1 to 3600 seconds")]
     Timeout,
     #[error("history is kept 1 to 3650 days")]
     Retention,
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(Effective::of(&config, &reset).no_match, config.no_match);
         assert!(matches!(
             Overrides::default().apply(&v1::SetPolicy {
-                prompt_timeout_secs: Some(1),
+                prompt_timeout_secs: Some(0),
                 ..v1::SetPolicy::default()
             }),
             Err(Invalid::Timeout)
