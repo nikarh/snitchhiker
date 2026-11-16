@@ -747,6 +747,9 @@ message Explore {
   uint32 limit = 5;
   // Busiest by connections (default), or by bytes sent and received: the top talkers.
   bool by_bytes = 6;
+  // With each group (without a filter), its connections in each hour of the range, or each day when the range is
+  // longer than two days: for sparklines.
+  bool series = 7;
 }
 
 message ExploreRow {
@@ -758,6 +761,8 @@ message ExploreRow {
   uint64 blocked = 3;
   uint64 bytes_out = 4;
   uint64 bytes_in = 5;
+  // Asked for: its connections in each hour (or day) of the range, oldest first.
+  repeated uint64 series = 6;
 }
 
 message ExplorePage {

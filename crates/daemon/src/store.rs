@@ -314,6 +314,10 @@ DROP INDEX events_host;
 CREATE VIRTUAL TABLE strings_fts USING fts5(value, content='strings', content_rowid='id', tokenize='trigram');
 INSERT INTO strings_fts(strings_fts) VALUES ('rebuild');
 ",
+    // One group's buckets in a range, for the Explorer's sparklines, without reading the other groups'.
+    r"
+CREATE INDEX rollups_by_key ON rollups_by(dimension, key, hour);
+",
 ];
 
 /// The Explorer's statement: `group` the rollups of an hour range, optionally of one value of `filter`, the busiest
@@ -669,6 +673,11 @@ pub const STATEMENTS: &[(&str, &str)] = &[
         "DELETE FROM rollups_by WHERE dimension = ?1 AND hour < ?2",
     ),
     ("totals_hour.get", "SELECT hour FROM totals_hour WHERE id = 1"),
+    (
+        "explore.series",
+        "SELECT hour, sum(count) FROM rollups_by INDEXED BY rollups_by_key
+         WHERE dimension = ?1 AND key = ?2 AND hour >= ?3 AND hour < ?4 GROUP BY hour",
+    ),
     (
         "totals_hour.set",
         "INSERT INTO totals_hour (id, hour) VALUES (1, ?1) ON CONFLICT (id) DO UPDATE SET hour = excluded.hour",
@@ -2676,6 +2685,37 @@ impl Store {
         Ok(rows.collect::<Result<_, _>>()?)
     }
 
+    /// A group's connections in each bucket of `[from_hour, to_hour)`: hours, or days (whole days from the first
+    /// hour's) when the range is longer than two days. Oldest first, a zero for a bucket without any.
+    pub fn explore_series(
+        &self,
+        group: Dimension,
+        key: i64,
+        from_hour: u64,
+        to_hour: u64,
+    ) -> Result<Vec<u64>, Error> {
+        let (level, size, from) = if to_hour.saturating_sub(from_hour) > 48 {
+            (DAYS, 24, from_hour - from_hour % 24)
+        } else {
+            (0, 1, from_hour)
+        };
+        let buckets = usize::try_from(to_hour.saturating_sub(from).div_ceil(size)).unwrap_or(0);
+        let mut series = vec![0_u64; buckets];
+        let mut statement = self.connection.prepare_cached(sql("explore.series")?)?;
+        let rows = statement.query_map(
+            params![group.number() + level, key, db_id(from), db_id(to_hour)],
+            |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+        )?;
+        for row in rows {
+            let (hour, count) = row?;
+            let index = usize::try_from((id_of(hour) - from) / size).unwrap_or(usize::MAX);
+            if let Some(slot) = series.get_mut(index) {
+                *slot += id_of(count);
+            }
+        }
+        Ok(series)
+    }
+
     /// The id of a string, if the history has it.
     pub fn string_id(&self, kind: StringKind, value: &str) -> Result<Option<i64>, Error> {
         Ok(self
@@ -3087,6 +3127,33 @@ mod tests {
             cookie: Some(seq),
             container: None,
         }
+    }
+
+    #[test]
+    fn a_groups_series_has_its_connections_by_bucket() {
+        let mut store = Store::in_memory().unwrap();
+        let hour = 3_600_000;
+        let events: Vec<Event> = [(10, 2), (12, 3), (13, 1)]
+            .iter()
+            .flat_map(|&(h, n)| {
+                (0..n).map(move |i| Event {
+                    time_ms: h * hour + i,
+                    ..event(h * 10 + i, "/usr/bin/curl", None)
+                })
+            })
+            .collect();
+        store.record(&events, &mut Vec::new()).unwrap();
+        let exe = store
+            .string_id(StringKind::Exe, "/usr/bin/curl")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store.explore_series(Dimension::Exe, exe, 10, 14).unwrap(),
+            vec![2, 0, 3, 1]
+        );
+        // Longer than two days: by day, from the first hour's day.
+        let days = store.explore_series(Dimension::Exe, exe, 0, 72).unwrap();
+        assert_eq!(days, vec![6, 0, 0]);
     }
 
     #[test]

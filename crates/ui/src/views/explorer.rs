@@ -124,6 +124,7 @@ impl Explorer {
                 }),
             limit: LIMIT,
             by_bytes: self.by_bytes,
+            series: true,
         };
         let _ = self
             .requests
@@ -267,6 +268,12 @@ impl Explorer {
             .text_color(theme.muted_foreground)
             .child(div().w(px(420.)).child(name(self.group)))
             .child(div().w(px(240.)))
+            .child(
+                div()
+                    .w(px(96.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child("trend"),
+            )
             .child(div().w(px(90.)).text_right().child("Allowed"))
             .child(div().w(px(90.)).text_right().child("Blocked"))
             .child(div().w(px(90.)).text_right().child("Sent"))
@@ -276,6 +283,29 @@ impl Explorer {
             })
             .into_any_element()
     }
+}
+
+/// A group's connections over the range: one bar per bucket (hours or days), up to the busiest's height.
+fn sparkline(series: &[u64], color: gpui::Hsla) -> AnyElement {
+    const WIDTH: f32 = 96.;
+    const HEIGHT: f32 = 16.;
+    let top = series.iter().copied().max().unwrap_or(0).max(1);
+    #[expect(clippy::cast_precision_loss, reason = "a bar's height in pixels")]
+    let height = |v: u64| HEIGHT * (v as f32 / top as f32);
+    #[expect(clippy::cast_precision_loss, reason = "a bar's width in pixels")]
+    let bar = WIDTH / series.len().max(1) as f32;
+    h_flex()
+        .w(px(WIDTH))
+        .h(px(HEIGHT))
+        .flex_none()
+        .items_end()
+        .children(series.iter().map(|&v| {
+            div()
+                .w(px(bar))
+                .h(px(height(v).max(if v > 0 { 1. } else { 0. })))
+                .bg(color)
+        }))
+        .into_any_element()
 }
 
 impl Explorer {
@@ -324,6 +354,7 @@ impl Explorer {
                     .child(div().h_full().w(width(row.allowed)).bg(theme.success))
                     .child(div().h_full().w(width(row.blocked)).bg(theme.danger)),
             )
+            .child(sparkline(&row.series, theme.primary))
             .child(div().w(px(90.)).text_right().child(row.allowed.to_string()))
             .child(
                 div()

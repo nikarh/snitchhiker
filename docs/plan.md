@@ -2061,14 +2061,14 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] The query language with its two executors: parsed in the core crate (spans for highlighting), run in memory
         by clients and as SQL by the node through the same matching functions, checked equal by a property test.
   - [x] Cache and replication ([§11.6](#116-client-cache-and-replication)).
-- [ ] **App shell**
+- [x] **App shell**
   - [x] Framework from M0, theme (light and dark), navigation, settings storage (cosmetic only). [x] Sidebar with
         several nodes (with M5).
   - [x] Environment scrubbing at start, the X11 banner, the compositor peer check.
-- [ ] **Shared widgets**
+- [x] **Shared widgets**
   - [x] Virtualized table with a tested selection model (check boxes, Shift ranges), sort, column chooser, copy CSV.
   - [x] Query input (checked as typed, the error shown), highlighting and completion, tree drag-and-drop, time-range
-        picker (the Explorer's). [ ] Sparklines (M8, with the statistics).
+        picker (the Explorer's). [x] Sparklines (M8, with the statistics).
 - [x] **Views**
   - [x] Prompts window + notifications with actions, tray icon with count.
   - [x] Events (infinite scroll, query filter, explain), Explorer (pivot + drill-down), Connections (live, kill),

@@ -9,9 +9,11 @@ sidebar:
 
 The desktop app's **Explorer** answers "what talked to what" over a time range: the connections of the last hour, day, week or month, grouped by **program**, **host**, **port** or **user**, busiest first, with how many were allowed and blocked and the bytes each way.
 
+Each group's **trend** shows its connections over the range, an hour a bar (a day a bar beyond two days): a program that only talks at night, or a host that started yesterday, stands out. The command line draws it too.
+
 A row drills down: a program's row shows where it connected, a host's row which programs reached it. The path back is above the list. **Copy CSV** copies the rows shown.
 
-The node answers from hourly totals it keeps as connections are recorded, so a month of a million connections groups in tens of milliseconds, as fast as an hour does. The totals go with the history after its [retention](/reference/configuration/#retention_days).
+The node answers from totals it keeps as connections are recorded (by hour, day and week, and running totals of the last day, week and month), so a month of ten million connections groups in milliseconds, as fast as an hour does. The totals go with the history after its [retention](/reference/configuration/#retention_days).
 
 **Container** groups by the container, VM or named namespace connections came from (the **Containers & VMs** page starts there); a container drills into its programs and hosts.
 

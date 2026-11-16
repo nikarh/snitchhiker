@@ -2062,10 +2062,25 @@ fn explore(daemon: &Daemon, explore: &v1::Explore) -> v1::response::Result {
     } else {
         Vec::new()
     };
+    // Sparklines: each group's buckets, for groups of the whole range (a drill-down's are its parent's).
+    let series = |key: i64| -> Vec<u64> {
+        if !explore.series || explore.filter.is_some() {
+            return Vec::new();
+        }
+        store
+            .explore_series(
+                group,
+                key,
+                explore.from_ms / HOUR_MS,
+                explore.to_ms.div_ceil(HOUR_MS),
+            )
+            .unwrap_or_default()
+    };
     v1::response::Result::Explored(v1::ExplorePage {
         rows: rows
             .iter()
             .map(|row| v1::ExploreRow {
+                series: series(row.key),
                 key: match group {
                     Dimension::Exe | Dimension::Host | Dimension::Container => {
                         u32::try_from(row.key)

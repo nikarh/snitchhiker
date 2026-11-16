@@ -1,11 +1,13 @@
 package dev.nikarh.snitchhiker.app.ui
 
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.AlertDialog
@@ -28,6 +30,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.nikarh.snitchhiker.app.NodeSession
@@ -348,6 +352,26 @@ private fun ProposalCard(
     }
 }
 
+/** A group's connections over the range, one bar per hour or day, up to the busiest's height. */
+@Composable
+private fun Sparkline(series: List<Long>) {
+    val color = MaterialTheme.colorScheme.primary
+    val top = (series.maxOrNull() ?: 0L).coerceAtLeast(1L).toFloat()
+    Canvas(Modifier.fillMaxWidth().height(24.dp)) {
+        val bar = size.width / series.size
+        series.forEachIndexed { i, value ->
+            val height = size.height * value / top
+            if (value > 0) {
+                drawRect(
+                    color,
+                    topLeft = Offset(i * bar, size.height - height.coerceAtLeast(1f)),
+                    size = Size((bar * 0.8f).coerceAtLeast(1f), height.coerceAtLeast(1f)),
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ExplorerPage(
     session: NodeSession,
@@ -361,7 +385,17 @@ private fun ExplorerPage(
     val rows =
         rememberRequest(session, Triple(by, hours, filter), {
             val now = System.currentTimeMillis()
-            Request(explore = Explore(from_ms = now - hours * 3_600_000, to_ms = now, group_by = by, filter = filter, limit = 100))
+            Request(
+                explore =
+                    Explore(
+                        from_ms = now - hours * 3_600_000,
+                        to_ms = now,
+                        group_by = by,
+                        filter = filter,
+                        limit = 100,
+                        series = true,
+                    ),
+            )
         }) { it.explored?.rows }
     Page(modifier) {
         item {
@@ -414,6 +448,7 @@ private fun ExplorerPage(
             ) {
                 Text(shownKey(by, row.key), style = MaterialTheme.typography.titleSmall)
                 Muted("${row.allowed} allowed · ${row.blocked} blocked · ${row.bytes_out} B out · ${row.bytes_in} B in")
+                if (row.series.isNotEmpty()) Sparkline(row.series)
             }
         }
     }

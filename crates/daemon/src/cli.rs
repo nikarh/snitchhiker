@@ -368,6 +368,7 @@ fn stats(client: &mut snitchhiker_client::Client, hours: u64) -> Result<(), Erro
             filter: None,
             limit,
             by_bytes: false,
+            series: false,
         }))? {
             v1::response::Result::Explored(page) => Ok(page.rows),
             _ => Err(unexpected()),
@@ -1090,7 +1091,20 @@ fn print_file(result: v1::response::Result) -> Result<(), Error> {
     }
 }
 
-/// `snitchhiker rules ...`.
+/// An Explorer dimension by the name the command line uses.
+fn dimension(name: &str) -> Result<v1::Dimension, Error> {
+    match name {
+        "program" => Ok(v1::Dimension::Program),
+        "host" => Ok(v1::Dimension::Host),
+        "port" => Ok(v1::Dimension::Port),
+        "user" => Ok(v1::Dimension::User),
+        "container" => Ok(v1::Dimension::Container),
+        other => Err(Error::Usage(format!(
+            "unknown dimension `{other}` (program, host, port, user, container)"
+        ))),
+    }
+}
+
 /// `explore`.
 fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;
@@ -1102,16 +1116,6 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     let by_bytes = args.contains("--bytes");
     let compare = args.contains("--compare");
     reject_rest(args)?;
-    let dimension = |name: &str| match name {
-        "program" => Ok(v1::Dimension::Program),
-        "host" => Ok(v1::Dimension::Host),
-        "port" => Ok(v1::Dimension::Port),
-        "user" => Ok(v1::Dimension::User),
-        "container" => Ok(v1::Dimension::Container),
-        other => Err(Error::Usage(format!(
-            "unknown dimension `{other}` (program, host, port, user, container)"
-        ))),
-    };
     let filter = match filter {
         None => None,
         Some(text) => {
@@ -1130,25 +1134,28 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     let mut client = connect(version)?;
     let group = dimension(&by)?;
     let span = hours * 3_600_000;
-    let mut explore = |from_ms: u64, to_ms: u64| -> Result<Vec<v1::ExploreRow>, Error> {
-        match client.call(Method::Explore(v1::Explore {
-            from_ms,
-            to_ms,
-            group_by: group.into(),
-            filter: filter.clone(),
-            limit: 50,
-            by_bytes,
-        }))? {
-            v1::response::Result::Explored(page) => Ok(page.rows),
-            _ => Err(unexpected()),
-        }
-    };
-    let rows = explore(now.saturating_sub(span), now)?;
+    let mut explore =
+        |from_ms: u64, to_ms: u64, series: bool| -> Result<Vec<v1::ExploreRow>, Error> {
+            match client.call(Method::Explore(v1::Explore {
+                from_ms,
+                to_ms,
+                group_by: group.into(),
+                filter: filter.clone(),
+                limit: 50,
+                by_bytes,
+                series,
+            }))? {
+                v1::response::Result::Explored(page) => Ok(page.rows),
+                _ => Err(unexpected()),
+            }
+        };
+    let rows = explore(now.saturating_sub(span), now, true)?;
     // The period before, as long: what changed, and what is new.
     let before = if compare {
         Some(explore(
             now.saturating_sub(2 * span),
             now.saturating_sub(span),
+            false,
         )?)
     } else {
         None
@@ -1189,9 +1196,35 @@ fn explore(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                 was.map_or_else(|| "new".to_owned(), |b| (b.allowed + b.blocked).to_string())
             );
         }
-        let _ = writeln!(text, "  {}", shown(&row.key));
+        let _ = writeln!(
+            text,
+            "  {}  {}",
+            sparkline(&row.series, 24),
+            shown(&row.key)
+        );
     }
     out(&text)
+}
+
+/// A series as at most `width` bars (`▁` to `█`), its buckets summed into that many.
+fn sparkline(series: &[u64], width: usize) -> String {
+    const BARS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if series.is_empty() || width == 0 {
+        return String::new();
+    }
+    let per = series.len().div_ceil(width);
+    let sums: Vec<u64> = series.chunks(per).map(|c| c.iter().sum()).collect();
+    let top = sums.iter().copied().max().unwrap_or(0).max(1);
+    sums.iter()
+        .map(|&v| {
+            let level = usize::try_from(v * 7 / top).unwrap_or(7);
+            if v == 0 {
+                ' '
+            } else {
+                BARS.get(level).copied().unwrap_or('█')
+            }
+        })
+        .collect()
 }
 
 /// `contexts`.
@@ -1216,6 +1249,7 @@ fn contexts(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> 
                 }),
                 limit: 200,
                 by_bytes: false,
+                series: false,
             }))? {
                 v1::response::Result::Explored(page) => Ok(page.rows),
                 _ => Err(unexpected()),
