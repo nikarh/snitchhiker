@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        distro: ${{ fromJSON(github.event_name == 'push' && '["arch","debian"]' || '["arch"]') }}
+        distro: ${{ fromJSON(github.event_name == 'push' && '["arch","debian","fedora"]' || '["arch"]') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:

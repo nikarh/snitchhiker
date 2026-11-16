@@ -13,7 +13,7 @@
 #   e2e/vm.sh <vm> down                  stop the VM (its disk is thrown away)
 #   e2e/vm.sh <vm> destroy               stop the VM and delete its provisioned image
 #
-# VMs: node (the machine Snitchhiker runs on). The distro is SNITCHHIKER_VM_DISTRO: arch (default) or debian.
+# VMs: node (the machine Snitchhiker runs on). The distro is SNITCHHIKER_VM_DISTRO: arch (default), debian or fedora.
 #
 # Each boot starts from a provisioned image on a throwaway disk. An image is provisioned once (cloud-init installs
 # the packages, a minute or two) and kept as <distro>-<hash of the provisioning>.qcow2; a change to the provisioning
@@ -49,8 +49,13 @@ case "${DISTRO}" in
     IMAGE_URL="https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
     SSH_USER=debian
     ;;
+  fedora)
+    # A release's image (Fedora names them by release and build): the newest release's, updated with it.
+    IMAGE_URL="https://download.fedoraproject.org/pub/fedora/linux/releases/45/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-45-1.4.x86_64.qcow2"
+    SSH_USER=fedora
+    ;;
   *)
-    echo "unknown distro ${DISTRO} (arch or debian)" >&2
+    echo "unknown distro ${DISTRO} (arch, debian or fedora)" >&2
     exit 1
     ;;
 esac
@@ -106,11 +111,15 @@ packages() {
     # kernel with a busybox initramfs.
     arch) printf '%s\n' bpf conntrack-tools curl iproute2 jq nftables polkit python socat sqlite strace \
       sway grim mako wtype wl-clipboard vulkan-swrast ttf-dejavu libxkbcommon-x11 \
-      docker podman passt slirp4netns busybox libvirt qemu-base dnsmasq zstd ;;
+      docker podman passt slirp4netns busybox libvirt qemu-base dnsmasq zstd gnupg ;;
     debian) printf '%s\n' bpftool conntrack curl iproute2 jq nftables polkitd python3 socat sqlite3 strace \
       sway grim mako-notifier wtype wl-clipboard mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 \
       docker.io podman passt slirp4netns uidmap busybox-static systemd-resolved \
-      libvirt-daemon-system qemu-system-x86 dnsmasq-base zstd ;;
+      libvirt-daemon-system qemu-system-x86 dnsmasq-base zstd gnupg apt-utils ;;
+    fedora) printf '%s\n' bpftool conntrack-tools curl iproute jq nftables polkit python3 socat sqlite strace \
+      sway grim mako wtype wl-clipboard mesa-vulkan-drivers dejavu-sans-fonts libxkbcommon-x11 \
+      moby-engine podman passt slirp4netns busybox libvirt-daemon-kvm libvirt-daemon-config-network qemu-kvm \
+      dnsmasq zstd cpio gnupg2 createrepo_c rpm-sign ;;
   esac
 }
 

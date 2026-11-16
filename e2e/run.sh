@@ -17,21 +17,50 @@ wait "${boot}"
 e2e/vm.sh node up
 
 dir=$([[ ${profile} == dev ]] && echo debug || echo "${profile}")
-# Snitchhiker is installed from its package, as users get it: the unit, the client group, the configuration.
+# Snitchhiker is installed as users get it: from a signed package repository (scripts/package-repos.sh, here with a
+# throwaway key, trusted the way the install guide says), with the unit, the client group, the configuration.
 mise x nfpm -- scripts/package.sh x86_64 "target/${dir}/snitchhikerd" target/e2e-packages >/dev/null
-case "${SNITCHHIKER_VM_DISTRO:-arch}" in
+distro=${SNITCHHIKER_VM_DISTRO:-arch}
+case "${distro}" in
+  arch) format=arch package=snitchhiker-x86_64.pkg.tar.zst ;;
+  debian) format=apt package=snitchhiker_amd64.deb ;;
+  fedora) format=rpm package=snitchhiker-x86_64.rpm ;;
+esac
+e2e/vm.sh node ssh 'rm -rf /tmp/e2e-packages && mkdir -p /tmp/e2e-packages'
+e2e/vm.sh node put "target/e2e-packages/${package}" "/tmp/e2e-packages/${package}"
+e2e/vm.sh node put scripts/package-repos.sh /tmp/package-repos.sh
+e2e/vm.sh node ssh "sudo FORMAT=${format} bash -s" <<'REPO'
+set -euo pipefail
+export GNUPGHOME=/root/e2e-gnupg
+rm -rf "${GNUPGHOME}" /srv/e2e-repo && mkdir -m 700 "${GNUPGHOME}"
+gpg --batch --quiet --passphrase '' --quick-gen-key "snitchhiker e2e repository" ed25519 sign never
+key=$(gpg --batch --list-keys --with-colons | awk -F: '/^fpr/ {print $10; exit}')
+gpg --batch --armor --export "${key}" > /srv/e2e-repository.asc
+SNITCHHIKER_REPO_KEY=${key} bash /tmp/package-repos.sh "${FORMAT}" /tmp/e2e-packages /srv/e2e-repo
+chmod -R a+rX /srv/e2e-repo /srv/e2e-repository.asc
+case "${FORMAT}" in
   arch)
-    e2e/vm.sh node put target/e2e-packages/snitchhiker-x86_64.pkg.tar.zst /tmp/snitchhiker.pkg.tar.zst
-    # A pacman interrupted when the image was provisioned can leave its lock behind: once no pacman runs, a lock is
-    # stale.
-    e2e/vm.sh node ssh 'while pgrep -x pacman >/dev/null; do sleep 0.5; done; sudo rm -f /var/lib/pacman/db.lck;
-      sudo pacman -U --noconfirm /tmp/snitchhiker.pkg.tar.zst >/dev/null'
+    while pgrep -x pacman >/dev/null; do sleep 0.5; done; rm -f /var/lib/pacman/db.lck
+    pacman-key --add /srv/e2e-repository.asc >/dev/null 2>&1
+    pacman-key --lsign-key "${key}" >/dev/null 2>&1
+    grep -q '^\[snitchhiker\]' /etc/pacman.conf || printf '\n[snitchhiker]\nServer = file:///srv/e2e-repo/arch/$arch\n' >> /etc/pacman.conf
+    pacman -Sy --noconfirm snitchhiker >/dev/null
     ;;
-  debian)
-    e2e/vm.sh node put target/e2e-packages/snitchhiker_amd64.deb /tmp/snitchhiker.deb
-    e2e/vm.sh node ssh 'sudo apt-get install -y /tmp/snitchhiker.deb >/dev/null'
+  apt)
+    gpg --batch --yes --dearmor --output /usr/share/keyrings/snitchhiker.gpg /srv/e2e-repository.asc
+    echo 'deb [signed-by=/usr/share/keyrings/snitchhiker.gpg] file:/srv/e2e-repo/apt stable main' \
+      > /etc/apt/sources.list.d/snitchhiker.list
+    apt-get update -qq >/dev/null
+    apt-get install -y -qq snitchhiker >/dev/null
+    ;;
+  rpm)
+    printf '[snitchhiker]\nname=Snitchhiker\nbaseurl=file:///srv/e2e-repo/rpm/$basearch\ngpgcheck=1\nrepo_gpgcheck=1\ngpgkey=file:///srv/e2e-repository.asc\n' \
+      > /etc/yum.repos.d/snitchhiker.repo
+    dnf install -y -q snitchhiker >/dev/null
     ;;
 esac
+snitchhikerd --version >/dev/null
+REPO
 # Scenarios start their own daemons and bind the queues themselves: the packaged service (running in a VM kept from
 # scripts/ui-vm.sh) mustn't hold them.
 e2e/vm.sh node ssh 'sudo systemctl stop snitchhikerd; sudo pkill -x snitchhikerd || true'
