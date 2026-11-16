@@ -188,7 +188,7 @@ fn read_rpm(owners: &mut HashMap<Box<str>, Arc<str>>) {
         return;
     }
     let Ok(output) = std::process::Command::new("rpm")
-        .args(["-qa", "--queryformat", "[%{FILENAMES}\\t%{NAME}\\n]"])
+        .args(["-qa", "--queryformat", "[%{FILENAMES}\\t%{=NAME}\\n]"])
         .output()
     else {
         return;
