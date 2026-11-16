@@ -33,11 +33,13 @@ The **command line**, `snitchhiker`, is a client of the daemon. It talks to it o
 | Host names | Learned from the DNS answers each process receives, so rules can name hosts. |
 | Rules | Folders, three tiers, conditions on the program, its arguments and ancestors, the user, host names, networks, ports and protocol. Root's rule files in `rules.d` for provisioning. |
 | Monitor and learn | Record what a machine does without blocking anything, then turn it into rules to review. |
-| Prompts | Unmatched connections held while a client is asked, with rule suggestions from narrow to broad. Answered from the command line today. |
-| History | Every decision, with the bytes each connection sent and received. |
-| Packages | Debian and Arch packages for x86_64 and aarch64, with a hardened systemd unit. |
-
-In development, in this order: the desktop app, an MCP server through which coding agents can propose rules, remote nodes and a relay for machines behind NAT, the Android app, and rules for containers and VMs by their names.
+| Prompts | Unmatched connections held while a client is asked, with rule suggestions from narrow to broad. Answered in the desktop app, the Android app (from the notification too) or the command line. |
+| History | Every decision, with the bytes each connection sent and received; the Explorer groups it by program, host, port, user or container. |
+| Containers and VMs | Docker, Podman (rootful and rootless), LXC, nspawn, libvirt and QEMU VMs and named network namespaces, decided by their names, images and Compose services. |
+| Desktop app | Prompts, rules by folder, history, the Explorer, connections, the system firewall, alerts, agents' proposals and paired devices, for this machine and remote nodes. |
+| Phones and remote nodes | The Android app and the desktop app manage nodes over an encrypted peer-to-peer connection, through your own relay behind NAT, woken by push. |
+| Agents | Coding agents propose rules through an MCP server; a person approves them. |
+| Packages | Signed apt, pacman and dnf repositories for x86_64 and aarch64 (Debian and Ubuntu, Arch Linux, Fedora), with a hardened systemd unit. |
 
 ## What it doesn't do
 

@@ -91,7 +91,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 - **Your display session.** A genuine compositor lets clients type into the focused window (the virtual keyboard protocol); X11 lets any client read and drive any window. The app warns about X11 and unknown compositors; dangerous actions still need step-up.
 - **Many small changes.** Deleting rules one at a time, or adding many narrow rules, needs no step-up: each change is in the history and can be undone, and an administrator does the same every day.
 - **The `input` group** can type and click anywhere; the app warns when you are in it.
-- **Push payloads through FCM** carry the node's name and the prompt's reason, which Google can read; UnifiedPush delivers them encrypted.
+- **Push payloads through FCM** carry the node's name and, when it went offline, the reason it gave, which Google can read; UnifiedPush delivers them encrypted.
 - **A device's role** is read when it connects; unpairing ends its connections at once.
 - **Kernels before 6.5** have no peer pidfd: clients are refused there rather than checked less exactly.
 

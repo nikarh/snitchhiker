@@ -13,7 +13,7 @@ sidebar:
 | `mise run fmt` | Format the Rust code |
 | `mise run test` | The host-safe tests: unit and property tests, nothing privileged |
 | `mise run build` | Release build of the binaries |
-| `mise run package` | The `.deb` and Arch packages of a release build, into `out/` |
+| `mise run package` | The `.deb`, rpm and Arch packages of a release build, into `out/` |
 | `mise run e2e [filter]` | The end-to-end scenarios, in a throwaway VM |
 | `mise run vm:up`, `vm:ssh`, `vm:down` | The test VM by hand |
 | `mise run docs`, `docs:build` | The documentation: see [Writing the docs](/project/docs/) |
@@ -28,6 +28,10 @@ The crates' API documentation (rustdoc) is published with this site: [snitchhike
 - `crates/proto`: the [client protocol](/reference/protocol/): the schema in `proto/`, framing, conversions.
 - `crates/client`: a blocking client of a node's sockets.
 - `crates/daemon`: `snitchhikerd` and the `snitchhiker` command line: runtime, API, prompts, storage, DNS, process facts, peer verification.
+- `crates/remote`: the remote endpoint over iroh: keys, pairing, the streams to devices.
+- `crates/relay`: `snitchhiker-relay`, the relay and push gateway.
+- `crates/ui`: `snitchhiker-ui`, the desktop app (GPUI).
+- `crates/mobile`: the Rust core of the Android app (UniFFI); `android/` holds the app itself (Kotlin, Compose).
 - `crates/e2e`: the end-to-end scenarios, run in the VM.
 - `dist/`: the systemd unit, sysusers file, configuration and packaging.
 - `docs/`: the design plan (`plan.md`), decision records, release notes for maintainers.

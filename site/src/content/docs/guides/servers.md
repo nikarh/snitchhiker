@@ -27,7 +27,7 @@ Read it. Drop what shouldn't happen, merge what belongs together, and widen name
 
 ## 3. Provision the rules as files
 
-On a fleet, rules belong in your configuration management, not in each node's database. Put the files in [`rules_dir`](/reference/configuration/#rules_dir) (`/etc/snitchhiker/rules.d`): the daemon reads them at start and on `systemctl reload snitchhikerd`, and shows them to clients as **locked** folders (`Managed/<file>`) that nobody can change from an app. Rules made on the node, from prompts or by hand, live beside them in the database.
+On a fleet, rules belong in your configuration management, not in each node's database. Put the files in [`rules_dir`](/reference/configuration/#rules_dir) (`/etc/snitchhiker/rules.d`): the daemon reads them at start and on `systemctl reload snitchhikerd`, and shows them to clients as **locked** folders, one per file, named by the file's `[folder] name` (or after the file without one), that nobody can change from an app. Rules made on the node, from prompts or by hand, live beside them in the database.
 
 ```bash
 sudo install -m 0644 server.toml /etc/snitchhiker/rules.d/

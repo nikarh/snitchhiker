@@ -9,7 +9,7 @@ The packages start the daemon in **monitor mode**: nothing is blocked, and every
 
 ## 1. Install
 
-Install the package for your system ([Debian and Ubuntu](/install/linux/#debian-and-ubuntu), [Arch Linux](/install/linux/#arch-linux)), then start the service:
+Install the package for your system ([Debian and Ubuntu](/install/linux/#debian-and-ubuntu), [Arch Linux](/install/linux/#arch-linux), [Fedora](/install/linux/#fedora)), then start the service:
 
 ```bash
 sudo systemctl enable --now snitchhikerd
@@ -26,6 +26,7 @@ decided          214
 dropped events   0
 pending prompts  0
 clients          0
+open alerts      0
 ```
 
 ## 2. Watch

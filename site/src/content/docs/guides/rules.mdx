@@ -45,7 +45,7 @@ All conditions of a rule must hold. A condition with several values holds when a
 | `net` | the destination address is in the network | `192.0.2.10`, `2001:db8::/32`, `lan` |
 | `port` | the destination port is in the range | `443`, `8000-8999` |
 | `protocol` | the IP protocol is | `tcp`, `udp`, `icmp`, `icmpv6`, `47` |
-| `context` | the process runs in that kind of namespace | `host`, `container`, `netns`, `any` |
+| `context` | the process runs in that kind of namespace | `host`, `container`, `vm`, `netns`, `any` |
 | `container.name`, `container.image`, `container.compose`, `container.label` | the container it runs in is that one | `web-1`, `glob:docker.io/library/node:*`, `shop/web`, `tier=front` |
 | `sha256` | the executable's SHA-256 is one of these: that binary only, until an update replaces it | `9f86d0…` (64 hex digits) |
 | `writable` | a user other than root can (`true`) or can't (`false`) change the executable or the directories it is in | `true` |

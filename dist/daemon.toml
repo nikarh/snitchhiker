@@ -1,5 +1,6 @@
-# Snitchhiker daemon settings. Only root can change them; clients (the desktop and Android apps) can't.
-# After a change: systemctl restart snitchhikerd.
+# Snitchhiker daemon settings. Only root edits this file; after a change: systemctl restart snitchhikerd. Clients can
+# change the policy settings (mode, no_match, no_client, prompt_timeout_secs, on_timeout, retention_days) while the
+# daemon runs, over this file's values (`snitchhiker policy`); loosening them needs step-up.
 
 # enforce: rules and no_match decide. monitor: everything passes, and what would have happened is recorded
 # (`snitchhiker events`), to learn what a machine does before enforcing. Packages start in monitor mode.
@@ -34,8 +35,8 @@ fail = "closed"
 # `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
 #trusted_clients = []
 
-# What confirms a dangerous action a client asks for (a rule allowing every program to connect anywhere): polkit
-# (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`).
+# What confirms a dangerous action a client asks for (a rule that allows broadly, naming no particular program or
+# destination; a looser policy; pairing a device): polkit (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`).
 #step_up = "polkit"
 
 # The local users who administer the node through the desktop app: members of these groups (those who may become root,
@@ -57,3 +58,31 @@ fail = "closed"
 # (X-Snitchhiker-Signature: sha256=<HMAC-SHA256 of the body>).
 #alert_webhook = "https://hooks.example.org/snitchhiker"
 #alert_webhook_secret_file = "/etc/snitchhiker/webhook-secret"
+
+# The group the client binaries are setgid to, and the client socket belongs to (made by the package).
+#client_group = "snitchhiker-ui"
+
+# Programs that may propose rules on the agent socket (patterns as rules write them). Empty: any program, its
+# proposals marked as not from a known agent.
+#agent_programs = []
+
+# Accept paired devices over the network: phones, the desktop app on other machines. The relays (your own
+# snitchhiker-relay) the node keeps a connection to, so devices reach it behind NAT; the UDP port of the remote
+# endpoint (0: any free port); and whether the node announces itself on the local network (mDNS).
+#remote = false
+#relays = ["https://relay.example.org/"]
+#remote_port = 0
+#lan_discovery = true
+
+# Who is notified of a prompt: every client (all), or the clients on this machine first and the remote devices when
+# none listens, the sessions are locked or idle, or after escalate_after_secs (escalate).
+#prompt_routing = "all"
+#escalate_after_secs = 20
+
+# The push gateway's endpoint id (a snitchhiker-relay with [push], reached through relays): it wakes the devices for
+# prompts, and tells them when the node has been gone for offline_after_secs.
+#push_gateway = ""
+#offline_after_secs = 120
+
+# The largest blocklist fetched, in bytes.
+#blocklist_max_bytes = 67108864

@@ -54,7 +54,7 @@ Every condition is a list; it holds when any of its values does, and a rule hold
 | `exe` | paths or patterns: exact, `glob:…` or `re:…`, optionally starting with `{home}` |
 | `cmdline` | patterns |
 | `parent` | patterns |
-| `app` | patterns (reserved) |
+| `app` | patterns over the program's identities: `pkg:<package>`, `nix:<name>`, `unit:<service>`, `snap:<name>` |
 | `uid` | numbers |
 | `host` | `name`, `*.name`, or `re:` and a regular expression over the whole name (case-insensitive) |
 | `net` | addresses, CIDR ranges, aliases (`loopback`, `lan`, `multicast`, `imds`, `cgnat`) |
@@ -71,6 +71,10 @@ Every condition is a list; it holds when any of its values does, and a rule hold
 | `vm.name` | patterns over the VM's name |
 | `vm.uuid`, `vm.hypervisor` | UUIDs; `qemu`, ... |
 | `netns` | patterns over the names of network namespaces (`ip netns`) |
+| `list` | names of [blocklists](/guides/blocklists/): the destination's name or address is on one |
+| `sha256` | SHA-256s of the executable, in hex: the binary pinned |
+| `writable` | one value, not a list: `true` when a user other than root can change the executable, `false` when only root can |
+| `session` | processes as `pid@start`: the rule holds for them and what they start (agents' session rules) |
 
 A `container.*`, `vm.*` or `netns` key limits the rule to that kind of context, as `context` would:
 

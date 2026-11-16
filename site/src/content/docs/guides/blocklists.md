@@ -10,11 +10,11 @@ A blocklist is a list of domains or addresses kept up to date by someone else: a
 ## Adding a list
 
 ```sh
-snitchhiker lists add ads https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
-snitchhiker rules add deny --list ads --any-context --name "ads and trackers"
+sudo snitchhiker lists add ads https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
+sudo snitchhiker rules add deny --list ads --any-context --name "ads and trackers"
 ```
 
-The first command fetches the list at once and then every day (`--every 12h` for another interval, at least `15m`). The second blocks everything on it, from the host and from containers and VMs alike. A list can also be a file on the node, in `/etc/snitchhiker/lists/`: `snitchhiker lists add ours /etc/snitchhiker/lists/blocked.txt` reads it on the same schedule. Files anywhere else, and links from that directory to elsewhere, are refused: anyone allowed to add lists could otherwise have the daemon, which runs as root, read any file.
+The first command fetches the list at once and then every day (`--every 12h` for another interval, at least `15m`). The second blocks everything on it, from the host and from containers and VMs alike. A list can also be a file on the node, directly in `/etc/snitchhiker/lists/`: `snitchhiker lists add ours /etc/snitchhiker/lists/blocked.txt` reads it on the same schedule. Files anywhere else, and links from that directory to elsewhere, are refused: anyone allowed to add lists could otherwise have the daemon, which runs as root, read any file.
 
 `list` is a condition like any other, so it combines with them. `--list ads --exe /usr/bin/firefox` blocks the list for Firefox only; an allow rule with a list (`--list partners --port 443`) allows what is on it. Be careful with the latter: whoever controls the list then decides what is allowed.
 
@@ -43,7 +43,7 @@ A list whose fetch failed is tried again after an hour. Unchanged lists aren't d
 ## Seeing what a list does
 
 ```sh
-snitchhiker lists
+sudo snitchhiker lists
 ```
 
 ```

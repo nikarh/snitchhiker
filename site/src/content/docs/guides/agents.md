@@ -88,7 +88,7 @@ An agent that keeps proposing what you don't want can be muted: **Deny and mute 
 Some proposals you would approve every time: a build fetching from the package registries, in your own projects. An **envelope** approves those without asking. It says which projects (the agent's working directory), which hosts (names, and `*.name` for subdomains, never addresses), and optionally which ports and programs:
 
 ```sh
-snitchhiker envelopes add registries --project 'glob:{home}/workspace/**' \
+sudo snitchhiker envelopes add registries --project 'glob:{home}/workspace/**' \
   --host registry.npmjs.org --host crates.io --host '*.crates.io' --port 443
 ```
 

@@ -25,10 +25,11 @@ Asset names never change, so `https://github.com/nikarh/snitchhiker/releases/lat
 | --- | --- |
 | `snitchhiker_{amd64,arm64}.deb` | The Debian and Ubuntu package |
 | `snitchhiker-{x86_64,aarch64}.pkg.tar.zst` | The Arch Linux package |
-| `snitchhiker-ui_{amd64,arm64}.deb`, `snitchhiker-ui-{x86_64,aarch64}.pkg.tar.zst` | The desktop app's packages |
+| `snitchhiker-{x86_64,aarch64}.rpm` | The Fedora package |
+| `snitchhiker-ui_{amd64,arm64}.deb`, `snitchhiker-ui-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-ui-{x86_64,aarch64}.rpm` | The desktop app's packages |
 | `snitchhikerd-{x86_64,aarch64}-linux-gnu` | The daemon alone (also the command line, when run as `snitchhiker`) |
 | `snitchhiker-ui-{x86_64,aarch64}-linux-gnu` | The desktop app alone: it has to be installed setgid and registered, as its package does |
-| `snitchhiker-relay_{amd64,arm64}.deb`, `snitchhiker-relay-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-relay-{x86_64,aarch64}-linux-gnu` | [The relay](/install/relay/) |
+| `snitchhiker-relay_{amd64,arm64}.deb`, `snitchhiker-relay-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-relay-{x86_64,aarch64}.rpm`, `snitchhiker-relay-{x86_64,aarch64}-linux-gnu` | [The relay](/install/relay/) |
 | `snitchhiker-android-foss.apk`, `snitchhiker-android-play.apk` | [The Android app](/install/android/) |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums of all of the above and their detached GPG signature |
 

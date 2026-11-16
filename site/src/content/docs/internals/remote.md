@@ -24,7 +24,7 @@ The node's endpoint accepts three ALPNs:
 | `snitchhiker-pair/1` | Pairing with a link's one-time secret: one `PairRequest` frame, one `PairResponse`. |
 | `snitchhiker-code/1` | A pairing code's meeting point (a separate, temporary endpoint; below). |
 
-Inside the daemon, each QUIC stream is bridged to a local socket pair and served by the same code as a local connection, with the role the device was paired with. The node's own packets (to its relay, to devices) are recognised by the process the kernel names for their socket, and never decided by the node's rules.
+Inside the daemon, each QUIC stream is bridged to a local socket pair and served by the same code as a local connection, with the role the device was paired with. The node's own packets (to its relay, to devices) are never decided by its rules: the kernel lets through what the service's own cgroup sends before anything is queued ([How it works](/internals/how-it-works/#the-table)).
 
 ## Keys and pairing
 

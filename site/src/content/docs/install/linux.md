@@ -28,7 +28,7 @@ curl -fsSL https://nikarh.github.io/snitchhiker/repo/snitchhiker.asc -o snitchhi
 sudo pacman-key --add snitchhiker.asc
 sudo pacman-key --lsign-key 6CFD4BB8304387DB6245A35F87F91E1FCC9299C5
 printf '\n[snitchhiker]\nServer = https://nikarh.github.io/snitchhiker/repo/arch/$arch\n' | sudo tee -a /etc/pacman.conf
-sudo pacman -Sy snitchhiker
+sudo pacman -Syu snitchhiker
 sudo systemctl enable --now snitchhikerd
 ```
 
@@ -79,6 +79,7 @@ systemctl --user enable --now snitchhiker-ui
 | `/usr/lib/sysusers.d/snitchhiker.conf` | The `snitchhiker-ui` group of the client binaries |
 | `/usr/share/polkit-1/actions/org.snitchhiker.manage.policy` | The polkit action for [step-up](/internals/security/#dangerous-actions-need-more-than-a-session) (the Debian and Fedora packages recommend `polkitd`/`polkit`; on Arch, install `polkit`) |
 | `/etc/snitchhiker/daemon.toml` | The [configuration](/reference/configuration/), in monitor mode. Kept on upgrades once changed |
+| `/etc/snitchhiker/lists/` | Where local [blocklists](/guides/blocklists/) are read from: the only place they may be |
 
 At run time the daemon keeps its database in `/var/lib/snitchhiker/` and its sockets in `/run/snitchhiker/`. It reads rule files from `/etc/snitchhiker/rules.d/` if that directory exists.
 
@@ -98,6 +99,10 @@ The daemon runs as root with only the capabilities it uses:
 | `CAP_CHOWN` | Giving the client socket to the `snitchhiker-ui` group |
 
 It sees the system read-only (`ProtectSystem=strict`, `ProtectHome=read-only`) apart from its state and runtime directories, can't gain privileges, and may open only unix, netlink and IP sockets. The unit has the full list.
+
+## Upgrading
+
+The system's updates (`apt upgrade`, `pacman -Syu`, `dnf upgrade`) bring new versions from the repository, which holds the newest release. The package doesn't restart the running daemon: `sudo systemctl restart snitchhikerd` when convenient (with `fail = "closed"`, new connections wait in the queue meanwhile, rather than getting out undecided). A changed `daemon.toml` is kept; the database is migrated when the new daemon starts, keeping the rules and the history. Clients and nodes of the same major version understand each other in both directions, so the apps and the nodes needn't be upgraded together.
 
 ## Removing it
 

@@ -1,11 +1,11 @@
 ---
 title: The system firewall
-description: The base packet filter beside the application rules — inbound and forward policies, and rules by protocol, address, port, interface and connection state.
+description: 'The base packet filter beside the application rules: inbound and forward policies, and rules by protocol, address, port, interface and connection state.'
 ---
 
 Application rules decide which **programs** may connect out. The system firewall is the other half: a plain packet filter for what comes **in** (and what is routed through the machine), by protocol, address, port, interface and connection state. It lives in its own nftables table, `inet snitchhiker_system`, next to the daemon's.
 
-It starts **off**, with OpenSnitch's defaults ready to use: ICMP and ICMPv6 echo and "unreachable" messages allowed, and four rules present but switched off — SSH from anywhere, loopback addresses, WireGuard's port, and handing forwarded connections to the daemon to decide like an application's.
+It starts **off**, with OpenSnitch's defaults ready to use: ICMP and ICMPv6 echo and "unreachable" messages allowed, and four rules present but switched off: SSH from anywhere, loopback addresses, WireGuard's port, and handing forwarded connections to the daemon to decide like an application's.
 
 ## Turning it on
 

@@ -20,18 +20,19 @@ An unprivileged process, including one running as your own user (a compromised d
 
 ## The daemon's sockets
 
-The daemon is the server; clients connect to it. Both sockets are in `/run/snitchhiker/`, a root-owned directory only root can write.
+The daemon is the server; clients connect to it. Its sockets are in `/run/snitchhiker/`, a root-owned directory only root can write.
 
 | Socket | Owner and mode | Who gets in | Role |
 | --- | --- | --- | --- |
 | `admin.sock` | `root:root 0600` | processes running as root (checked again with `SO_PEERCRED`) | everything |
-| `client.sock` | `root:snitchhiker-ui 0660` | Snitchhiker's client binaries, verified as below | read, answer prompts, change rules |
+| `client.sock` | `root:snitchhiker-ui 0660` | Snitchhiker's client binaries, verified as below | for members of the [admin groups](#who-administers-the-node): read, answer prompts, change rules; for other users: read |
+| `agent.sock` | `root:root 0666` | any process | propose rules, and see its own blocked connections ([Agents](/guides/agents/)) |
 
 ## Clients
 
 Passwords, tokens and keys stored for a client fail against a process of the same user: it can read whatever the client can. Snitchhiker identifies the client **process** instead, from facts only the kernel and root can establish. Nothing the client sends counts.
 
-The client binaries (the desktop app, later the MCP server) are installed root-owned and **setgid** to the `snitchhiker-ui` group. Users aren't members of that group, so running an installed client binary is the only way a process of theirs gets it. The kernel then also makes the process non-dumpable: other processes of the same user can't attach to it with ptrace, read its memory or get its core dump. glibc's loader ignores `LD_PRELOAD` and the like for it.
+The client binaries (the desktop app) are installed root-owned and **setgid** to the `snitchhiker-ui` group. Users aren't members of that group, so running an installed client binary is the only way a process of theirs gets it. The kernel then also makes the process non-dumpable: other processes of the same user can't attach to it with ptrace, read its memory or get its core dump. glibc's loader ignores `LD_PRELOAD` and the like for it.
 
 When a process connects to `client.sock`, the daemon takes a pidfd for it from the kernel (`SO_PEERPIDFD`, Linux 6.5) and checks, in this order:
 

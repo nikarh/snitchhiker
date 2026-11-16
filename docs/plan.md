@@ -2282,9 +2282,10 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] Refresh schedule, integrity (size limits, format checks), stats per list.
 - [x] **Performance pass**
   - [x] Benches in CI with regression thresholds, a 10M-event dataset, memory caps in daemon and clients.
-- [ ] **Docs completeness**
-  - [ ] Every page in [§10.7](#107-documentation-site)'s structure exists and is current; FAQ and troubleshooting;
-        a full read-through for structure and tone; every screenshot regenerated.
+- [x] **Docs completeness**
+  - [x] Every page in [§10.7](#107-documentation-site)'s structure exists and is current; FAQ and troubleshooting;
+        a full read-through for structure and tone (every claim checked against the code); every screenshot
+        regenerated.
 - **DoD:** 1.0 release candidate. Docs are complete, and the security model has been reviewed against [§4](#4-security-model)
   with its tests.
 

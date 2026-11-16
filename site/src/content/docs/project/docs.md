@@ -20,11 +20,11 @@ Both install the dependencies first. Node comes from `mise.toml`.
 
 | Directory | Sidebar group | For |
 | --- | --- | --- |
-| `start/` | Getting started | introduction, quick start |
-| `install/` | Install | packages, verifying downloads |
-| `guides/` | Guides | rules, prompts |
-| `reference/` | Reference | configuration, command line, rule files, protocol, changelog |
-| `internals/` | How it works | deciding a connection, security |
+| `start/` | Getting started | introduction, quick start, FAQ |
+| `install/` | Install | Linux packages and the desktop app, the Android app, the relay, verifying downloads |
+| `guides/` | Guides | prompts, rules, the Explorer, containers and VMs, phones and remote nodes, alerts, blocklists, agents, servers, the system firewall, OpenSnitch, coexistence, troubleshooting |
+| `reference/` | Reference | configuration, command line, rule files, query language, protocol, MCP, changelog |
+| `internals/` | How it works | deciding a connection, security, the threat model, remote |
 | `project/` | Project | development, docs, releasing |
 
 The sidebar is generated from the directories; order pages with `sidebar.order` in their frontmatter. A new page needs `title` and `description` frontmatter, and no H1.
@@ -35,10 +35,10 @@ The [protocol schema](/reference/protocol/#schema) is read from `proto/` when th
 
 Every change to behaviour updates the docs in the same commit:
 
-- A new or changed setting: `reference/configuration.md` and `dist/daemon.toml`.
-- A new or changed rule condition, alias or precedence: `guides/rules.md` and `reference/rule-files.md`.
+- A new or changed setting: `reference/configuration.mdx` and `dist/daemon.toml`.
+- A new or changed rule condition, alias or precedence: `guides/rules.mdx` and `reference/rule-files.md`.
 - A change to prompts or suggestions: `guides/prompts.md`.
-- A new command or option: `reference/cli.md`.
+- A new command or option: `reference/cli.mdx`.
 - A change to the protocol: `reference/protocol.mdx` for anything the schema's comments don't say.
 - A change to what the daemon trusts or checks: `internals/security.md`.
 

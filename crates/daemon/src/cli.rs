@@ -170,8 +170,8 @@ Commands:
                                   Let a device do what it asked, or refuse it (it waits up to two minutes)
   mcp                             An MCP server on stdin and stdout, for coding agents (run as the user, by the
                                   agent: `claude mcp add snitchhiker -- snitchhiker mcp`)
-  audit [--limit <n>]             The dangerous actions clients asked for (allow-everything rules), who asked,
-                                  and whether step-up authorized them
+  audit [--limit <n>]             The dangerous actions clients asked for (broad rules, a looser policy,
+                                  pairing...), who asked, and whether step-up authorized them
   version                         Print the version
 
 Options:

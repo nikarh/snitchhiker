@@ -10,7 +10,7 @@ import help from '../../../generated/cli-help.txt?raw';
 import daemonHelp from '../../../generated/daemon-help.txt?raw';
 
 
-`snitchhiker` talks to the running daemon over `/run/snitchhiker/admin.sock`, which only root can open: run it with `sudo`. It is the daemon's own binary, run under another name.
+`snitchhiker` talks to the running daemon over `/run/snitchhiker/admin.sock`, which only root can open: run it with `sudo`. The exception is `snitchhiker mcp`, which an agent runs as you, on the agent socket ([Agents](/guides/agents/)). It is the daemon's own binary, run under another name.
 
 ```text
 snitchhiker <command> [options]
@@ -77,6 +77,12 @@ Conditions of `rules add`, all of which must hold; repeat an option for alternat
 | `--port <n[-m]>` | A port or a range |
 | `--uid <n>` | A user id |
 | `--protocol <tcp\|udp\|icmp\|icmpv6\|n>` | The IP protocol |
+| `--app <identity>` | The program's identity: `pkg:<package>`, `nix:<name>`, `unit:<service>`, `snap:<name>` |
+| `--sha256 <hex>` | The executable's SHA-256: that binary only |
+| `--writable <true\|false>` | Whether a user other than root can change the executable |
+| `--container <name>`, `--image <reference>`, `--compose <project/service>`, `--container-id <id>` | In that container only ([Containers and VMs](/guides/containers/)) |
+| `--vm <name>`, `--netns <name>` | In that VM, or named network namespace, only |
+| `--list <name>` | The destination is on that [blocklist](/guides/blocklists/) |
 | `--any-context` | Also for processes in containers and other namespaces |
 
 ```bash
@@ -90,15 +96,15 @@ sudo snitchhiker rules add deny --host '*.example.net' --tier override
 | --- | --- |
 | `folders` | List the folders, with their path and how many rules each holds |
 | `folders add <name> [--parent <id>]` | Add a folder |
-| `folders rm <id>` | Delete a folder, the folders in it and all their rules. More than 20 rules is a [dangerous action](/internals/security/#dangerous-actions-need-more-than-a-session) |
+| `folders rm <id>` | Delete a folder, the folders in it and all their rules. Turning off more than 20 rules at once is a [dangerous action](/internals/security/#dangerous-actions-need-more-than-a-session) |
 
 ## `explore`
 
 ```text
-snitchhiker explore [--by <program|host|port|user>] [--hours <n>] [--where <dimension>=<value>]
+snitchhiker explore [--by <program|host|port|user|container>] [--hours <n>] [--where <dimension>=<value>] [--bytes] [--compare]
 ```
 
-The connections of the last `n` hours (24 by default), grouped by program (the default), host, port or user, busiest first, with how many were allowed and blocked and their bytes. `--where` narrows them to one program, host (empty: no name), port or user: `--by host --where program=/usr/bin/curl` lists where curl connects. The answer comes from hourly rollups, so it takes as long for a month of history as for an hour.
+The connections of the last `n` hours (24 by default), grouped by program (the default), host, port, user or container, busiest first (by bytes with `--bytes`: the top talkers), with how many were allowed and blocked and their bytes. `--where` narrows them to one program, host (empty: no name), port or user: `--by host --where program=/usr/bin/curl` lists where curl connects. `--compare` adds the period before, and marks what is new in this one. The answer comes from hourly rollups, so it takes as long for a month of history as for an hour.
 
 ## `connections` and `kill`
 
@@ -116,7 +122,7 @@ snitchhiker history [--limit <n>]
 snitchhiker undo <change>
 ```
 
-`history` lists the changes to rules and folders, newest first (50 by default): id, batch, time, who made it (`cli`, `desktop`, a prompt answered from either) and what changed. `undo` undoes every change of a change's batch, as a new batch; it is refused when something it would put back was changed again since. See [Rules](/guides/rules/#history-and-undo).
+`history` lists the changes to rules and folders, newest first (50 by default): id, batch, time, who made it (`cli`, `desktop`, `android`, a prompt answered from one of them, an agent's approved proposal or envelope, `docker` or `podman` for a removed container's rules) and what changed. `undo` undoes every change of a change's batch, as a new batch; it is refused when something it would put back was changed again since. See [Rules](/guides/rules/#history-and-undo).
 
 ## `events`
 
@@ -160,6 +166,26 @@ Prints a rule file with a rule for each program, destination and port that no ru
 
 Durations: `once` (no rule), `restart`, `hour`, `12h`, `forever` (default). See [Prompts](/guides/prompts/#answering).
 
+## `lists`
+
+The [blocklists](/guides/blocklists/): `lists` shows them with their entries and what they decided, `lists add <name> <source>` adds one (an `https://` URL, or a file directly in `/etc/snitchhiker/lists/`), `lists refresh` fetches one now, `lists rm` deletes one.
+
+## `contexts`
+
+The containers, VMs and named network namespaces connections came from in the last hours, with their connections and bytes; with a name, that one's programs. See [Containers and VMs](/guides/containers/).
+
+## `proposals` and `envelopes`
+
+Coding agents' [proposals](/guides/agents/#reviewing): list, show, approve or deny them (`--mute` stops an agent's later ones). Envelopes approve proposals within bounds without asking; adding or removing one is a dangerous action. See [Agents](/guides/agents/#envelopes).
+
+## `pair`, `devices` and `approvals`
+
+`pair` prints a one-time code, link and QR code for a phone or another machine's app ([Pairing a device](/guides/remote/#pairing-a-device)); `--role viewer` pairs one that can't change anything. `devices` lists the paired devices, and `devices rm` unpairs one. `approvals` lists the dangerous actions remote devices asked for, waiting for someone here; `approvals approve` or `deny` decides one.
+
+## `mcp`
+
+The MCP server coding agents start (as you, not with `sudo`): see [Agents](/guides/agents/).
+
 ## `audit`
 
 ```text
@@ -179,11 +205,14 @@ snitchhikerd [--config <path>]
 snitchhikerd [--config <path>] trust-client <path>
 snitchhikerd [--config <path>] untrust-client <path>
 snitchhikerd [--config <path>] trusted-clients
+snitchhikerd [--config <path>] seal-key
 ```
 
 <Code code={daemonHelp} lang="text" title="snitchhikerd --help" />
 
 The daemon, started by its systemd unit. `--config` reads another [configuration](/reference/configuration/) file than `/etc/snitchhiker/daemon.toml`. `SIGHUP` (`systemctl reload snitchhikerd`) reads the rules again; `SIGTERM` and `SIGINT` stop it. Logs go to the journal; `RUST_LOG` sets their level (`info` by default).
+
+`seal-key` seals the node's remote key with `systemd-creds`, to the TPM or the host's key, and deletes the plaintext; the service imports it from its next start ([Where the keys are](/guides/remote/#where-the-keys-are)).
 
 ### Trusted clients
 

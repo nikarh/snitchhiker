@@ -17,9 +17,10 @@ Local clients connect to a unix stream socket of the node:
 | Socket | For | Role |
 | --- | --- | --- |
 | `/run/snitchhiker/admin.sock` | processes running as root | `ROLE_ROOT` |
-| `/run/snitchhiker/client.sock` | Snitchhiker's verified client binaries ([Security](/internals/security/#clients)) | `ROLE_ADMIN` |
+| `/run/snitchhiker/client.sock` | Snitchhiker's verified client binaries ([Security](/internals/security/#clients)) | `ROLE_ADMIN` for members of [`admin_groups`](/reference/configuration/#admin_groups), `ROLE_VIEWER` for other users |
+| `/run/snitchhiker/agent.sock` | any process: coding agents, through `snitchhiker mcp` ([Agents](/guides/agents/)) | `ROLE_AGENT` |
 
-Remote clients (the Android app, later) will reach nodes over an encrypted peer-to-peer connection that carries the same frames.
+Remote clients (the Android app, the desktop app for other machines) reach nodes over an encrypted peer-to-peer connection that carries the same frames ([Remote](/internals/remote/)).
 
 ## Framing
 
@@ -45,8 +46,8 @@ A client must not send requests before it has the `Welcome`.
 | Role | May |
 | --- | --- |
 | `ROLE_ROOT` | everything |
-| `ROLE_ADMIN` | everything a client app needs: read, answer prompts, change rules |
-| `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `ListAudit`, `Subscribe`, `Unsubscribe` |
+| `ROLE_ADMIN` | everything a client app needs: read, answer prompts, change rules. Local users in the node's [`admin_groups`](/reference/configuration/#admin_groups), and devices paired as admins |
+| `ROLE_VIEWER` | read only: `GetStatus`, `ListRules`, `ExportRules`, `ListEvents`, `ListPrompts`, `ListAudit`, `ListChanges`, `Explore`, `ListConnections`, `Explain`, `LintRules`, `GetPolicy`, `ListTrustedClients`, `GetSystemFirewall`, `ListAlerts`, `ListAlertRules`, `ListBlocklists`, `ListEnvelopes`, `ListProposals`, `ListDevices`, `ListApprovals`, `Subscribe`, `Unsubscribe`, and `SetPushTarget` for itself. Other local users, and devices paired as viewers. A viewer subscribed to prompts sees them but isn't someone to ask |
 | `ROLE_AGENT` | the agent socket's, for [agents](/guides/agents/): `GetStatus`, `CheckConnection`, `RecentBlocked`, `ProposeRules`, and `GetProposal`, `WithdrawProposal` and `AnnotatePending` for its own proposals and prompts. It changes nothing |
 
 A request the role doesn't allow gets an `ERROR_CODE_FORBIDDEN` error. Rules that can't be changed through the protocol (the System folder, root's `rules.d` files) are listed with `locked` set, and changing one gets `ERROR_CODE_LOCKED`.
@@ -61,10 +62,10 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `ListRules` | `RuleList` | Every folder and rule, locked ones included |
 | `AddRule` | `RuleAdded` | Stores a rule; returns its id |
 | `DeleteRule` | `Done` | |
-| `UpdateRule` | `Done` | Replaces a stored rule; an allow-everything rule needs step-up |
+| `UpdateRule` | `Done` | Replaces a stored rule |
 | `AddFolder` | `FolderAdded` | |
 | `UpdateFolder` | `Done` | Its name, parent, enabled and scope; a folder can't go inside itself |
-| `DeleteFolder` | `Done` | With the folders below it and their rules; more than 20 rules needs step-up |
+| `DeleteFolder` | `Done` | With the folders below it and their rules |
 | `ListChanges` | `ChangePage` | The history of rules and folders, newest first |
 | `ListConnections` | `ConnectionList` | The live connections, with their programs |
 | `KillConnection` | `Done` | Closes a live socket, as a reject does |
@@ -86,10 +87,31 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `AnnotatePending` | `Done` | A note on a prompt the agent's own process opened (agent) |
 | `ListProposals` | `ProposalList` | Proposals, newest first |
 | `DecideProposal` | `Proposal` | Approves (with the rules as edited, for a duration) or denies, with a reason the agent is told; a marked rule needs step-up |
+| `Explain` | `Explanation` | Why a recorded connection (by its `seq`) is decided as it is by today's rules |
+| `LintRules` | `LintReport` | Rules that never match, are shadowed, unused for `unused_days`, could merge, or name a moved binary |
+| `EditRules` | `Done` | One edit (enable, move, action, expiry, delete) of many rules, as one batch |
+| `GetPolicy` | `NodePolicy` | The policy in effect, and which settings clients changed |
+| `SetPolicy` | `NodePolicy` | Changes settings while the node runs (over `daemon.toml`) |
+| `ListTrustedClients` | `TrustedClients` | The client binaries allowed on `client.sock` |
+| `GetSystemFirewall` | `SystemFirewall` | The inbound and forward rules the node keeps |
+| `SetSystemFirewall` | `SystemFirewall` | Replaces it; with `revert_after_secs`, undone then unless confirmed |
+| `ConfirmSystemFirewall` | `Done` | Keeps a change made with a revert time |
+| `ListAlerts` | `AlertPage` | Alerts, newest first |
+| `AcknowledgeAlerts` | `Done` | Some alerts, or every open one |
+| `ListAlertRules`, `PutAlertRule`, `DeleteAlertRule` | `AlertRules` | The alert rules (queries with a threshold and window), after the change |
+| `StartPairing` | `Pairing` | A one-time code, link and QR code for a device to pair with |
+| `ListDevices` | `DeviceList` | The paired devices |
+| `RemoveDevice` | `Done` | Unpairs a device and closes its connections |
+| `ListApprovals` | `ApprovalList` | Devices' dangerous requests waiting for a local approval |
+| `DecideApproval` | `Done` | Approves or refuses one (not from a device) |
+| `SetDeviceMuted` | `Done` | Whether a device is told of prompts |
+| `SetPushTarget` | `Done` | Where the calling device is woken (its push endpoint) |
+| `ListBlocklists`, `PutBlocklist`, `DeleteBlocklist`, `RefreshBlocklist` | `Blocklists` | The [blocklists](/guides/blocklists/), after the change |
+| `ListEnvelopes`, `PutEnvelope`, `DeleteEnvelope` | `Envelopes` | Agents' pre-authorized envelopes, after the change |
 | `Subscribe` | `Subscribed` | Starts a subscription; returns its id |
 | `Unsubscribe` | `Done` | |
 
-A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`. A dangerous request (a rule that allows programs to connect broadly, for one) from a client needs polkit's authorization of the client's process, which the node asks for while the request waits; without it the answer is `ERROR_CODE_NOT_AUTHORIZED` ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)).
+A node that doesn't know a method (an older node) answers `ERROR_CODE_UNSUPPORTED`. A dangerous request from a client needs polkit's authorization of the client's process, which the node asks for while the request waits; without it the answer is `ERROR_CODE_NOT_AUTHORIZED`. What makes a change to rules, folders or the policy dangerous is what it leaves in force, whatever the method (`AddRule`, `UpdateRule`, `SetRuleEnabled`, `UpdateFolder`, `EditRules`, `ImportRules`, `Undo`, `SetPolicy`...): a rule that allows broadly, more than 20 rules turned off, a looser policy ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). So are `StartPairing`, unpairing or muting another device, a looser system firewall, envelopes, and approving a proposal with marked rules.
 
 Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 
@@ -104,8 +126,9 @@ Addresses are bytes: 4 for IPv4, 16 for IPv6. Times are Unix milliseconds.
 | `TOPIC_RULES` | `RulesChanged`: list the rules again |
 | `TOPIC_ALERTS` | `Alert` as each is raised, `AlertsChanged` when alerts are acknowledged |
 | `TOPIC_PROPOSALS` | `Proposal` as each is made and whenever its state changes; subscribing sends those waiting first |
+| `TOPIC_APPROVALS` | `Approval` as each device's dangerous request starts waiting for a local approval, and as it is decided; subscribing sends those waiting first |
 
-A subscription to `TOPIC_PROMPTS` is also what makes a node ask: with no subscriber, `no_client` decides instead of a prompt.
+A subscription to `TOPIC_PROMPTS` by a client that may answer (not a viewer) is also what makes a node ask: with none, and no device to wake, `no_client` decides instead of a prompt.
 
 ### Resuming
 
@@ -141,7 +164,7 @@ All numbers are little-endian, and nothing needs alignment. A reader finds colum
 
 **Strings travel once.** Blocks refer to programs and host names by the node's interned string ids, stable for its epoch. The `dictionary` of an `EventBlock` holds the ids it uses that this connection hasn't been sent before, with their strings: a client keeps one dictionary per node and adds to it from every block. The node decides a block's dictionary as it queues the block, so a client never receives an id before its string.
 
-Remote connections will also compress bulk data with zstd, in streaming mode; local sockets don't. Why blocks rather than FlatBuffers or rkyv: [decision 0007](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0007-wire-format.md).
+Why blocks rather than FlatBuffers or rkyv: [decision 0007](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0007-wire-format.md).
 
 ## Versioning
 

@@ -81,13 +81,13 @@ Every query the daemon makes is checked by SQLite's query planner, in the tests,
 
 ## Performance
 
-The budgets below are measured by `cargo bench -p snitchhiker-daemon --bench budgets` over a synthetic history of ten million connections, and CI fails when one is missed:
+The budgets below are measured over a synthetic history: CI checks them on a million connections (`mise run perf`) and fails when one is missed, and `mise run perf:full` on ten million:
 
 | What | Budget |
 | --- | --- |
 | Deciding a connection with 10 000 rules (receive, attribute, match, verdict) | p99 under 50 µs |
 | Recording the history | 50 000 events a second |
-| A query of the history or the Explorer, over ten million events | under 20 ms |
+| A query of the history or the Explorer | under 20 ms, on ten million events too |
 | The daemon's memory, with 10 000 rules and a million stored events | under 50 MB (`daemon/memory-stays-within-budget`) |
 
 The service's unit caps its memory at 384 MB (`MemoryMax`), throttling it from 256 MB: far above what it uses, so a leak is throttled and restarted rather than starving the machine.

@@ -16,7 +16,7 @@ It does the same job (asking which programs may connect where), and imports Open
 
 ## Will it break my machine?
 
-Not by being installed: the packages start in **monitor mode**, which records everything and blocks nothing ([Quick start](/start/quick-start/)). Once enforcing, what happens to connections no rule allows is yours to choose (`no_match`), and so is what happens while the daemon isn't running (`fail`: closed by default, open for a machine you reach over the network). Loopback and the daemon's own traffic are allowed by the built-in System folder.
+Not by being installed: the packages start in **monitor mode**, which records everything and blocks nothing ([Quick start](/start/quick-start/)). Once enforcing, what happens to connections no rule allows is yours to choose (`no_match`), and so is what happens while the daemon isn't running (`fail`: closed by default, open for a machine you reach over the network). Loopback is allowed by the built-in System folder, and the daemon's own traffic is never queued.
 
 ## Does it slow the network down?
 
@@ -40,7 +40,7 @@ Yes: that is what monitor mode, `snitchhiker learn` and the command line are for
 
 ## Can malware just turn it off?
 
-Not without root. The daemon runs as root; clients reach it through a socket that only trusted, root-installed client binaries may use, and dangerous actions (turning interception off, allowing every program everywhere, pairing a device) need an administrator's password or an approval on another device. Malware running as you can make connections a prompt asks about, or propose rules as an agent would, but a person decides ([Security model](/internals/security/)). Malware running as root can do anything, including removing any firewall.
+Not without root. The daemon runs as root; clients reach it through a socket that only trusted, root-installed client binaries may use, and dangerous actions (turning interception off, a rule that allows broadly, pairing a device) need an administrator's password or an approval on another device. Malware running as you can make connections a prompt asks about, or propose rules as an agent would, but a person decides ([Security model](/internals/security/)). Malware running as root can do anything, including removing any firewall.
 
 ## Is it free?
 

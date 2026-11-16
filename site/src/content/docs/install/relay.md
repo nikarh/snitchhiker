@@ -11,18 +11,15 @@ One relay serves all your nodes and devices. Put it where both can reach it: a s
 
 ## Installing
 
-The relay is a package of its own, at the same version as the daemon's:
+The relay is a package of its own, at the same version as the daemon's, in the same [signed repositories](/install/linux/): add the repository for your system as that page says, then
 
 ```bash
-arch=$(dpkg --print-architecture)
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-relay_${arch}.deb"
-sudo apt install "./snitchhiker-relay_${arch}.deb"
+sudo apt install snitchhiker-relay      # Debian, Ubuntu
+sudo pacman -S snitchhiker-relay        # Arch Linux
+sudo dnf install snitchhiker-relay      # Fedora
 ```
 
-```bash
-curl -fLO "https://github.com/nikarh/snitchhiker/releases/latest/download/snitchhiker-relay-$(uname -m).pkg.tar.zst"
-sudo pacman -U "snitchhiker-relay-$(uname -m).pkg.tar.zst"
-```
+The packages are also release files ([Verifying downloads](/install/verifying/)).
 
 It installs `/usr/bin/snitchhiker-relay`, the unit `snitchhiker-relay.service` (a dynamic user, no privileges but binding ports 80 and 443), and `/etc/snitchhiker/relay.toml`, documented in place. Edit it, then `sudo systemctl enable --now snitchhiker-relay`.
 

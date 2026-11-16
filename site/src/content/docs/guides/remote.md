@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-A **node** is a machine running Snitchhiker's daemon. A **device** is a client on another machine (the desktop app on your laptop, and later the Android app) that manages it over the network. A node accepts any number of devices, and a device manages any number of nodes: the desktop app shows your workstation's node and your servers' side by side.
+A **node** is a machine running Snitchhiker's daemon. A **device** is a client on another machine (the Android app, or the desktop app on your laptop) that manages it over the network. A node accepts any number of devices, and a device manages any number of nodes: the desktop app shows your workstation's node and your servers' side by side.
 
 Devices connect over [iroh](https://www.iroh.computer): QUIC between keys, directly where a path exists, and through your own [relay](/install/relay/) otherwise. A device is its key. The node serves only keys it was paired with, and TLS proves the device holds the key it claims.
 
