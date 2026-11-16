@@ -87,5 +87,12 @@ A device can't confirm a dangerous action with a password on the node, as a clie
 
 ## Where the keys are
 
-- The node's key: `/var/lib/snitchhiker/node.key`, root's.
+- The node's key: `/var/lib/snitchhiker/node.key`, root's. To keep it off the disk, seal it:
+
+  ```sh
+  sudo snitchhikerd seal-key
+  sudo systemctl restart snitchhikerd
+  ```
+
+  `systemd-creds` encrypts it to the machine's TPM (or, without one, to the host's own key) into `/etc/credstore.encrypted/snitchhiker.node-key`, and the plaintext file is deleted. systemd decrypts it for the service at each start; a copy of the disk alone can't. The node keeps its id, so paired devices don't notice.
 - The desktop app's key, and the nodes it knows: `/var/lib/snitchhiker-ui/<uid>/`, in a directory only the app can enter (as the [history it keeps](/internals/security/#history-the-app-keeps)). A program of yours that read the key could connect to your nodes as this device; it can't read it.

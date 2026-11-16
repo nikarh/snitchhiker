@@ -263,8 +263,9 @@ anything the UI can read. Snitchhiker instead authenticates the *process*, using
 - A password typed into the UI can be captured by a same-user process on X11, and on Wayland only by injection
   attacks covered below.
 
-So the TPM is used where it helps: sealing the daemon's own long-term node key to the machine. systemd's
-`LoadCredentialEncrypted=` with `systemd-creds --with-key=tpm2` does this with no TPM library in our binary.
+So the TPM is used where it helps: sealing the daemon's own long-term node key to the machine. `snitchhikerd
+seal-key` runs `systemd-creds encrypt --with-key=auto` (the TPM when there is one, else the host key) into
+`/etc/credstore.encrypted`, and the unit's `ImportCredential=` hands the daemon the key: no TPM library in our binary.
 
 ### 4.3 Step-up authorization for dangerous actions
 

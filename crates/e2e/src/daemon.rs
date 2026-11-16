@@ -1614,3 +1614,48 @@ fn run_nft(script: &str) -> Result<(), String> {
         ))
     }
 }
+
+/// The node's key sealed with `snitchhikerd seal-key`: the plaintext is gone, the service gets the key from systemd
+/// (`ImportCredential=`), and the node keeps its id.
+pub fn the_node_key_is_sealed_and_keeps_its_id() -> Result<(), String> {
+    let config = "/etc/snitchhiker/daemon.toml";
+    let packaged = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
+    let result = (|| {
+        std::fs::write(config, format!("{packaged}\nremote = true\n"))
+            .map_err(|e| e.to_string())?;
+        let _ = std::fs::remove_file("/var/lib/snitchhiker/node.key");
+        let _ = std::fs::remove_file("/etc/credstore.encrypted/snitchhiker.node-key");
+        run("systemctl", &["restart", "snitchhikerd"])?;
+        let before = run("snitchhiker", &["devices"])?;
+        let sealed = run("snitchhikerd", &["seal-key"])?;
+        let plaintext = std::path::Path::new("/var/lib/snitchhiker/node.key").exists();
+        run("systemctl", &["restart", "snitchhikerd"])?;
+        let after = run("snitchhiker", &["devices"])?;
+        let log = run(
+            "journalctl",
+            &["-u", "snitchhikerd", "--no-pager", "-n", "30"],
+        )
+        .unwrap_or_default();
+        let id = |text: &str| {
+            text.lines()
+                .find(|l| l.contains("node"))
+                .map_or_else(String::new, str::to_owned)
+        };
+        let found = format!("{sealed}\nbefore: {before}\nafter: {after}\n{log}");
+        check(!plaintext, "the plaintext key is still on the disk", &found)?;
+        check(
+            !id(&before).is_empty() && id(&before) == id(&after),
+            "the node's id changed across sealing",
+            &found,
+        )?;
+        check(
+            log.contains("the node's key is the sealed credential"),
+            "the service didn't use the sealed key",
+            &found,
+        )
+    })();
+    let _ = run("systemctl", &["stop", "snitchhikerd"]);
+    let _ = std::fs::write(config, packaged);
+    let _ = std::fs::remove_file("/etc/credstore.encrypted/snitchhiker.node-key");
+    result
+}

@@ -197,6 +197,10 @@ const SCENARIOS: &[Scenario] = &[
         daemon::service_starts_ready_and_stops,
     ),
     (
+        "daemon/the-node-key-is-sealed-and-keeps-its-id",
+        daemon::the_node_key_is_sealed_and_keeps_its_id,
+    ),
+    (
         "daemon/loopback-is-allowed-by-default",
         daemon::loopback_is_allowed_by_default,
     ),

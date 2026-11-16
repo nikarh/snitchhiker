@@ -17,6 +17,7 @@ Usage: snitchhikerd [--config <path>]
        snitchhikerd [--config <path>] trust-client <path>
        snitchhikerd [--config <path>] untrust-client <path>
        snitchhikerd [--config <path>] trusted-clients
+       snitchhikerd [--config <path>] seal-key
        snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
 
 Commands:
@@ -25,6 +26,9 @@ Commands:
                          client group. Applies to the next connection; the daemon needn't run.
   untrust-client <path>  Stop trusting it
   trusted-clients        List the trusted client binaries
+  seal-key               Seal the node's remote key with systemd-creds (to the TPM, or the host's key without
+                         one) into /etc/credstore.encrypted, and delete the plaintext; the service imports it
+                         from the next start
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)

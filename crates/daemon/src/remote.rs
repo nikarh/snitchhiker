@@ -47,18 +47,36 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 /// Where the node's key is: next to its database.
-fn key_path(daemon: &Daemon) -> PathBuf {
-    daemon
-        .shared
-        .config
+#[must_use]
+pub fn key_path(config: &crate::config::Config) -> PathBuf {
+    config
         .database
         .parent()
         .map_or_else(|| PathBuf::from("node.key"), |dir| dir.join("node.key"))
 }
 
+/// The name of the node's key as a systemd credential, once sealed (`snitchhikerd seal-key`).
+pub const KEY_CREDENTIAL: &str = "snitchhiker.node-key";
+
+/// The node's key: the sealed one systemd decrypted for the service (`ImportCredential=`), else the file next to the
+/// database (made if there is none).
+fn node_key(config: &crate::config::Config) -> std::io::Result<Key> {
+    if let Some(dir) = std::env::var_os("CREDENTIALS_DIRECTORY") {
+        let sealed = PathBuf::from(dir).join(KEY_CREDENTIAL);
+        if let Ok(bytes) = std::fs::read(&sealed) {
+            let bytes: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| std::io::Error::other(format!("{}: not a key", sealed.display())))?;
+            info!("the node's key is the sealed credential");
+            return Ok(Key::from_bytes(&bytes));
+        }
+    }
+    Key::load_or_create(&key_path(config))
+}
+
 /// Starts the node's endpoint.
 pub fn start(daemon: &Arc<Daemon>) -> std::io::Result<()> {
-    let key = Key::load_or_create(&key_path(daemon))?;
+    let key = node_key(&daemon.shared.config)?;
     let config = &daemon.shared.config;
     let options = options(config);
     let weak = Arc::downgrade(daemon);
