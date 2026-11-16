@@ -226,8 +226,9 @@ impl Router {
             };
             match received {
                 Ok(id) => {
+                    // Only those who may answer: a viewer's app waiting doesn't hold a prompt back from the devices.
                     let local: Vec<u32> = hub
-                        .audiences(v1::Topic::Prompts)
+                        .answering_audiences(v1::Topic::Prompts)
                         .iter()
                         .filter_map(|a| match a {
                             Audience::Local { uid } => Some(*uid),

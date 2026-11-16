@@ -1286,12 +1286,12 @@ fn undecided_event(
 }
 
 /// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
-/// listens for prompts, or a device can be woken to.
+/// that may answer listens for prompts (a viewer only sees them), or a device can be woken to.
 pub fn asks(shared: &Shared) -> bool {
     let policy = shared.policy.load();
     policy.no_match == Policy::Ask
         && policy.mode == Mode::Enforce
-        && (shared.hub.has_subscribers(v1::Topic::Prompts) || shared.router.can_wake_someone())
+        && (shared.hub.has_answerers(v1::Topic::Prompts) || shared.router.can_wake_someone())
 }
 
 /// What a policy does without asking (`ask` falls back to `no_client`).

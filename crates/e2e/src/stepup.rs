@@ -243,6 +243,16 @@ pub fn request(socket: &str, step: &str, id: Option<&str>) -> std::process::Exit
             rule: Some(rule(&format!("e2e curl {id}"), curl(), Some(id))),
         }),
     };
+    // Listening for prompts for a while, as an app does.
+    if step == "watch-prompts" {
+        let watched = Client::connect(Path::new(socket), "e2e", "0").and_then(|mut client| {
+            client.subscribe(v1::Topic::Prompts)?;
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            Ok(())
+        });
+        let _ = writeln!(std::io::stdout().lock(), "{watched:?}");
+        return std::process::ExitCode::SUCCESS;
+    }
     let result =
         Client::connect(Path::new(socket), "e2e", "0").and_then(|mut client| client.call(method));
     let mut out = std::io::stdout().lock();
@@ -348,19 +358,54 @@ pub fn no_way_around_step_up() -> Result<(), String> {
     )
 }
 
-/// A local user outside `admin_groups` sees the node and changes nothing: their app is a viewer.
+/// A local user outside `admin_groups` sees the node and changes nothing: their app is a viewer. Nor is a viewer
+/// someone to ask: with only a viewer listening, a connection no rule decides isn't held for a prompt.
 pub fn other_local_users_are_viewers() -> Result<(), String> {
     install_clients()?;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let mut daemon = crate::daemon::Running::start(
         "viewers",
         &format!(
-            "mode = \"monitor\"\ntrusted_clients = [\"{CLIENT}\"]\nadmin_groups = [\"wheel\"]\n"
+            "mode = \"enforce\"\nno_match = \"ask\"\nno_client = \"reject\"\nprompt_timeout_secs = 30\n\
+             trusted_clients = [\"{CLIENT}\"]\nadmin_groups = [\"wheel\"]\n"
         ),
     )?;
     let listed = step("list", None)?;
     let added = step("import-disabled", None)?;
+    let mut watcher = std::process::Command::new("runuser")
+        .args([
+            "-u",
+            "mallory",
+            "--",
+            CLIENT,
+            "--request",
+            "/run/snitchhiker/client.sock",
+            "watch-prompts",
+        ])
+        .stdout(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    thread::sleep(Duration::from_secs(2));
+    let started = std::time::Instant::now();
+    let connected = std::process::Command::new("runuser")
+        .args(["-u", "mallory", "--", "python3", "-c"])
+        .arg(format!(
+            "import socket\ntry:\n    socket.create_connection(('127.0.0.1', {port}), timeout=10)\n    print('connected')\nexcept OSError as e:\n    print('failed', e)"
+        ))
+        .output()
+        .map_err(|e| e.to_string())?;
+    let waited = started.elapsed();
+    let _ = watcher.kill();
+    let _ = watcher.wait();
     daemon.stop()?;
-    let found = format!("list: {listed}\nimport: {added}");
+    let connected = String::from_utf8_lossy(&connected.stdout).into_owned();
+    let found = format!("list: {listed}\nimport: {added}\nconnect: {connected} after {waited:?}");
+    check(
+        waited < Duration::from_secs(5) && !connected.contains("connected"),
+        "a connection was held for a prompt only a viewer could see",
+        &found,
+    )?;
     check(listed == "ok", "a viewer couldn't read the rules", &found)?;
     check(
         added.contains("not allowed"),

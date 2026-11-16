@@ -148,6 +148,8 @@ pub struct Hub {
     next: AtomicU64,
     /// Who each connection is, for routing prompts.
     audiences: Mutex<std::collections::HashMap<u64, Audience>>,
+    /// The connections whose role may answer prompts (a viewer's may only see them).
+    answerers: Mutex<std::collections::HashSet<u64>>,
 }
 
 /// Who is on the other end of a connection, as prompt routing sees it.
@@ -224,14 +226,62 @@ impl Hub {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .remove(&connection);
+        self.answerers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .remove(&connection);
     }
 
-    /// Says who `connection` is.
-    pub fn set_audience(&self, connection: u64, audience: Audience) {
+    /// Says who `connection` is, and whether it may answer prompts.
+    pub fn set_audience(&self, connection: u64, audience: Audience, answers: bool) {
         self.audiences
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(connection, audience);
+        if answers {
+            self.answerers
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(connection);
+        }
+    }
+
+    /// Whether anyone who may answer prompts listens to `topic`: someone to ask.
+    pub fn has_answerers(&self, topic: v1::Topic) -> bool {
+        let answerers = self
+            .answerers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.subscriptions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|s| s.topic == topic && answerers.contains(&s.connection))
+    }
+
+    /// Who listens to `topic` and may answer prompts.
+    pub fn answering_audiences(&self, topic: v1::Topic) -> Vec<Audience> {
+        let answerers = self
+            .answerers
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let audiences = self
+            .audiences
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        self.subscriptions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .filter(|s| s.topic == topic && answerers.contains(&s.connection))
+            .map(|s| {
+                audiences
+                    .get(&s.connection)
+                    .cloned()
+                    .unwrap_or(Audience::Other)
+            })
+            .collect()
     }
 
     /// Who listens to `topic`.

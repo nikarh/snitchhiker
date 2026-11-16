@@ -49,6 +49,10 @@ To stop blocking at once while you look, switch to monitor mode: `sudo snitchhik
 - **"not allowed" / the socket refuses it:** the client socket admits trusted clients only. The package registers the app; after building it yourself, register it with `sudo snitchhikerd trust-client <path>` (the binary must be root-owned and setgid to `snitchhiker-ui`). See [Security](/internals/security/#clients).
 - **The daemon isn't running:** `systemctl status snitchhikerd`.
 
+## The desktop app shows everything but changes nothing
+
+The app says "You can see this node, but not change it", and changes are refused with "not allowed for this connection": your user isn't in one of the node's [`admin_groups`](/reference/configuration/#admin_groups) (`wheel`, `sudo` and `admin` by default), so your app is a viewer. Add yourself to one of them (`sudo usermod -aG wheel <you>`, then log in again), or name a group you are in in `admin_groups`. A viewer's app also isn't asked about connections: with only viewers listening, `no_client` decides.
+
 ## The daemon doesn't start
 
 `journalctl -u snitchhikerd -b` says why. The common causes:

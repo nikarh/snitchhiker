@@ -292,6 +292,7 @@ pub(crate) fn serve(
             }
             _ => crate::hub::Audience::Other,
         },
+        matches!(caller.role, v1::Role::Root | v1::Role::Admin),
     );
     let welcome = v1::ServerFrame {
         body: Some(v1::server_frame::Body::Welcome(v1::Welcome {
