@@ -315,8 +315,23 @@
 </tr>
 <tr>
 <td>Stealing the node’s key from disk</td>
-<td>Sealed with <code dir="auto">systemd-creds</code> (TPM, or the host key) by <code dir="auto">snitchhikerd seal-key</code></td>
-<td><code dir="auto">daemon/the-node-key-is-sealed-and-keeps-its-id</code></td>
+<td>Sealed with <code dir="auto">systemd-creds</code> (TPM, or the host key) by <code dir="auto">snitchhiker-remote seal-key</code></td>
+<td><code dir="auto">remote/the-node-key-is-sealed-and-keeps-its-id</code></td>
+</tr>
+<tr>
+<td>A bug in the network-facing code (QUIC, TLS, relay protocol)</td>
+<td>It runs in <code dir="auto">snitchhiker-remote</code>, a user of its own with no capability, not in the root daemon; the daemon decides everything about what it hands over</td>
+<td><code dir="auto">remote/only-the-remote-service-is-served</code></td>
+</tr>
+<tr>
+<td>Posing as the remote service, to claim a device’s identity</td>
+<td>The daemon’s remote socket serves that service’s user alone, and one at a time</td>
+<td><code dir="auto">remote/only-the-remote-service-is-served</code></td>
+</tr>
+<tr>
+<td>Using the remote service’s exemption to get out</td>
+<td>Only its own process is let through undecided, not its user</td>
+<td><code dir="auto">remote/the-remote-services-traffic-is-the-nodes-own</code></td>
 </tr>
 </tbody>
 </table>
@@ -328,6 +343,7 @@
 <li><strong>Push payloads through FCM</strong> carry the node’s name and, when it went offline, the reason it gave, which Google can read; UnifiedPush delivers them encrypted.</li>
 <li><strong>A device’s role</strong> is read when it connects; unpairing ends its connections at once.</li>
 <li><strong>Kernels before 6.5</strong> have no peer pidfd: clients are refused there rather than checked less exactly.</li>
+<li><strong>The remote service</strong> vouches for the keys of the streams it hands over: whoever controls it (root, or a bug in it) can act as any paired device, an admin one included. It can’t do more than a paired device could.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="the-november-2026-review">The November 2026 review</h2><a class="sl-anchor-link" href="#the-november-2026-review"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “The November 2026 review”</span></a></div>
 <p>A structured review checked every claim of the security model against the code and its tests. What it found, and what came of it:</p>

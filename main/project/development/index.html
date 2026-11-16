@@ -123,12 +123,13 @@
 <li><code dir="auto">crates/proto</code>: the <a href="/snitchhiker/main/reference/protocol/">client protocol</a>: the schema in <code dir="auto">proto/</code>, framing, conversions.</li>
 <li><code dir="auto">crates/client</code>: a blocking client of a node’s sockets.</li>
 <li><code dir="auto">crates/daemon</code>: <code dir="auto">snitchhikerd</code> and the <code dir="auto">snitchhiker</code> command line: runtime, API, prompts, storage, DNS, process facts, peer verification.</li>
-<li><code dir="auto">crates/remote</code>: the remote endpoint over iroh: keys, pairing, the streams to devices.</li>
+<li><code dir="auto">crates/remote</code>: the remote endpoint over iroh: keys, pairing links and codes, the streams to devices.</li>
+<li><code dir="auto">crates/bridge</code>: <code dir="auto">snitchhiker-remote</code>, the node’s remote service and the desktop app’s helper, which hold the iroh endpoint and hand streams over as file descriptors (decision 0016).</li>
 <li><code dir="auto">crates/relay</code>: <code dir="auto">snitchhiker-relay</code>, the relay and push gateway.</li>
 <li><code dir="auto">crates/ui</code>: <code dir="auto">snitchhiker-ui</code>, the desktop app (GPUI).</li>
 <li><code dir="auto">crates/mobile</code>: the Rust core of the Android app (UniFFI); <code dir="auto">android/</code> holds the app itself (Kotlin, Compose).</li>
 <li><code dir="auto">crates/e2e</code>: the end-to-end scenarios, run in the VM.</li>
-<li><code dir="auto">dist/</code>: the systemd unit, sysusers file, configuration and packaging.</li>
+<li><code dir="auto">dist/</code>: the systemd units, sysusers files, configuration and packaging.</li>
 <li><code dir="auto">docs/</code>: the design plan (<code dir="auto">plan.md</code>), decision records, release notes for maintainers.</li>
 <li><code dir="auto">site/</code>: this documentation.</li>
 </ul>

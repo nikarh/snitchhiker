@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["KEY_CREDENTIAL"],"fn":["key_path","list_devices","remove_device","start","start_pairing"],"struct":["Remote"]};
+window.SIDEBAR_ITEMS = {"constant":["SOCKET","USER"],"fn":["bridge_uid","fingerprint","list_devices","listen","remove_device","start_pairing"],"struct":["Bridge","Remote"]};

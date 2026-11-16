@@ -31,8 +31,8 @@ to the file’s.</dd><dt><a class="mod" href="process/index.html" title="mod sni
 asleep when a prompt waits for them, and tells them when the node goes offline. The node keeps one stream open to
 it (ALPN <code>snitchhiker-push/1</code>) for as long as it runs: the stream ending is how the gateway knows the node is gone,
 exactly, with no heartbeats to count. On it the node says who to tell (each device’s push target, again on each
-change), who to wake, and why it stops, when it does.</dd><dt><a class="mod" href="remote/index.html" title="mod snitchhiker_daemon::remote">remote</a></dt><dd>Paired devices over the network (plan §8.2, §8.3): the node’s iroh endpoint, pairing with one-time secrets, and
-the devices’ connections, served as local ones are and closed when a device is unpaired.</dd><dt><a class="mod" href="resolved/index.html" title="mod snitchhiker_daemon::resolved">resolved</a></dt><dd>Names from systemd-resolved’s monitor (<code>io.systemd.Resolve.Monitor</code>): every answer resolved gives, including those
+change), who to wake, and why it stops, when it does.</dd><dt><a class="mod" href="remote/index.html" title="mod snitchhiker_daemon::remote">remote</a></dt><dd>Paired devices over the network (plan §8.2, §8.3, decision 0016): pairing with one-time secrets, and the devices’
+connections, served as local ones are and closed when a device is unpaired.</dd><dt><a class="mod" href="resolved/index.html" title="mod snitchhiker_daemon::resolved">resolved</a></dt><dd>Names from systemd-resolved’s monitor (<code>io.systemd.Resolve.Monitor</code>): every answer resolved gives, including those
 from its cache and its <code>/etc/hosts</code>, which never cross the network for the DNS queue to see. A program that
 resolves through resolved’s library interface (nss-resolve) sends no DNS packet at all, so without this its
 connections would have no names.</dd><dt><a class="mod" href="router/index.html" title="mod snitchhiker_daemon::router">router</a></dt><dd>Prompt routing (plan §5.5): which clients are notified of a prompt. Every admin client lists every prompt and can
