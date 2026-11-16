@@ -8082,6 +8082,7 @@ version = "0.1.0"
 dependencies = [
  "nix",
  "rusqlite",
+ "rustix",
  "snitchhiker-core",
  "snitchhiker-proto",
  "snitchhiker-remote",

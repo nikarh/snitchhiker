@@ -1,0 +1,170 @@
+// Between Snitchhiker's programs and `snitchhiker-remote`, which holds the iroh endpoint (decision 0016): the node's
+// daemon and its bridge, and the desktop app and its helper. Not a public protocol: both ends are always of the same
+// version, installed together.
+//
+// Framing: a SOCK_SEQPACKET unix socket, one message per packet, a stream's file descriptor (SCM_RIGHTS) alongside
+// the message that names it. A packet is at most 64 KiB.
+
+syntax = "proto3";
+
+package snitchhiker.v1;
+
+import "snitchhiker/v1/client.proto";
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The node: the daemon listens on /run/snitchhiker/remote.sock, and serves only the bridge's user (its peer
+// credentials). The bridge connects, says Hello, waits for Ready, then hands over each stream a device opened, and
+// does what the daemon asks.
+
+message BridgeFrame {
+  oneof body {
+    BridgeHello hello = 1;
+    // A stream a peer opened: its descriptor alongside.
+    BridgeAccepted accepted = 2;
+    // The answer to a NodeFrame request, by its id: a stream's descriptor alongside, for Open.
+    BridgeReply reply = 3;
+    // A pairing code was tried (decision 0010): it is spent either way.
+    BridgeCodeTried code_tried = 4;
+    // The bridge is stopping: the daemon says its last word to the push gateway (why the node is going), and answers
+    // Left once it has.
+    BridgeLeaving leaving = 5;
+  }
+}
+
+message BridgeLeaving {}
+
+message BridgeHello {
+  // The node's id (its key's public half).
+  string node_id = 1;
+  // Whether a push gateway is configured (`push_gateway` in remote.toml), and its offline threshold.
+  bool push_gateway = 2;
+  uint32 offline_after_secs = 3;
+}
+
+enum StreamKind {
+  STREAM_KIND_UNSPECIFIED = 0;
+  // A paired device's connection: the client protocol.
+  STREAM_KIND_DEVICE = 1;
+  // A pairing attempt: a PairRequest, answered with a PairResponse.
+  STREAM_KIND_PAIRING = 2;
+}
+
+message BridgeAccepted {
+  // The peer's id, which TLS proved.
+  string peer = 1;
+  StreamKind kind = 2;
+}
+
+message BridgeReply {
+  uint64 id = 1;
+  // Empty when done.
+  string error = 2;
+  // For Offer.
+  BridgeOffered offered = 3;
+}
+
+message BridgeOffered {
+  // The pairing link, with the node's address now.
+  string link = 1;
+  string node_id = 2;
+  // The pairing's code, if the meeting point could be opened.
+  string code = 3;
+}
+
+message BridgeCodeTried {
+  // The secret of the pairing whose code was tried.
+  string secret = 1;
+  // Whether with the right words (the device then got the link).
+  bool right = 2;
+}
+
+message NodeFrame {
+  uint64 id = 1;
+  oneof body {
+    // A stream to the push gateway, answered with its descriptor.
+    OpenGateway open_gateway = 2;
+    // A pairing: its link, and the same as a code.
+    Offer offer = 3;
+    // A pairing's code is withdrawn (used, or expired).
+    Withdraw withdraw = 4;
+    // The answer to Leaving.
+    Left left = 5;
+    // The answer to Hello: the bridge is served, its traffic the node's own from now on. The bridge binds its
+    // endpoint only then.
+    Ready ready = 6;
+  }
+}
+
+message Ready {}
+
+message Left {}
+
+message OpenGateway {}
+
+message Offer {
+  string secret = 1;
+  // The node's name, for the device to show.
+  string name = 2;
+  // "admin" or "viewer".
+  string role = 3;
+  // How long the code is offered.
+  uint64 expires_ms = 4;
+}
+
+message Withdraw {
+  string secret = 1;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The desktop app: it starts `snitchhiker-remote client` with one end of a socket pair as its standard input, sends
+// Start with this device's key, then asks for connections and pairings. The helper exits when the app's end closes.
+
+message HelperRequest {
+  uint64 id = 1;
+  oneof body {
+    // First: this device's key (32 bytes).
+    HelperStart start = 2;
+    // A stream to a paired node, answered with its descriptor.
+    HelperConnect connect = 3;
+    // Pairing by a link or a code.
+    HelperPair pair = 4;
+  }
+}
+
+message HelperStart {
+  bytes key = 1;
+}
+
+// Where a node is: its id, its relays and the addresses it was last seen at.
+message NodeAddress {
+  string id = 1;
+  repeated string relays = 2;
+  repeated string addrs = 3;
+}
+
+message HelperConnect {
+  NodeAddress node = 1;
+}
+
+message HelperPair {
+  // A pairing link, or a code.
+  string text = 1;
+  string device_name = 2;
+  // Relays to look a code up through (those of the nodes known already).
+  repeated string relays = 3;
+}
+
+message HelperReply {
+  uint64 id = 1;
+  // Empty when done.
+  string error = 2;
+  // For Pair.
+  HelperPaired paired = 3;
+}
+
+message HelperPaired {
+  NodeAddress node = 1;
+  // The node's name, as the link had it.
+  string name = 2;
+  PairResponse response = 3;
+}

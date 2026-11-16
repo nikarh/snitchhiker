@@ -7,6 +7,7 @@
 
 #[cfg(feature = "cache")]
 pub mod cache;
+pub mod packet;
 #[cfg(feature = "remote")]
 pub mod remote;
 
