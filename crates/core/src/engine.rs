@@ -49,6 +49,10 @@ pub struct Facts<'a> {
     pub netns: Option<&'a str>,
     /// Unix time in milliseconds, for expiring rules.
     pub now_ms: u64,
+    /// The executable's SHA-256 (lowercase hex), when a rule asks for it ([`RuleSet::needs_sha256`]).
+    pub sha256: Option<&'a str>,
+    /// Whether a user other than root can change the executable.
+    pub writable: bool,
 }
 
 /// Blocklists by name, for [`RuleSet::compile_with`].
@@ -105,6 +109,8 @@ enum Compiled {
     NetnsName(Vec<Pattern>),
     /// The lists that exist (one not read yet matches nothing).
     List(Vec<Arc<Blocklist>>),
+    Sha256(Vec<String>),
+    Writable(bool),
     Not(Box<Compiled>),
 }
 
@@ -167,6 +173,8 @@ pub struct RuleSet {
     by_port: HashMap<u16, Vec<u32>>,
     /// Rules that apply to any connection, as far as the index can tell.
     rest: Vec<u32>,
+    /// Whether a rule names a SHA-256: only then are executables hashed.
+    sha256: bool,
 }
 
 /// Where a rule is filed.
@@ -263,6 +271,7 @@ impl RuleSet {
             if !has_context {
                 conditions.push(Compiled::Context(ContextKind::Host));
             }
+            set.sha256 |= conditions.iter().any(names_sha256);
             let specificity = conditions.iter().map(specificity).sum();
             let index = u32::try_from(set.rules.len()).unwrap_or(u32::MAX);
             match key(&conditions) {
@@ -302,6 +311,12 @@ impl RuleSet {
     #[must_use]
     pub fn len(&self) -> usize {
         self.rules.len()
+    }
+
+    /// Whether a rule names an executable's SHA-256, so deciding needs [`Facts::sha256`].
+    #[must_use]
+    pub fn needs_sha256(&self) -> bool {
+        self.sha256
     }
 
     #[must_use]
@@ -469,6 +484,10 @@ fn condition_matches(condition: &Compiled, facts: &Facts<'_>) -> bool {
             .vm
             .is_some_and(|vm| names.iter().any(|n| n == &vm.hypervisor)),
         Compiled::NetnsName(patterns) => facts.netns.is_some_and(|name| any(patterns, name)),
+        Compiled::Sha256(hashes) => facts
+            .sha256
+            .is_some_and(|hash| hashes.iter().any(|h| h.eq_ignore_ascii_case(hash))),
+        Compiled::Writable(writable) => facts.writable == *writable,
         Compiled::List(lists) => lists.iter().any(|list| {
             list.has_address(facts.address) || facts.hosts.iter().any(|h| list.has_host(h))
         }),
@@ -500,6 +519,14 @@ fn folder_chain<'a>(
     }
     scopes.reverse();
     Ok(Some(scopes))
+}
+
+fn names_sha256(condition: &Compiled) -> bool {
+    match condition {
+        Compiled::Sha256(_) => true,
+        Compiled::Not(inner) => names_sha256(inner),
+        _ => false,
+    }
 }
 
 fn compile_condition(condition: &Condition, lists: &Lists) -> Result<Compiled, PatternError> {
@@ -540,6 +567,8 @@ fn compile_condition(condition: &Condition, lists: &Lists) -> Result<Compiled, P
         Condition::VmUuid(uuids) => Compiled::VmUuid(uuids.clone()),
         Condition::VmHypervisor(names) => Compiled::VmHypervisor(names.clone()),
         Condition::NetnsName(p) => Compiled::NetnsName(patterns(p)?),
+        Condition::Sha256(hashes) => Compiled::Sha256(hashes.clone()),
+        Condition::Writable(writable) => Compiled::Writable(*writable),
         Condition::List(names) => Compiled::List(
             names
                 .iter()
@@ -573,7 +602,7 @@ fn specificity(condition: &Compiled) -> u32 {
             .min()
             .unwrap_or(0),
         Compiled::Port(_) | Compiled::Uid(_) => 5,
-        Compiled::Protocol(_) => 1,
+        Compiled::Protocol(_) | Compiled::Writable(_) => 1,
         // Who in the container ranks as a program does; the container itself, between the program and nothing.
         Compiled::ContainerName(p)
         | Compiled::ContainerImage(p)
@@ -584,6 +613,8 @@ fn specificity(condition: &Compiled) -> u32 {
         Compiled::ContainerLabel(_) => 20,
         // Like a domain and everything under it.
         Compiled::List(_) => 3,
+        // As exact as a program's path.
+        Compiled::Sha256(_) => 30,
         Compiled::ContainerRuntime(_) | Compiled::ContainerOwner(_) | Compiled::VmHypervisor(_) => {
             2
         }
@@ -649,6 +680,8 @@ mod tests {
         Facts {
             exe,
             apps: &[],
+            sha256: None,
+            writable: false,
             cmdline: "",
             ancestors: &[],
             lineage: &[],
@@ -780,6 +813,26 @@ mod tests {
             let f = facts(exe_path, &[], 8002);
             assert_eq!(set.decide(&f).map(|d| (d.rule, d.action)), everything(&f));
         }
+    }
+
+    #[test]
+    fn binaries_are_pinned_by_hash_and_writability_is_a_condition() {
+        let hash = "ab".repeat(32);
+        let pinned = rule(
+            1,
+            Action::Allow,
+            vec![Condition::Sha256(vec![hash.clone()])],
+        );
+        let writable = rule(2, Action::Deny, vec![Condition::Writable(true)]);
+        let set = RuleSet::compile(&[], &[pinned, writable]).unwrap();
+        assert!(set.needs_sha256());
+        let mut f = facts("/usr/bin/curl", &[], 443);
+        assert_eq!(set.decide(&f), None);
+        f.sha256 = Some(&hash);
+        assert_eq!(set.decide(&f).map(|d| d.rule), Some(1));
+        f.writable = true;
+        assert_eq!(set.decide(&f).map(|d| d.action), Some(Action::Deny));
+        assert!(!RuleSet::compile(&[], &[]).unwrap().needs_sha256());
     }
 
     #[test]

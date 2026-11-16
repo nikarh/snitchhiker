@@ -402,6 +402,8 @@ pub fn decide_again(rules: &snitchhiker_core::engine::RuleSet, b: &Blocked, now_
     let facts = Facts {
         exe: &b.exe,
         apps: &[],
+        sha256: None,
+        writable: false,
         cmdline: "",
         ancestors: &[],
         lineage: &b.lineage,

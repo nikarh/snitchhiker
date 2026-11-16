@@ -245,6 +245,8 @@ fn view<'a>(rule: &'a v1::Rule, folder: &'a str) -> RuleView<'a> {
         vm: None,
         netns: Vec::new(),
         list: Vec::new(),
+        sha256: Vec::new(),
+        writable: None,
     };
     let c = rule.conditions.as_ref().unwrap_or(&EMPTY);
     RuleView {

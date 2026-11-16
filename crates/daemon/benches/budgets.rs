@@ -117,6 +117,8 @@ fn decide() -> Vec<String> {
         let facts = Facts {
             exe: &exes[round % exes.len()],
             apps: &[],
+            sha256: None,
+            writable: false,
             cmdline: "",
             ancestors: &[],
             lineage: &[],

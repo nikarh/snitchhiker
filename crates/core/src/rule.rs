@@ -104,6 +104,10 @@ pub enum Condition {
     NetnsName(Vec<PatternSource>),
     /// The destination is on one of these blocklists (by name): its host name or its address.
     List(Vec<String>),
+    /// The executable's SHA-256 (lowercase hex) is one of these: the binary pinned.
+    Sha256(Vec<String>),
+    /// The executable can (`true`) or can't be changed by a user other than root.
+    Writable(bool),
     /// The opposite of the inner condition.
     Not(Box<Condition>),
 }
@@ -179,6 +183,7 @@ pub fn allows_everything<'a>(
                     | Condition::VmUuid(_)
                     | Condition::NetnsName(_)
                     | Condition::List(_)
+                    | Condition::Sha256(_)
             )
         })
 }

@@ -125,6 +125,8 @@ proptest! {
         let facts = Facts {
             exe,
             apps: &[],
+            sha256: None,
+            writable: false,
             cmdline: "",
             ancestors: &[],
             lineage: &[],

@@ -655,6 +655,8 @@ impl Daemon {
         let facts = Facts {
             exe: &stored.exe,
             apps: &[],
+            sha256: None,
+            writable: false,
             cmdline: "",
             ancestors: &[],
             lineage: &[],
@@ -1395,9 +1397,16 @@ pub(crate) fn decide(
     let named = (netns != shared.netns)
         .then(|| shared.namespaces.named(u64::from(netns)))
         .flatten();
+    // Hashed only while a rule pins a binary.
+    let sha256 = process
+        .as_ref()
+        .filter(|_| shared.rules.load().needs_sha256())
+        .and_then(|p| crate::process::sha256_of(p.pid));
     let facts = Facts {
         exe: process.as_ref().map_or("", |p| &*p.exe),
         apps: process.as_ref().map_or(&[], |p| p.apps.as_slice()),
+        sha256: sha256.as_deref(),
+        writable: process.as_ref().is_some_and(|p| p.writable),
         cmdline: process.as_ref().map_or("", |p| p.cmdline.as_str()),
         ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
         lineage: process.as_ref().map_or(&[], |p| p.lineage.as_slice()),

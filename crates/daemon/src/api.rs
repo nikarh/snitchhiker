@@ -2323,6 +2323,8 @@ fn check_connection(
     let facts = Facts {
         exe: &check.exe,
         apps: &[],
+        sha256: None,
+        writable: false,
         cmdline: "",
         ancestors: &[],
         lineage: &lineage,

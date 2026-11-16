@@ -167,6 +167,10 @@ const SCENARIOS: &[Scenario] = &[
     ),
     ("daemon/rules-on-packages", daemon::rules_on_packages),
     (
+        "daemon/binaries-by-hash-and-writability",
+        daemon::binaries_by_hash_and_writability,
+    ),
+    (
         "daemon/a-connection-from-before-the-daemon-is-attributed",
         daemon::a_connection_from_before_the_daemon_is_attributed,
     ),

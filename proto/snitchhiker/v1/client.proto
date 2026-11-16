@@ -290,6 +290,10 @@ message Conditions {
   repeated string netns = 14;
   // Blocklists, by name: the destination's name, a domain above it, or its address is on one of them.
   repeated string list = 15;
+  // SHA-256s of the executable (hex): the binary pinned.
+  repeated string sha256 = 16;
+  // Whether a user other than root can change the executable; unset: either.
+  optional bool writable = 17;
 }
 
 // A container, as the node found it: its runtime and id from its cgroup, the rest from the runtime. Empty fields

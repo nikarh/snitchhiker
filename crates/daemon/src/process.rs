@@ -33,6 +33,8 @@ pub struct ProcessInfo {
     pub context: ContextKind,
     /// Stable identities of the program (`pkg:curl`, `unit:sshd.service`): see `apps`. None in a container.
     pub apps: Vec<String>,
+    /// Whether a user other than root can change the executable (or, on the host, the directories it is in).
+    pub writable: bool,
 }
 
 /// The host's namespaces, to tell containers and other namespaces from the host.
@@ -143,6 +145,11 @@ impl ProcessCache {
             ),
             _ => Vec::new(),
         };
+        let writable = if context == ContextKind::Host {
+            crate::lint::writable_by_user(Path::new(&*exe))
+        } else {
+            writable_by_others_path(&format!("/proc/{pid}/exe"))
+        };
         Some(ProcessInfo {
             pid,
             exe,
@@ -151,6 +158,7 @@ impl ProcessCache {
             lineage,
             context,
             apps,
+            writable,
         })
     }
 
@@ -246,6 +254,60 @@ pub fn user_of(uid: u32) -> Option<String> {
 #[must_use]
 pub fn writable_by_others(pid: u32) -> bool {
     writable_by_others_path(&format!("/proc/{pid}/exe"))
+}
+
+/// Executables' SHA-256s by file version (device, inode, size, modification time): each binary is read once.
+static HASHES: std::sync::Mutex<Option<HashMap<FileVersion, Arc<str>>>> =
+    std::sync::Mutex::new(None);
+/// A file's device, inode, size and modification time.
+type FileVersion = (u64, u64, u64, i64);
+/// Versions remembered at most.
+const HASHED: usize = 1024;
+
+/// The SHA-256 (lowercase hex) of the executable process `pid` runs, read through `/proc/<pid>/exe` (the very file,
+/// wherever it is).
+#[must_use]
+pub fn sha256_of(pid: u32) -> Option<Arc<str>> {
+    use sha2::Digest as _;
+    use std::io::Read as _;
+    let path = format!("/proc/{pid}/exe");
+    let meta = fs::metadata(&path).ok()?;
+    let version = (meta.dev(), meta.ino(), meta.size(), meta.mtime());
+    let hashes = HASHES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(hash) = hashes.as_ref().and_then(|h| h.get(&version)) {
+        return Some(Arc::clone(hash));
+    }
+    drop(hashes);
+    let mut file = fs::File::open(&path).ok()?;
+    let mut hasher = sha2::Sha256::new();
+    let mut buffer = vec![0_u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buffer).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(buffer.get(..n)?);
+    }
+    let hex = hasher
+        .finalize()
+        .iter()
+        .fold(String::with_capacity(64), |mut hex, b| {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{b:02x}");
+            hex
+        });
+    let hash: Arc<str> = Arc::from(hex.as_str());
+    let mut hashes = HASHES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let hashes = hashes.get_or_insert_with(HashMap::new);
+    if hashes.len() >= HASHED {
+        hashes.clear();
+    }
+    hashes.insert(version, Arc::clone(&hash));
+    Some(hash)
 }
 
 /// Whether a user other than root can replace the file at `path` (it is theirs, or group or world writable).

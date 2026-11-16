@@ -1262,6 +1262,82 @@ pub fn rules_on_packages() -> Result<(), String> {
     )
 }
 
+/// A rule pinning a binary's SHA-256 holds for that binary only; a rule on writable executables catches a copy a user
+/// can change.
+pub fn binaries_by_hash_and_writability() -> Result<(), String> {
+    let (_target, port) = listener()?;
+    let hash = crate::util::run("sha256sum", &["/usr/bin/curl"])?
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let daemon = Running::start("binaries", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let port_text = port.to_string();
+    daemon.cli(&[
+        "rules", "add", "allow", "--sha256", &hash, "--port", &port_text,
+    ])?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "allow",
+        "--exe",
+        "/tmp/mallorys-curl",
+        "--port",
+        &port_text,
+    ])?;
+    daemon.cli(&[
+        "rules",
+        "add",
+        "deny",
+        "--writable",
+        "true",
+        "--tier",
+        "override",
+        "--port",
+        &port_text,
+    ])?;
+    // Mallory's own copy: the same bytes, but hers to change.
+    std::fs::copy("/usr/bin/curl", "/tmp/mallorys-curl").map_err(|e| e.to_string())?;
+    crate::util::run("chown", &["mallory", "/tmp/mallorys-curl"])?;
+    thread::sleep(Duration::from_millis(300));
+    let connects = |program: &str| -> Result<bool, String> {
+        let url = format!("http://127.0.0.1:{port}/");
+        let output = Command::new("runuser")
+            .args([
+                "-u",
+                "mallory",
+                "--",
+                program,
+                "-s",
+                "-m",
+                "2",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{remote_port}",
+                &url,
+            ])
+            .output()
+            .map_err(|e| e.to_string())?;
+        Ok(String::from_utf8_lossy(&output.stdout).contains(&port_text))
+    };
+    let pinned = connects("/usr/bin/curl")?;
+    let writable = connects("/tmp/mallorys-curl")?;
+    let other = !mallory_connects(port)?;
+    let events = daemon.cli(&["events", "--limit", "10"])?;
+    check(pinned, "the pinned binary was blocked", &events)?;
+    check(
+        !writable,
+        "a binary its user can change got through",
+        &events,
+    )?;
+    check(
+        other,
+        "another program got through a pin that isn't its",
+        &events,
+    )
+}
+
 /// `events --follow` prints connections as they are decided, only those its query matches; `stats` sums them up.
 pub fn events_follow_and_stats() -> Result<(), String> {
     let (_denied_target, denied) = listener()?;
@@ -1449,7 +1525,7 @@ pub fn a_connection_from_before_the_daemon_is_attributed() -> Result<(), String>
         "table inet e2e_hold {{\n  chain out {{\n    type filter hook output priority -400; policy accept;\n    tcp dport {port} drop\n  }}\n}}"
     );
     run_nft(&hold)?;
-    let mut connecting = Command::new("runuser")
+    let connecting = Command::new("runuser")
         .args([
             "-u",
             "mallory",

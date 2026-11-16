@@ -59,6 +59,12 @@ pub struct Conditions {
     /// Blocklists, by name: the destination's name or address is on one of them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub list: Vec<String>,
+    /// SHA-256s of the executable (hex): the binary pinned.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sha256: Vec<String>,
+    /// Whether a user other than root can change the executable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub writable: Option<bool>,
 }
 
 /// A container's identity, as keys of `container`.
@@ -327,6 +333,14 @@ impl Conditions {
         if !self.list.is_empty() {
             conditions.push(Condition::List(self.list.clone()));
         }
+        if !self.sha256.is_empty() {
+            conditions.push(Condition::Sha256(
+                self.sha256.iter().map(|h| h.to_ascii_lowercase()).collect(),
+            ));
+        }
+        if let Some(writable) = self.writable {
+            conditions.push(Condition::Writable(writable));
+        }
         Ok(())
     }
 
@@ -383,6 +397,8 @@ impl Conditions {
                 Condition::VmHypervisor(h) => spec.vm.hypervisor.extend(h.iter().cloned()),
                 Condition::NetnsName(p) => spec.netns.extend(p.iter().map(pattern_text)),
                 Condition::List(names) => spec.list.extend(names.iter().cloned()),
+                Condition::Sha256(hashes) => spec.sha256.extend(hashes.iter().cloned()),
+                Condition::Writable(writable) => spec.writable = Some(*writable),
                 Condition::Not(_) => {}
             }
         }

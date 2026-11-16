@@ -47,6 +47,9 @@ Commands:
                                     --exe <path>      the executable (glob: --exe 'glob:/usr/bin/*')
                                     --app <identity>  the program's package, Nix name, service or snap
                                                       (pkg:curl, nix:git, unit:sshd.service, snap:firefox)
+                                    --sha256 <hex>    the executable's SHA-256: that binary only
+                                    --writable <true|false>
+                                                      whether a user other than root can change the executable
                                     --host <name>     a host name or *.domain
                                     --net <cidr>      an address, a range, or an alias (lan, loopback, imds, ...)
                                     --port <n[-m]>    a port or range
@@ -1677,6 +1680,8 @@ fn spec_from_args(args: &mut pico_args::Arguments) -> Result<RuleSpec, Error> {
         netns: args.values_from_str("--netns")?,
         list: args.values_from_str("--list")?,
         app: args.values_from_str("--app")?,
+        sha256: args.values_from_str("--sha256")?,
+        writable: args.opt_value_from_str("--writable")?,
         ..Conditions::default()
     };
     Ok(RuleSpec {

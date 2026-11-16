@@ -69,6 +69,8 @@ mod tests {
         .map(|(exe, port, address)| Facts {
             exe,
             apps: &apps,
+            sha256: None,
+            writable: false,
             cmdline: "",
             ancestors: &ancestors,
             lineage: &[],

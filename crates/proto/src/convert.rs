@@ -102,6 +102,8 @@ pub fn conditions(spec: &Conditions) -> v1::Conditions {
         }),
         netns: spec.netns.clone(),
         list: spec.list.clone(),
+        sha256: spec.sha256.clone(),
+        writable: spec.writable,
     }
 }
 
@@ -140,6 +142,8 @@ pub fn conditions_from(wire: &v1::Conditions) -> Conditions {
             }),
         netns: wire.netns.clone(),
         list: wire.list.clone(),
+        sha256: wire.sha256.clone(),
+        writable: wire.writable,
     }
 }
 
