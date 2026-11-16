@@ -40,9 +40,9 @@ scripts/ui-vm.sh "${shots}/edit" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
-click 66 391
+page rules
 click 1165 121
-click 545 192
+click 545 138
 click 955 665
 sleep 1
 { snitchhiker rules; snitchhiker history --limit 1; } > /tmp/desktop-result.txt' >/dev/null 2>&1
@@ -136,7 +136,7 @@ printf "%s" "{\"name\": \"000-allow-curl\", \"enabled\": true, \"action\": \"all
 printf "%s" "{\"name\": \"002-lists\", \"enabled\": true, \"action\": \"deny\", \"duration\": \"always\", \"operator\": {\"type\": \"lists\", \"operand\": \"lists.domains\", \"data\": \"/x\"}}" > /etc/opensnitchd/rules/002-lists.json
 # A system firewall too, which converts in part (the layout of the dialog depends on it).
 printf "%s" "{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"nat_output\", \"Family\": \"inet\", \"Type\": \"natdest\", \"Hook\": \"output\", \"Policy\": \"accept\", \"Rules\": [{\"Enabled\": true, \"Description\": \"redirect\", \"Target\": \"redirect\"}]}]}]}" > /etc/opensnitchd/system-fw.json
-click 66 391
+page rules
 sleep 1
 click 941 48
 sleep 2
@@ -159,7 +159,7 @@ snitchhiker folders add Bin >/dev/null
 snitchhiker rules add allow --exe /usr/bin/curl --name "curl" >/dev/null
 snitchhiker rules add allow --exe /usr/bin/wget --name "wget" >/dev/null
 sleep 1
-click 66 391
+page rules
 drag 760 121 300 113
 sleep 1
 snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
@@ -199,7 +199,7 @@ sleep 1
 rm -f /tmp/agent.out && install -m 666 /dev/null /tmp/agent.out
 (cd /tmp && runuser -u mallory -- /tmp/snitchhiker-e2e-ui --agent 192.0.2.77 8077 > /tmp/agent.out 2>&1 &)
 sleep 6
-click 66 175
+page proposals
 sleep 2
 shot proposals
 click 329 487
@@ -220,7 +220,7 @@ fi
 scripts/ui-vm.sh "${shots}/node" '
 for id in $(snitchhiker devices | awk "NR > 1 {print \$1}"); do snitchhiker devices rm "$id" >/dev/null; done
 link=$(snitchhiker pair | grep "^snitchhiker://")
-click 66 535
+page devices
 sleep 2
 click 315 253
 sleep 2
@@ -236,6 +236,31 @@ if grep -Eq "snitchhiker-e2e +admin +connected" <<<"${out}" && grep -q '^id = "'
   pass node-added-in-the-app
 else
   fail node-added-in-the-app "the app didn't pair with the node by its link, or didn't connect to it" "${out}"
+fi
+
+# 11. Text and the clipboard in the setgid app: a rule named with non-ASCII text typed in its editor is saved as
+# typed, and the events table Copy CSV copies is on the Wayland clipboard.
+scripts/ui-vm.sh "${shots}/clipboard" '
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+page rules
+click 1240 48
+sleep 1
+click 720 102
+type_text "café rule"
+click 720 250
+type_text "/usr/bin/curl"
+click 955 668
+sleep 1
+snitchhiker rules > /tmp/desktop-result.txt
+page events
+click 1250 48
+sleep 1
+session wl-paste -n | head -1 >> /tmp/desktop-result.txt' >/dev/null 2>&1
+out=$(result)
+if grep -q "café rule" <<<"${out}" && grep -q "^time,action,program" <<<"${out}"; then
+  pass text-and-clipboard
+else
+  fail text-and-clipboard "the typed rule name or the copied table didn't come through" "${out}"
 fi
 
 echo "screenshots in ${shots}"

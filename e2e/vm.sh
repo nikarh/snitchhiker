@@ -104,10 +104,10 @@ packages() {
     # The container tests: Docker, Podman (rootful and rootless, with pasta and slirp4netns), and a static busybox their
     # images are made from (nothing is pulled from a registry).
     arch) printf '%s\n' bpf conntrack-tools curl iproute2 jq nftables polkit python socat sqlite strace \
-      sway grim mako wtype vulkan-swrast ttf-dejavu libxkbcommon-x11 \
+      sway grim mako wtype wl-clipboard vulkan-swrast ttf-dejavu libxkbcommon-x11 \
       docker podman passt slirp4netns busybox ;;
     debian) printf '%s\n' bpftool conntrack curl iproute2 jq nftables polkitd python3 socat sqlite3 strace \
-      sway grim mako-notifier wtype mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 \
+      sway grim mako-notifier wtype wl-clipboard mesa-vulkan-drivers fonts-dejavu-core libxkbcommon-x11-0 \
       docker.io podman passt slirp4netns uidmap busybox-static systemd-resolved ;;
   esac
 }

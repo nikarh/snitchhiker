@@ -1925,12 +1925,14 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Setgid test client: confirm non-dumpable (ptrace and `/proc/pid/mem` from the same uid fail), `SO_PEERPIDFD`
         and `/proc/pid/exe` checks, and the race re-check.
   - [x] polkit check from the daemon with `zbus_polkit` and a pidfd subject. *(Done in M2, with step-up.)*
-- [ ] **Spike: GUI**
+- [x] **Spike: GUI**
   - [x] gpui-ce hello world with a virtualized 1M-row table, a tree view and a text input, on Wayland (niri/KDE/GNOME)
         and X11.
   - [x] The same with `gpui-pre` + `gpui-component`. Compare effort.
-  - [ ] Run each setgid (done: renders on Wayland with Vulkan and fonts). Check that IME, clipboard, the notification D-Bus, the tray and portals
-        (file chooser) all still work. *(Moved to M3, once the app exists.)*
+  - [x] Run each setgid: renders on Wayland with Vulkan and fonts; text input (non-ASCII too), the clipboard, the
+        notification D-Bus and the tray work (`e2e/desktop.sh`). Input methods come through Wayland's text-input
+        protocol, which needs no environment the scrubbing drops; the app opens no portal dialogs. *(Shortcuts with
+        Ctrl don't reach the app from the test's virtual keyboard (wtype); to check on a real desktop.)*
   - [x] Decide the framework. Record in `docs/decisions/0004-desktop-ui.md`.
 - [x] **Spike: remote** *(moved to the start of M5, and done there: the remote e2e and the Android e2e connect through
   a self-hosted relay)*

@@ -46,36 +46,36 @@ J
 
 # In the session, the app up: the pages, one shot each.
 pages='
-click 66 283
+page events
 sleep 2
 shot events
 click 518 121
 sleep 2
 shot explain
 key Escape
-click 66 319
+page explorer
 sleep 2
 shot explorer
-click 66 355
+page containers
 sleep 2
 shot containers
-click 66 427
+page rules
 sleep 2
 shot rules
 click 1165 121
 sleep 2
 shot rule-editor
 key Escape
-click 66 211
+page alerts
 sleep 2
 shot alerts
-click 66 535
+page firewall
 sleep 2
 shot firewall
-click 66 607
+page blocklists
 sleep 2
 shot blocklists
-click 66 643
+page settings
 sleep 2
 shot settings
 for i in $(seq 1 12); do
@@ -83,7 +83,7 @@ for i in $(seq 1 12); do
   sleep 1
 done &
 traffic=$!
-click 66 247
+page live
 sleep 10
 shot live
 kill $traffic 2>/dev/null || true
@@ -94,7 +94,7 @@ install -d -o mallory /home/mallory/src/webshop
 (cd /home/mallory/src/webshop && runuser -u mallory -- /tmp/snitchhiker-e2e-ui --agent 192.0.2.77 8077 >/dev/null 2>&1 &)
 sleep 6
 runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$(cat /run/user/$uid/bus-address) makoctl dismiss -a || true
-click 66 175
+page proposals
 sleep 2
 shot proposals
 for id in $(snitchhiker prompts | awk "/^prompt [0-9]+:/ {sub(\":\", \"\", \$2); print \$2}"); do
@@ -104,7 +104,7 @@ bus=$(cat /run/user/$uid/bus-address)
 runuser -u mallory -- curl -s -m 30 https://example.org >/dev/null 2>&1 &
 sleep 2
 runuser -u mallory -- env DBUS_SESSION_BUS_ADDRESS=$bus makoctl dismiss -a || true
-click 66 139
+page prompts
 sleep 2
 shot prompts
 '

@@ -5,7 +5,7 @@
 #   scripts/ui-vm.sh <output dir> [setup] [daemon.toml]
 #
 # setup: a shell snippet run as root in the VM once the app is up (to make history, or connections to prompt for). It
-# can call `click <x> <y>`, `right_click <x> <y>` and `drag <x1> <y1> <x2> <y2>` (the virtual pointer, through
+# can call `page <name>` (a sidebar entry: rules, devices, ...), `click <x> <y>`, `right_click <x> <y>` and `drag <x1> <y1> <x2> <y2>` (the virtual pointer, through
 # snitchhiker-e2e), `type_text <text>` and `key <name>`
 # (the virtual keyboard: `key Return`), and `shot <name>` (a screenshot, <name>.png in the output dir); a screenshot
 # `final.png` is taken after it.
@@ -74,11 +74,22 @@ sleep 4
 rm -rf /tmp/ui-shots && install -d -m 755 /tmp/ui-shots
 session() { runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=wayland-1 "\$@"; }
 click() { session /tmp/snitchhiker-e2e-ui --click "\$1" "\$2"; sleep 1; }
+# A page of the sidebar, by name: its entries are 36 pixels apart from Prompts down.
+page() {
+  local i=0 name
+  for name in prompts proposals alerts live events explorer containers connections rules history status firewall \
+    devices blocklists settings; do
+    if [ "\$name" = "\$1" ]; then click 66 \$((139 + 36 * i)); return; fi
+    i=\$((i + 1))
+  done
+  echo "no page \$1" >&2
+  return 1
+}
 right_click() { session /tmp/snitchhiker-e2e-ui --click "\$1" "\$2" right; sleep 1; }
 drag() { session /tmp/snitchhiker-e2e-ui --drag "\$1" "\$2" "\$3" "\$4"; sleep 1; }
 shot() { session grim - > "/tmp/ui-shots/\$1.png"; }
 # Each wtype is a new virtual keyboard: keys sent before the compositor took its keymap are lost, hence the pause.
-type_text() { session wtype -s 300 "\$1"; sleep 0.5; }
+type_text() { session env LC_ALL=C.UTF-8 wtype -s 300 "\$1"; sleep 0.5; }
 key() { session wtype -s 300 -k "\$1"; sleep 1; }
 ${setup}
 sleep 2
