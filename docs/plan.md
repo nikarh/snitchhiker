@@ -2286,8 +2286,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
 
 ### M9. 1.0 hardening
 
-- [ ] External review of the security model (or at least a structured self-review with the `security-review` skill
-      and a written threat model document).
+- [x] External review of the security model (or at least a structured self-review with the `security-review` skill
+      and a written threat model document): a structured review of every §4 claim against the code and tests
+      (November 2026), its findings fixed or recorded, and the threat model on the site (internals/threat-model).
 - [ ] Kernel matrix green; upgrade tests (old daemon + new app, new daemon + old app).
 - [ ] Packages: Arch repo, apt repo, rpm.
 - [ ] **Go public**, once everything above and in M0–M8 is done: scan the whole history for secrets, then the

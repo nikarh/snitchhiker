@@ -136,9 +136,9 @@ const SCENARIOS: &[Scenario] = &[
         "step-up/allow-everything-needs-authorization",
         stepup::allow_everything_needs_authorization,
     ),
-    ("stepup/no-way-around-it", stepup::no_way_around_step_up),
+    ("step-up/no-way-around-it", stepup::no_way_around_step_up),
     (
-        "stepup/other-local-users-are-viewers",
+        "step-up/other-local-users-are-viewers",
         stepup::other_local_users_are_viewers,
     ),
     (
