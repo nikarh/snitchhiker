@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["netlink","nftables","packet","queue","sockdiag"]};
+window.SIDEBAR_ITEMS = {"mod":["netlink","nftables","packet","queue","route","sockdiag"]};

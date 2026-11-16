@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["SpecError"],"struct":["Conditions","FolderSpec","RuleFile","RuleSpec"]};
+window.SIDEBAR_ITEMS = {"enum":["SpecError"],"fn":["pattern"],"struct":["Conditions","ContainerSpec","FolderSpec","RuleFile","RuleSpec","VmSpec"]};

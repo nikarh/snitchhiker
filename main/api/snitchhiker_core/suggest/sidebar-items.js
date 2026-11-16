@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["suggestions"],"struct":["Suggestion"]};
+window.SIDEBAR_ITEMS = {"fn":["in_context","suggestions"],"struct":["Suggestion"]};

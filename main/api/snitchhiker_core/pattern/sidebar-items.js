@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["HOME"],"enum":["Pattern","PatternError","PatternSource"]};
+window.SIDEBAR_ITEMS = {"constant":["HOME"],"enum":["Pattern","PatternError","PatternSource"],"fn":["finite"]};

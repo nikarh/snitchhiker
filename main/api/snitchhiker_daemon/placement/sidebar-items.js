@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["APPS"],"enum":["Error"],"fn":["check","place"]};
+window.SIDEBAR_ITEMS = {"constant":["APPS","CONTAINERS","VMS"],"enum":["Error"],"fn":["check","place"]};

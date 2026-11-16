@@ -77,7 +77,7 @@
 <a href=#77 id=77 data-nosnippet>77</a>
 <a href=#78 id=78 data-nosnippet>78</a><span class="doccomment">/// Prompts wait at least this long, and at most this long: a client must have time to show one, and a connection
 <a href=#79 id=79 data-nosnippet>79</a>/// can't be held forever.
-<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub const </span>PROMPT_TIMEOUT_SECS: std::ops::RangeInclusive&lt;u64&gt; = <span class="number">5</span>..=<span class="number">3_600</span>;
+<a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub const </span>PROMPT_TIMEOUT_SECS: std::ops::RangeInclusive&lt;u64&gt; = <span class="number">1</span>..=<span class="number">3_600</span>;
 <a href=#81 id=81 data-nosnippet>81</a>
 <a href=#82 id=82 data-nosnippet>82</a><span class="attr">#[derive(Debug, thiserror::Error)]
 <a href=#83 id=83 data-nosnippet>83</a></span><span class="kw">pub enum </span>Invalid {
@@ -85,7 +85,7 @@
 <a href=#85 id=85 data-nosnippet>85</a>    </span>Unknown(String),
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="attr">#[error(<span class="string">"no such value for {0}"</span>)]
 <a href=#87 id=87 data-nosnippet>87</a>    </span>Value(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
-<a href=#88 id=88 data-nosnippet>88</a>    <span class="attr">#[error(<span class="string">"prompts wait 5 to 3600 seconds"</span>)]
+<a href=#88 id=88 data-nosnippet>88</a>    <span class="attr">#[error(<span class="string">"prompts wait 1 to 3600 seconds"</span>)]
 <a href=#89 id=89 data-nosnippet>89</a>    </span>Timeout,
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="attr">#[error(<span class="string">"history is kept 1 to 3650 days"</span>)]
 <a href=#91 id=91 data-nosnippet>91</a>    </span>Retention,
@@ -276,7 +276,7 @@
 <a href=#276 id=276 data-nosnippet>276</a>        <span class="macro">assert_eq!</span>(Effective::of(<span class="kw-2">&amp;</span>config, <span class="kw-2">&amp;</span>reset).no_match, config.no_match);
 <a href=#277 id=277 data-nosnippet>277</a>        <span class="macro">assert!</span>(<span class="macro">matches!</span>(
 <a href=#278 id=278 data-nosnippet>278</a>            Overrides::default().apply(<span class="kw-2">&amp;</span>v1::SetPolicy {
-<a href=#279 id=279 data-nosnippet>279</a>                prompt_timeout_secs: <span class="prelude-val">Some</span>(<span class="number">1</span>),
+<a href=#279 id=279 data-nosnippet>279</a>                prompt_timeout_secs: <span class="prelude-val">Some</span>(<span class="number">0</span>),
 <a href=#280 id=280 data-nosnippet>280</a>                ..v1::SetPolicy::default()
 <a href=#281 id=281 data-nosnippet>281</a>            }),
 <a href=#282 id=282 data-nosnippet>282</a>            <span class="prelude-val">Err</span>(Invalid::Timeout)

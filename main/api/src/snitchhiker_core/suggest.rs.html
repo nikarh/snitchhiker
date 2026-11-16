@@ -279,4 +279,215 @@
 <a href=#279 id=279 data-nosnippet>279</a>        <span class="macro">assert!</span>(v6.iter().any(|s| s.conditions.net == <span class="macro">vec!</span>[<span class="string">"2001:db8::/64"</span>]));
 <a href=#280 id=280 data-nosnippet>280</a>    }
 <a href=#281 id=281 data-nosnippet>281</a>}
+<a href=#282 id=282 data-nosnippet>282</a>
+<a href=#283 id=283 data-nosnippet>283</a><span class="doccomment">/// The suggestions for a connection from a container, a VM or another network namespace: the same rules, made to hold
+<a href=#284 id=284 data-nosnippet>284</a>/// in that context only (a rule made from a container's prompt never applies to the host), and for a container, its
+<a href=#285 id=285 data-nosnippet>285</a>/// own ladder after the first (plan §5.10): any program in it, any container from its image, this exact container.
+<a href=#286 id=286 data-nosnippet>286</a>///
+<a href=#287 id=287 data-nosnippet>287</a>/// A container is named by its most stable identity: its Compose service, else its name, else its image.
+<a href=#288 id=288 data-nosnippet>288</a></span><span class="attr">#[must_use]
+<a href=#289 id=289 data-nosnippet>289</a></span><span class="kw">pub fn </span>in_context(
+<a href=#290 id=290 data-nosnippet>290</a>    base: Vec&lt;Suggestion&gt;,
+<a href=#291 id=291 data-nosnippet>291</a>    context: <span class="kw">crate</span>::rule::ContextKind,
+<a href=#292 id=292 data-nosnippet>292</a>    container: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::context::Container&gt;,
+<a href=#293 id=293 data-nosnippet>293</a>    vm: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::context::Vm&gt;,
+<a href=#294 id=294 data-nosnippet>294</a>) -&gt; Vec&lt;Suggestion&gt; {
+<a href=#295 id=295 data-nosnippet>295</a>    <span class="kw">use </span><span class="kw">crate</span>::rule::ContextKind;
+<a href=#296 id=296 data-nosnippet>296</a>    <span class="kw">let </span>within = |suggestion: <span class="kw-2">&amp;</span>Suggestion, who: <span class="kw-2">&amp;</span>str, apply: <span class="kw-2">&amp;</span><span class="kw">dyn </span>Fn(<span class="kw-2">&amp;mut </span>Conditions)| {
+<a href=#297 id=297 data-nosnippet>297</a>        <span class="kw">let </span><span class="kw-2">mut </span>conditions = suggestion.conditions.clone();
+<a href=#298 id=298 data-nosnippet>298</a>        apply(<span class="kw-2">&amp;mut </span>conditions);
+<a href=#299 id=299 data-nosnippet>299</a>        Suggestion {
+<a href=#300 id=300 data-nosnippet>300</a>            label: <span class="macro">format!</span>(<span class="string">"in {who}: {}"</span>, suggestion.label),
+<a href=#301 id=301 data-nosnippet>301</a>            conditions,
+<a href=#302 id=302 data-nosnippet>302</a>            broad: suggestion.broad,
+<a href=#303 id=303 data-nosnippet>303</a>        }
+<a href=#304 id=304 data-nosnippet>304</a>    };
+<a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">match </span>(context, container) {
+<a href=#306 id=306 data-nosnippet>306</a>        (ContextKind::Host | ContextKind::Any, <span class="kw">_</span>) =&gt; base,
+<a href=#307 id=307 data-nosnippet>307</a>        (ContextKind::Container, <span class="prelude-val">Some</span>(c)) =&gt; container_suggestions(<span class="kw-2">&amp;</span>base, c)
+<a href=#308 id=308 data-nosnippet>308</a>            .unwrap_or_else(|| in_context(base, ContextKind::Container, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>)),
+<a href=#309 id=309 data-nosnippet>309</a>        <span class="comment">// A VM is named by its name: its traffic has no program to name.
+<a href=#310 id=310 data-nosnippet>310</a>        </span>(ContextKind::Vm, <span class="kw">_</span>) <span class="kw">if </span>vm.is_some_and(|vm| !vm.name.is_empty()) =&gt; {
+<a href=#311 id=311 data-nosnippet>311</a>            <span class="kw">let </span>name = vm.map_or_default(|vm| vm.name.clone());
+<a href=#312 id=312 data-nosnippet>312</a>            base.iter()
+<a href=#313 id=313 data-nosnippet>313</a>                .map(|s| {
+<a href=#314 id=314 data-nosnippet>314</a>                    within(s, <span class="kw-2">&amp;</span>name, <span class="kw-2">&amp;</span>|conditions| {
+<a href=#315 id=315 data-nosnippet>315</a>                        conditions.vm.name = <span class="macro">vec!</span>[name.clone()];
+<a href=#316 id=316 data-nosnippet>316</a>                    })
+<a href=#317 id=317 data-nosnippet>317</a>                })
+<a href=#318 id=318 data-nosnippet>318</a>                .collect()
+<a href=#319 id=319 data-nosnippet>319</a>        }
+<a href=#320 id=320 data-nosnippet>320</a>        (kind, <span class="kw">_</span>) =&gt; {
+<a href=#321 id=321 data-nosnippet>321</a>            <span class="kw">let </span>name = <span class="kw">match </span>kind {
+<a href=#322 id=322 data-nosnippet>322</a>                ContextKind::Vm =&gt; <span class="string">"a VM"</span>,
+<a href=#323 id=323 data-nosnippet>323</a>                ContextKind::Netns =&gt; <span class="string">"another network namespace"</span>,
+<a href=#324 id=324 data-nosnippet>324</a>                <span class="kw">_ </span>=&gt; <span class="string">"a container"</span>,
+<a href=#325 id=325 data-nosnippet>325</a>            };
+<a href=#326 id=326 data-nosnippet>326</a>            base.iter()
+<a href=#327 id=327 data-nosnippet>327</a>                .map(|s| within(s, name, <span class="kw-2">&amp;</span>|conditions| conditions.context = <span class="prelude-val">Some</span>(kind)))
+<a href=#328 id=328 data-nosnippet>328</a>                .collect()
+<a href=#329 id=329 data-nosnippet>329</a>        }
+<a href=#330 id=330 data-nosnippet>330</a>    }
+<a href=#331 id=331 data-nosnippet>331</a>}
+<a href=#332 id=332 data-nosnippet>332</a>
+<a href=#333 id=333 data-nosnippet>333</a><span class="doccomment">/// A container's suggestions (see [`in_context`]); `None` when it has nothing stable to be named by.
+<a href=#334 id=334 data-nosnippet>334</a></span><span class="kw">fn </span>container_suggestions(
+<a href=#335 id=335 data-nosnippet>335</a>    base: <span class="kw-2">&amp;</span>[Suggestion],
+<a href=#336 id=336 data-nosnippet>336</a>    c: <span class="kw-2">&amp;</span><span class="kw">crate</span>::context::Container,
+<a href=#337 id=337 data-nosnippet>337</a>) -&gt; <span class="prelude-ty">Option</span>&lt;Vec&lt;Suggestion&gt;&gt; {
+<a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">use </span><span class="kw">crate</span>::spec::ContainerSpec;
+<a href=#339 id=339 data-nosnippet>339</a>    <span class="kw">let </span>within = |suggestion: <span class="kw-2">&amp;</span>Suggestion, who: <span class="kw-2">&amp;</span>str, scope: <span class="kw-2">&amp;</span>ContainerSpec| Suggestion {
+<a href=#340 id=340 data-nosnippet>340</a>        label: <span class="macro">format!</span>(<span class="string">"in {who}: {}"</span>, suggestion.label),
+<a href=#341 id=341 data-nosnippet>341</a>        conditions: Conditions {
+<a href=#342 id=342 data-nosnippet>342</a>            container: scope.clone(),
+<a href=#343 id=343 data-nosnippet>343</a>            ..suggestion.conditions.clone()
+<a href=#344 id=344 data-nosnippet>344</a>        },
+<a href=#345 id=345 data-nosnippet>345</a>        broad: suggestion.broad,
+<a href=#346 id=346 data-nosnippet>346</a>    };
+<a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">let </span>(who, scope) = <span class="kw">if let </span><span class="prelude-val">Some</span>(compose) = <span class="kw-2">&amp;</span>c.compose {
+<a href=#348 id=348 data-nosnippet>348</a>        (
+<a href=#349 id=349 data-nosnippet>349</a>            compose.clone(),
+<a href=#350 id=350 data-nosnippet>350</a>            ContainerSpec {
+<a href=#351 id=351 data-nosnippet>351</a>                compose: <span class="macro">vec!</span>[compose.clone()],
+<a href=#352 id=352 data-nosnippet>352</a>                ..ContainerSpec::default()
+<a href=#353 id=353 data-nosnippet>353</a>            },
+<a href=#354 id=354 data-nosnippet>354</a>        )
+<a href=#355 id=355 data-nosnippet>355</a>    } <span class="kw">else if </span>!c.name.is_empty() {
+<a href=#356 id=356 data-nosnippet>356</a>        (
+<a href=#357 id=357 data-nosnippet>357</a>            c.name.clone(),
+<a href=#358 id=358 data-nosnippet>358</a>            ContainerSpec {
+<a href=#359 id=359 data-nosnippet>359</a>                name: <span class="macro">vec!</span>[c.name.clone()],
+<a href=#360 id=360 data-nosnippet>360</a>                ..ContainerSpec::default()
+<a href=#361 id=361 data-nosnippet>361</a>            },
+<a href=#362 id=362 data-nosnippet>362</a>        )
+<a href=#363 id=363 data-nosnippet>363</a>    } <span class="kw">else if </span>!c.image.is_empty() {
+<a href=#364 id=364 data-nosnippet>364</a>        (
+<a href=#365 id=365 data-nosnippet>365</a>            c.image.clone(),
+<a href=#366 id=366 data-nosnippet>366</a>            ContainerSpec {
+<a href=#367 id=367 data-nosnippet>367</a>                image: <span class="macro">vec!</span>[c.image.clone()],
+<a href=#368 id=368 data-nosnippet>368</a>                ..ContainerSpec::default()
+<a href=#369 id=369 data-nosnippet>369</a>            },
+<a href=#370 id=370 data-nosnippet>370</a>        )
+<a href=#371 id=371 data-nosnippet>371</a>    } <span class="kw">else </span>{
+<a href=#372 id=372 data-nosnippet>372</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#373 id=373 data-nosnippet>373</a>    };
+<a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">let </span><span class="kw-2">mut </span>out: Vec&lt;Suggestion&gt; = base.iter().map(|s| within(s, <span class="kw-2">&amp;</span>who, <span class="kw-2">&amp;</span>scope)).collect();
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(first) = base.first() <span class="kw">else </span>{
+<a href=#376 id=376 data-nosnippet>376</a>        <span class="kw">return </span><span class="prelude-val">Some</span>(out);
+<a href=#377 id=377 data-nosnippet>377</a>    };
+<a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">let </span>destination = first
+<a href=#379 id=379 data-nosnippet>379</a>        .label
+<a href=#380 id=380 data-nosnippet>380</a>        .split_once(<span class="string">" → "</span>)
+<a href=#381 id=381 data-nosnippet>381</a>        .map_or(<span class="string">""</span>, |(<span class="kw">_</span>, d)| d)
+<a href=#382 id=382 data-nosnippet>382</a>        .to_owned();
+<a href=#383 id=383 data-nosnippet>383</a>    <span class="kw">let </span>without_program = |conditions: <span class="kw-2">&amp;</span>Conditions| Conditions {
+<a href=#384 id=384 data-nosnippet>384</a>        exe: Vec::new(),
+<a href=#385 id=385 data-nosnippet>385</a>        ..conditions.clone()
+<a href=#386 id=386 data-nosnippet>386</a>    };
+<a href=#387 id=387 data-nosnippet>387</a>    <span class="kw">let </span><span class="kw-2">mut </span>ladder = <span class="macro">vec!</span>[Suggestion {
+<a href=#388 id=388 data-nosnippet>388</a>        label: <span class="macro">format!</span>(<span class="string">"any program in {who} → {destination}"</span>),
+<a href=#389 id=389 data-nosnippet>389</a>        conditions: Conditions {
+<a href=#390 id=390 data-nosnippet>390</a>            container: scope.clone(),
+<a href=#391 id=391 data-nosnippet>391</a>            ..without_program(<span class="kw-2">&amp;</span>first.conditions)
+<a href=#392 id=392 data-nosnippet>392</a>        },
+<a href=#393 id=393 data-nosnippet>393</a>        broad: <span class="bool-val">false</span>,
+<a href=#394 id=394 data-nosnippet>394</a>    }];
+<a href=#395 id=395 data-nosnippet>395</a>    <span class="kw">if </span>!c.image.is_empty() &amp;&amp; scope.image.is_empty() {
+<a href=#396 id=396 data-nosnippet>396</a>        ladder.push(Suggestion {
+<a href=#397 id=397 data-nosnippet>397</a>            label: <span class="macro">format!</span>(<span class="string">"any container from {} → {destination}"</span>, c.image),
+<a href=#398 id=398 data-nosnippet>398</a>            conditions: Conditions {
+<a href=#399 id=399 data-nosnippet>399</a>                container: ContainerSpec {
+<a href=#400 id=400 data-nosnippet>400</a>                    image: <span class="macro">vec!</span>[c.image.clone()],
+<a href=#401 id=401 data-nosnippet>401</a>                    ..ContainerSpec::default()
+<a href=#402 id=402 data-nosnippet>402</a>                },
+<a href=#403 id=403 data-nosnippet>403</a>                ..without_program(<span class="kw-2">&amp;</span>first.conditions)
+<a href=#404 id=404 data-nosnippet>404</a>            },
+<a href=#405 id=405 data-nosnippet>405</a>            broad: <span class="bool-val">true</span>,
+<a href=#406 id=406 data-nosnippet>406</a>        });
+<a href=#407 id=407 data-nosnippet>407</a>    }
+<a href=#408 id=408 data-nosnippet>408</a>    <span class="kw">if </span>!c.id.is_empty() {
+<a href=#409 id=409 data-nosnippet>409</a>        ladder.push(Suggestion {
+<a href=#410 id=410 data-nosnippet>410</a>            label: <span class="macro">format!</span>(
+<a href=#411 id=411 data-nosnippet>411</a>                <span class="string">"this container ({}) → {destination}"</span>,
+<a href=#412 id=412 data-nosnippet>412</a>                c.id.get(..<span class="number">12</span>).unwrap_or(<span class="kw-2">&amp;</span>c.id)
+<a href=#413 id=413 data-nosnippet>413</a>            ),
+<a href=#414 id=414 data-nosnippet>414</a>            conditions: Conditions {
+<a href=#415 id=415 data-nosnippet>415</a>                container: ContainerSpec {
+<a href=#416 id=416 data-nosnippet>416</a>                    id: <span class="macro">vec!</span>[c.id.clone()],
+<a href=#417 id=417 data-nosnippet>417</a>                    ..ContainerSpec::default()
+<a href=#418 id=418 data-nosnippet>418</a>                },
+<a href=#419 id=419 data-nosnippet>419</a>                ..without_program(<span class="kw-2">&amp;</span>first.conditions)
+<a href=#420 id=420 data-nosnippet>420</a>            },
+<a href=#421 id=421 data-nosnippet>421</a>            broad: <span class="bool-val">false</span>,
+<a href=#422 id=422 data-nosnippet>422</a>        });
+<a href=#423 id=423 data-nosnippet>423</a>    }
+<a href=#424 id=424 data-nosnippet>424</a>    out.splice(<span class="number">1</span>..<span class="number">1</span>, ladder);
+<a href=#425 id=425 data-nosnippet>425</a>    <span class="prelude-val">Some</span>(out)
+<a href=#426 id=426 data-nosnippet>426</a>}
+<a href=#427 id=427 data-nosnippet>427</a>
+<a href=#428 id=428 data-nosnippet>428</a><span class="attr">#[cfg(test)]
+<a href=#429 id=429 data-nosnippet>429</a></span><span class="kw">mod </span>context_tests {
+<a href=#430 id=430 data-nosnippet>430</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">use </span><span class="kw">crate</span>::rule::ContextKind;
+<a href=#432 id=432 data-nosnippet>432</a>
+<a href=#433 id=433 data-nosnippet>433</a>    <span class="attr">#[test]
+<a href=#434 id=434 data-nosnippet>434</a>    </span><span class="kw">fn </span>a_containers_suggestions_hold_in_it_only() {
+<a href=#435 id=435 data-nosnippet>435</a>        <span class="kw">let </span>base = suggestions(
+<a href=#436 id=436 data-nosnippet>436</a>            <span class="string">"/usr/local/bin/node"</span>,
+<a href=#437 id=437 data-nosnippet>437</a>            <span class="prelude-val">None</span>,
+<a href=#438 id=438 data-nosnippet>438</a>            <span class="kw-2">&amp;</span>[Arc::from(<span class="string">"api.example.com"</span>)],
+<a href=#439 id=439 data-nosnippet>439</a>            <span class="string">"198.51.100.7"</span>.parse().unwrap(),
+<a href=#440 id=440 data-nosnippet>440</a>            <span class="number">443</span>,
+<a href=#441 id=441 data-nosnippet>441</a>            <span class="number">6</span>,
+<a href=#442 id=442 data-nosnippet>442</a>        );
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="kw">let </span>web = <span class="kw">crate</span>::context::Container {
+<a href=#444 id=444 data-nosnippet>444</a>            runtime: <span class="string">"docker"</span>.to_owned(),
+<a href=#445 id=445 data-nosnippet>445</a>            id: <span class="string">"0133794d05ab40d47d94868c4fb19a4d610f6c97e3ee0c5ee5fcf8aa21c03ea9"</span>.to_owned(),
+<a href=#446 id=446 data-nosnippet>446</a>            name: <span class="string">"shop-web-1"</span>.to_owned(),
+<a href=#447 id=447 data-nosnippet>447</a>            image: <span class="string">"node:22"</span>.to_owned(),
+<a href=#448 id=448 data-nosnippet>448</a>            compose: <span class="prelude-val">Some</span>(<span class="string">"shop/web"</span>.to_owned()),
+<a href=#449 id=449 data-nosnippet>449</a>            ..<span class="kw">crate</span>::context::Container::default()
+<a href=#450 id=450 data-nosnippet>450</a>        };
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">let </span>all = in_context(base.clone(), ContextKind::Container, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>web), <span class="prelude-val">None</span>);
+<a href=#452 id=452 data-nosnippet>452</a>        <span class="macro">assert_eq!</span>(all[<span class="number">0</span>].label, <span class="string">"in shop/web: node → api.example.com:443"</span>);
+<a href=#453 id=453 data-nosnippet>453</a>        <span class="macro">assert_eq!</span>(
+<a href=#454 id=454 data-nosnippet>454</a>            all[<span class="number">0</span>].conditions.container.compose,
+<a href=#455 id=455 data-nosnippet>455</a>            <span class="macro">vec!</span>[<span class="string">"shop/web"</span>.to_owned()]
+<a href=#456 id=456 data-nosnippet>456</a>        );
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="macro">assert_eq!</span>(all[<span class="number">0</span>].conditions.exe, base[<span class="number">0</span>].conditions.exe);
+<a href=#458 id=458 data-nosnippet>458</a>        <span class="macro">assert_eq!</span>(
+<a href=#459 id=459 data-nosnippet>459</a>            all[<span class="number">1</span>].label,
+<a href=#460 id=460 data-nosnippet>460</a>            <span class="string">"any program in shop/web → api.example.com:443"
+<a href=#461 id=461 data-nosnippet>461</a>        </span>);
+<a href=#462 id=462 data-nosnippet>462</a>        <span class="macro">assert_eq!</span>(all[<span class="number">1</span>].conditions.exe, Vec::&lt;String&gt;::new());
+<a href=#463 id=463 data-nosnippet>463</a>        <span class="macro">assert_eq!</span>(
+<a href=#464 id=464 data-nosnippet>464</a>            all[<span class="number">2</span>].conditions.container.image,
+<a href=#465 id=465 data-nosnippet>465</a>            <span class="macro">vec!</span>[<span class="string">"node:22"</span>.to_owned()]
+<a href=#466 id=466 data-nosnippet>466</a>        );
+<a href=#467 id=467 data-nosnippet>467</a>        <span class="macro">assert!</span>(all[<span class="number">3</span>].label.starts_with(<span class="string">"this container (0133794d05ab)"</span>));
+<a href=#468 id=468 data-nosnippet>468</a>        <span class="comment">// Every one is limited to containers.
+<a href=#469 id=469 data-nosnippet>469</a>        </span><span class="macro">assert!</span>(all.iter().all(|s| !s.conditions.container.is_empty()));
+<a href=#470 id=470 data-nosnippet>470</a>        <span class="comment">// The host keeps its own.
+<a href=#471 id=471 data-nosnippet>471</a>        </span><span class="macro">assert_eq!</span>(
+<a href=#472 id=472 data-nosnippet>472</a>            in_context(base.clone(), ContextKind::Host, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#473 id=473 data-nosnippet>473</a>            base
+<a href=#474 id=474 data-nosnippet>474</a>        );
+<a href=#475 id=475 data-nosnippet>475</a>        <span class="kw">let </span>vm = <span class="kw">crate</span>::context::Vm {
+<a href=#476 id=476 data-nosnippet>476</a>            hypervisor: <span class="string">"qemu"</span>.to_owned(),
+<a href=#477 id=477 data-nosnippet>477</a>            name: <span class="string">"web"</span>.to_owned(),
+<a href=#478 id=478 data-nosnippet>478</a>            uuid: String::new(),
+<a href=#479 id=479 data-nosnippet>479</a>        };
+<a href=#480 id=480 data-nosnippet>480</a>        <span class="macro">assert!</span>(
+<a href=#481 id=481 data-nosnippet>481</a>            in_context(base.clone(), ContextKind::Vm, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>vm))
+<a href=#482 id=482 data-nosnippet>482</a>                .iter()
+<a href=#483 id=483 data-nosnippet>483</a>                .all(|s| s.conditions.vm.name == [<span class="string">"web"</span>])
+<a href=#484 id=484 data-nosnippet>484</a>        );
+<a href=#485 id=485 data-nosnippet>485</a>        <span class="kw">let </span>netns = in_context(base, ContextKind::Netns, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>);
+<a href=#486 id=486 data-nosnippet>486</a>        <span class="macro">assert!</span>(
+<a href=#487 id=487 data-nosnippet>487</a>            netns
+<a href=#488 id=488 data-nosnippet>488</a>                .iter()
+<a href=#489 id=489 data-nosnippet>489</a>                .all(|s| s.conditions.context == <span class="prelude-val">Some</span>(ContextKind::Netns))
+<a href=#490 id=490 data-nosnippet>490</a>        );
+<a href=#491 id=491 data-nosnippet>491</a>    }
+<a href=#492 id=492 data-nosnippet>492</a>}
 </code></pre></div></section></main></body></html>

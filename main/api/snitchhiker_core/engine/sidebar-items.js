@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["CompileError"],"struct":["Decision","Facts","Match","RuleSet"]};
+window.SIDEBAR_ITEMS = {"enum":["CompileError"],"struct":["Decision","Facts","Match","RuleSet"],"type":["Lists"]};

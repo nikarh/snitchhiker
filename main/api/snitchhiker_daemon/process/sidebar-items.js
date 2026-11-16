@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["home_of","lineage","parent","start_time","uid_of","user_of","writable_by_others","writable_by_others_path"],"struct":["HostNamespaces","ProcessCache","ProcessInfo"]};
+window.SIDEBAR_ITEMS = {"constant":["NANOS_PER_TICK"],"fn":["home_of","lineage","parent","sha256_of","start_time","uid_of","user_of","writable_by_others","writable_by_others_path"],"struct":["HostNamespaces","ProcessCache","ProcessInfo"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEFAULT_REFRESH_SECS","LOCAL_DIR","MIN_REFRESH_SECS"],"fn":["check","is_due","names","next_due"],"struct":["Blocklists","Record"]};

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Hold"],"struct":["Broker","Held","NewPrompt","Pending","PromptKey"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_HELD","MAX_PROMPTS"],"enum":["Hold"],"struct":["Broker","Held","NewPrompt","Pending","PromptKey"]};
