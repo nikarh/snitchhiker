@@ -133,7 +133,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 
 ## The daemon itself
 
-The daemon runs as root with only the capabilities it needs, sees the system read-only apart from its own directories, and can't gain privileges ([The service](/install/linux/#the-service)). Everything it creates, the database with the history and the audit trail first, is readable by root alone, wherever the configuration puts it. With `fail = "closed"`, its table stays in place when it stops or crashes, and systemd restarts it, so nothing new gets out undecided meanwhile.
+The daemon runs as root with only the capabilities it needs (its unit's bounding set: it keeps them for as long as it runs), sees the system read-only apart from its own directories, can't gain privileges, and may make only the system calls of a service, plus the namespace ones and eBPF's ([The service](/install/linux/#the-service)). Everything it creates, the database with the history and the audit trail first, is readable by root alone, wherever the configuration puts it. With `fail = "closed"`, its table stays in place when it stops or crashes, and systemd restarts it, so nothing new gets out undecided meanwhile.
 
 ## Reporting a vulnerability
 

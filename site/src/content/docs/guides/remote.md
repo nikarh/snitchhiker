@@ -70,7 +70,7 @@ Every admin client, local or remote, lists every prompt and can answer it. Which
 
 A device can be **muted** (Devices → Mute, on the node): it still lists prompts, but never notifies of them.
 
-The node's own connections (to its relay, to devices) are never prompted for: the daemon recognises its own process's packets.
+The node's own connections (to its relay, to devices) are never prompted for: the kernel lets its service's packets through by their cgroup, before they are queued.
 
 ## While the phone sleeps
 

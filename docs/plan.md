@@ -228,8 +228,8 @@ anything the UI can read. Snitchhiker instead authenticates the *process*, using
    - **Secure-exec.** glibc's `ld.so` sees `AT_SECURE` and ignores `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT` and
      similar. The Vulkan loader likewise ignores user ICD overrides under `secure_getenv`.
 3. **The daemon verifies the peer anyway (defence in depth).** On accept it:
-   - takes the peer's pidfd (`SO_PEERPIDFD`, Linux 6.5+, falling back to `SO_PEERCRED` + `pidfd_open` +
-     re-check on older kernels);
+   - takes the peer's pidfd (`SO_PEERPIDFD`, so Linux 6.5+: older kernels are refused rather than given a racier
+     `SO_PEERCRED` + `pidfd_open` check);
    - checks the egid / supplementary groups contain `snitchhiker-ui`;
    - checks that `/proc/<pid>/exe` refers to an allow-listed client binary. The check covers device + inode, the file
      being root-owned and not group- or world-writable along its whole path, and optionally a pinned SHA-256 or
@@ -290,9 +290,9 @@ Even a genuine UI session should not be enough for actions that disable protecti
 - **Wayland socket man-in-the-middle.** The UI connects to `$WAYLAND_DISPLAY`, a socket in the user-writable
   `$XDG_RUNTIME_DIR`. A same-user attacker who changes how the UI is launched could put a proxy in between and both
   read and inject. Mitigations:
-  - The UI checks the compositor socket's peer (`SO_PEERCRED` + exe) against a list of known compositors, and warns
-    on mismatch.
-  - Prompt buttons arm only after a short delay and require focus.
+  - The UI checks the compositor socket's peer (`SO_PEERCRED` + exe): a known compositor, whose executable is the
+    root-owned, root-only-writable file at its path; it warns otherwise.
+  - Prompt buttons arm only while the window is active, after a short delay from both the prompt and the activation.
   - Dangerous actions need step-up anyway.
   - This is defence in depth, not a guarantee. Same-uid code controls the session's display.
 - **Input devices.** A user in the `input` group, or with `/dev/uinput` access, can inject events. The UI warns if the
@@ -323,7 +323,8 @@ Even a genuine UI session should not be enough for actions that disable protecti
   - Each node keeps a list of paired devices: key, name, role (`admin` or `viewer`), created and last-seen times, and
     optional expiry.
   - Unpairing is immediate and closes the device's connections.
-  - Nothing else can connect: unknown keys are rejected at the ALPN handshake.
+  - Nothing else is served: an unknown key completes the QUIC handshake (iroh authenticates it there) and is refused
+    before any request is read. Pairing attempts with a wrong secret are refused and alerted.
 - **Pairing** ([§8.3](#83-pairing)) uses a short-lived, single-use secret delivered by QR. The device learns the node's
   key from the QR, and the node learns the device's key from the authenticated connection. No trust on first use
   over the network.
@@ -339,15 +340,18 @@ Even a genuine UI session should not be enough for actions that disable protecti
   `CAP_SYS_PTRACE` (to read other users' `/proc/<pid>/exe`), `CAP_DAC_READ_SEARCH`, `CAP_SYS_RESOURCE`, plus
   whatever the spike finds is needed. It also sets:
   - `ProtectSystem=strict`, `ProtectHome=read-only`, `PrivateTmp`, `ReadWritePaths=/var/lib/snitchhiker`;
-  - `NoNewPrivileges`, `RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6`, `SystemCallFilter=@system-service bpf`;
+  - `NoNewPrivileges`, `RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6`, `SystemCallFilter=@system-service @namespaces bpf perf_event_open` with `SystemCallErrorNumber=EPERM`;
   - `MemoryDenyWriteExecute`, `LockPersonality`.
-- `snitchhikerd` drops capabilities it no longer needs after start-up where possible.
+- `snitchhikerd` keeps the unit's bounding set for as long as it runs: eBPF programs are attached, the client socket
+  chowned and namespaces entered throughout (new containers), so nothing in it is needed only at start-up.
 - Clients cannot change file paths the daemon writes to or loads code from. OpenSnitch lets a client push
   `Ebpf.ModulesPath` and log paths. The client-settable config has a fixed schema of policy values only, and paths
   live in `/etc/snitchhiker/daemon.toml`, edited by root.
 - eBPF objects are embedded in the binary and never loaded from disk.
-- The daemon's own outbound traffic (relay, push gateway) is marked with `SO_MARK` and bypasses the queue, so the
-  firewall cannot lock itself out of remote management. It is still logged.
+- The daemon's own outbound traffic (relay, push gateway) bypasses the queue, so the firewall cannot lock itself out
+  of remote management: under its systemd service, by its cgroup (`socket cgroupv2`; the remote endpoint's sockets
+  come from iroh and can't carry `SO_MARK`); otherwise it is queued and accepted by the pid the kernel names. It is
+  not logged.
 
 ---
 
@@ -387,7 +391,7 @@ FROM-scratch container image, which has no libc to link against.
     reusable. Its libnftables layer is not used.
 - Chains:
   - `output` (type `route`, hook `output`, priority `mangle`):
-    - skip packets carrying our own `SO_MARK`;
+    - skip packets carrying our own `SO_MARK`, and those of the service's own cgroup;
     - queue TCP packets with only SYN set (OpenSnitch's lesson: `ct state new` catches out-of-order packets);
     - queue non-TCP `ct state new,related`.
   - `input`: queue UDP sport 53 for DNS sniffing (optional when the resolved monitor or uprobes cover it).

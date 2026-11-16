@@ -61,6 +61,11 @@ const NFTA_PAYLOAD_LEN: u16 = 4;
 const NFT_PAYLOAD_TRANSPORT_HEADER: u32 = 2;
 
 const NFTA_CT_DREG: u16 = 1;
+// `socket` expression (linux/netfilter/nf_tables.h).
+const NFTA_SOCKET_KEY: u16 = 1;
+const NFTA_SOCKET_DREG: u16 = 2;
+const NFTA_SOCKET_LEVEL: u16 = 3;
+const NFT_SOCKET_CGROUPV2: u32 = 3;
 const NFTA_CT_KEY: u16 = 2;
 const NFT_CT_STATE: u32 = 0;
 const CT_STATE_RELATED: u32 = 1 << 2;
@@ -124,6 +129,9 @@ pub struct Table {
     pub bypass: bool,
     /// Packets whose mark has these bits set are the daemon's own and are not queued.
     pub own_mark: u32,
+    /// The daemon's own cgroup (v2), when it has one to itself (a systemd service): its level in the hierarchy and
+    /// its id. Packets of sockets in it are the daemon's own and are not queued.
+    pub own_cgroup: Option<Cgroup>,
     /// A queue that DNS answers (UDP from port 53) are copied to, to learn the names of addresses; `None` for none.
     /// It only observes: it always passes packets while nobody is bound to it.
     pub dns_queue: Option<u16>,
@@ -140,10 +148,19 @@ impl Default for Table {
             queues: 4,
             bypass: false,
             own_mark: 0x5_17c_000,
+            own_cgroup: None,
             dns_queue: None,
             forward_from: Vec::new(),
         }
     }
+}
+
+/// A cgroup (v2), as `nft`'s `socket cgroupv2 level <level> "<path>"` names it: its depth below the root, and its id
+/// (the inode number of its directory).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Cgroup {
+    pub level: u32,
+    pub id: u64,
 }
 
 /// Sequence numbers of a batch's messages, whose acknowledgements the socket waits for.
@@ -179,6 +196,14 @@ pub fn encode_install(writer: &mut Writer, table: &Table, sequence: u32) -> Batc
         rule.cmp(NFT_CMP_NEQ, &0_u32.to_ne_bytes());
         rule.accept();
     });
+    // And whatever its cgroup's sockets send: the sockets a library opened, which it can't mark.
+    if let Some(cgroup) = table.own_cgroup {
+        batch.rule(&table.name, "output", |rule| {
+            rule.socket_cgroup(cgroup.level);
+            rule.cmp(NFT_CMP_EQ, &cgroup.id.to_ne_bytes());
+            rule.accept();
+        });
+    }
     // New TCP connections: packets with only SYN of FIN, SYN, RST and ACK set. `ct state new` would also catch
     // out-of-order packets of established connections.
     batch.rule(&table.name, "output", |rule| {
@@ -510,6 +535,15 @@ impl Expressions<'_> {
         self.expression("meta", |w| {
             w.u32_be(NFTA_META_KEY, key);
             w.u32_be(NFTA_META_DREG, NFT_REG_1);
+        });
+    }
+
+    /// Register 1 = the id of the cgroup (v2) at `level` above the packet's socket.
+    fn socket_cgroup(&mut self, level: u32) {
+        self.expression("socket", |w| {
+            w.u32_be(NFTA_SOCKET_KEY, NFT_SOCKET_CGROUPV2);
+            w.u32_be(NFTA_SOCKET_DREG, NFT_REG_1);
+            w.u32_be(NFTA_SOCKET_LEVEL, level);
         });
     }
 

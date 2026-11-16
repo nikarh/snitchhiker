@@ -392,6 +392,7 @@ pub fn service_starts_ready_and_stops() -> Result<(), String> {
     }
     // `systemctl start` of a Type=notify unit returns once the daemon said READY=1.
     let tables = run("nft", &["list", "tables"]);
+    let table = run("nft", &["list", "table", "inet", "snitchhiker"]).unwrap_or_default();
     let status = run(
         "systemctl",
         &["show", "-p", "ActiveState,SubState", "snitchhikerd"],
@@ -415,6 +416,12 @@ pub fn service_starts_ready_and_stops() -> Result<(), String> {
         tables.contains("snitchhiker"),
         "the service was reported ready before its table was in place",
         &format!("{tables}\n{log}"),
+    )?;
+    // The service's own sockets (its remote endpoint's, opened by a library that can't mark them) aren't queued.
+    check(
+        table.contains("socket cgroupv2 level 2 \"system.slice/snitchhikerd.service\" accept"),
+        "the service's own traffic isn't let through by its cgroup",
+        &table,
     )?;
     check(
         after.contains("ActiveState=inactive"),

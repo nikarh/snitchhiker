@@ -51,6 +51,10 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
+# The system calls of a service, with the namespace ones (deciding inside containers' namespaces) and eBPF's. Any other
+# fails with EPERM.
+SystemCallFilter=@system-service @namespaces bpf perf_event_open
+SystemCallErrorNumber=EPERM
 RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 
 [Install]

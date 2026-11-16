@@ -1062,9 +1062,26 @@ fn compile(
     Ok((set, agents))
 }
 
+/// The daemon's own cgroup, when it has one to itself: the service's (`…/snitchhikerd.service`), not a session's or a
+/// test's it shares with other programs.
+fn own_cgroup() -> Option<snitchhiker_netfilter::nftables::Cgroup> {
+    use std::os::unix::fs::MetadataExt as _;
+    let text = std::fs::read_to_string("/proc/self/cgroup").ok()?;
+    let path = text.lines().find_map(|line| line.strip_prefix("0::"))?;
+    if !path.ends_with("/snitchhikerd.service") {
+        return None;
+    }
+    let id = std::fs::metadata(format!("/sys/fs/cgroup{path}"))
+        .ok()?
+        .ino();
+    let level = u32::try_from(path.split('/').filter(|part| !part.is_empty()).count()).ok()?;
+    Some(snitchhiker_netfilter::nftables::Cgroup { level, id })
+}
+
 /// The daemon's table, as its configuration has it.
 fn table_of(config: &Config) -> Table {
     Table {
+        own_cgroup: own_cgroup(),
         queue: config.queue,
         queues: config.queues,
         bypass: config.fail == Fail::Open,
