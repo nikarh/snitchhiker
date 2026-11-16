@@ -20,6 +20,7 @@ releases); the design, the milestones and what is done are in [docs/plan.md](doc
 | `snitchhikerd` | The root daemon: intercepts new connections (NFQUEUE), attributes them (eBPF), applies rules, stores history. |
 | `snitchhiker` | Its command line, the same binary. |
 | `snitchhiker-ui` | The desktop app. |
+| `snitchhiker-remote` | Remote access, installed where it's wanted: a node's endpoint for paired devices, and the desktop app's way to other nodes. |
 | `snitchhiker-relay` | Relay for reaching nodes behind NAT, and push notifications. |
 | Android app | Answers prompts and manages nodes from a phone. |
 

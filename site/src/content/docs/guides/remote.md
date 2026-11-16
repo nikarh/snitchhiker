@@ -11,14 +11,27 @@ Devices connect over [iroh](https://www.iroh.computer): QUIC between keys, direc
 
 ## Turning it on
 
-In the node's `/etc/snitchhiker/daemon.toml`:
+Remote access is a package of its own, `snitchhiker-remote`, from the same [repositories](/install/linux/) as the daemon. A machine that is only managed locally doesn't need it, and its daemon and desktop app carry no network stack for it. Install it where devices should reach the node, and beside the desktop app to manage other nodes from it:
 
-```toml
-remote = true
-relays = ["https://relay.example.org/"]   # your relay, for devices outside the node's network
+```bash
+sudo apt install snitchhiker-remote      # Debian, Ubuntu
+sudo pacman -S snitchhiker-remote        # Arch Linux
+sudo dnf install snitchhiker-remote      # Fedora
 ```
 
-then `sudo systemctl restart snitchhikerd`. The node makes its key the first time (`node.key`, next to its database). See [`remote`](/reference/configuration/#remote), [`relays`](/reference/configuration/#relays) and [`remote_port`](/reference/configuration/#remote_port).
+On a node, set your relay (for devices outside the node's network) in `/etc/snitchhiker/remote.toml`:
+
+```toml title="/etc/snitchhiker/remote.toml"
+relays = ["https://relay.example.org/"]
+```
+
+then start the service:
+
+```bash
+sudo systemctl enable --now snitchhiker-remote
+```
+
+It runs as a user of its own with no privileges, starts and stops with the daemon, and makes the node's key the first time. See [`remote.toml`](/reference/configuration/#remotetoml). On a desktop that only manages other nodes, the service needn't run: the app starts `snitchhiker-remote` itself when it connects to one.
 
 ## Pairing a device
 
@@ -37,7 +50,7 @@ This node: 6259-3521-b594-af98
 
 or, in the desktop app connected to that node, **Devices → Pair a device**, which shows the same link and its QR code. Starting a pairing is a [dangerous action](/internals/security/#dangerous-actions-need-more-than-a-session): a device paired as admin can change everything.
 
-Then, in the desktop app on the other machine, **Devices → Add node**, paste the link, and **Pair**. The node appears in the node column, beside this machine's, and stays there.
+Then, in the desktop app on the other machine (with `snitchhiker-remote` installed there too), **Devices → Add node**, paste the link, and **Pair**. The node appears in the node column, beside this machine's, and stays there.
 
 The link carries a one-time secret: it pairs one device, within 10 minutes, and is worth nothing after. A device that offers a wrong or used secret raises an [alert](/guides/alerts/) on the node.
 
@@ -70,11 +83,11 @@ Every admin client, local or remote, lists every prompt and can answer it. Which
 
 A device can be **muted** (Devices → Mute, on the node): it still lists prompts, but never notifies of them.
 
-The node's own connections (to its relay, to devices) are never prompted for: the kernel lets its service's packets through by their cgroup, before they are queued.
+The node's own connections (to its relay, to devices, to its push gateway) are never prompted for: the remote service's process is the node's, as the daemon's is.
 
 ## While the phone sleeps
 
-The phone app stays connected while it is open, and in the background with **Stay connected in the background** on (an ongoing notification shows it). Otherwise Android keeps it asleep, and two things need a [push gateway](/install/relay/#push-notifications) on your relay, named in each node's [`push_gateway`](/reference/configuration/#push_gateway):
+The phone app stays connected while it is open, and in the background with **Stay connected in the background** on (an ongoing notification shows it). Otherwise Android keeps it asleep, and two things need a [push gateway](/install/relay/#push-notifications) on your relay, named in each node's [`push_gateway`](/reference/configuration/#push_gateway) (in `remote.toml`):
 
 - **Prompts:** a node with a prompt to notify a device of, and that device not connected, asks the gateway to wake it. The app connects and shows the prompt's notification, Allow and Deny included. With a device it can wake, a node asks about connections no rule decides even when no client is connected.
 - **Offline:** a node that stops, crashes or loses its network is reported offline once it has been gone for [`offline_after_secs`](/reference/configuration/#offline_after_secs), with its reason when it stopped on purpose ("the machine is shutting down or restarting"), and back online when it returns.
@@ -87,12 +100,12 @@ A device can't confirm a dangerous action with a password on the node, as a clie
 
 ## Where the keys are
 
-- The node's key: `/var/lib/snitchhiker/node.key`, root's. To keep it off the disk, seal it:
+- The node's key: `/var/lib/snitchhiker-remote/node.key`, the remote service's user's. To keep it off the disk, seal it:
 
   ```sh
-  sudo snitchhikerd seal-key
-  sudo systemctl restart snitchhikerd
+  sudo snitchhiker-remote seal-key
+  sudo systemctl restart snitchhiker-remote
   ```
 
   `systemd-creds` encrypts it to the machine's TPM (or, without one, to the host's own key) into `/etc/credstore.encrypted/snitchhiker.node-key`, and the plaintext file is deleted. systemd decrypts it for the service at each start; a copy of the disk alone can't. The node keeps its id, so paired devices don't notice.
-- The desktop app's key, and the nodes it knows: `/var/lib/snitchhiker-ui/<uid>/`, in a directory only the app can enter (as the [history it keeps](/internals/security/#history-the-app-keeps)). A program of yours that read the key could connect to your nodes as this device; it can't read it.
+- The desktop app's key, and the nodes it knows: `/var/lib/snitchhiker-ui/<uid>/`, in a directory only the app can enter (as the [history it keeps](/internals/security/#history-the-app-keeps)). A program of yours that read the key could connect to your nodes as this device; it can't read it. The app hands the key to the `snitchhiker-remote` it starts (by its full path, over a socket pair), which makes itself unreadable to your other programs first.

@@ -69,6 +69,10 @@ It starts from the application menu. To start it with the session, so prompts ar
 systemctl --user enable --now snitchhiker-ui
 ```
 
+## Remote access
+
+Phones, and the desktop app on other machines, reach a node through a third package, `snitchhiker-remote`: on the node, and beside the desktop app that manages other nodes. A machine managed only locally doesn't need it. See [Phones and remote nodes](/guides/remote/#turning-it-on).
+
 ## What the package installs
 
 | Path | What |

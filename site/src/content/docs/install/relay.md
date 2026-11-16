@@ -72,14 +72,13 @@ Clients reach the relay by HTTPS. Choose one of:
 
 ## Using it
 
-On each node, in `/etc/snitchhiker/daemon.toml`:
+On each node, with [remote access](/guides/remote/#turning-it-on) installed, in `/etc/snitchhiker/remote.toml`:
 
-```toml
-remote = true
+```toml title="/etc/snitchhiker/remote.toml"
 relays = ["https://relay.example.org/"]
 ```
 
-Restart the daemon (`sudo systemctl restart snitchhikerd`). Devices learn the relay when they pair: it is in the pairing link.
+Restart it (`sudo systemctl restart snitchhiker-remote`). Devices learn the relay when they pair: it is in the pairing link.
 
 ## Who may use it
 
@@ -113,7 +112,7 @@ sudo snitchhiker-relay push-id
 
 Then on each node:
 
-```toml title="/etc/snitchhiker/daemon.toml"
+```toml title="/etc/snitchhiker/remote.toml"
 push_gateway = "8c1b…"   # what push-id printed
 ```
 

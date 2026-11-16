@@ -55,7 +55,7 @@ Watch the denials for a while. An [alert rule](/guides/alerts/) tells you when s
 
 ## Answering from a phone
 
-With `remote = true`, a phone (or a desktop elsewhere) pairs with the node and gets its prompts and alerts, through a relay when the server has no inbound port open ([Phones and remote nodes](/guides/remote/)). That makes `no_match = "ask"` workable on a server: an unknown connection waits (up to [`prompt_timeout_secs`](/reference/configuration/#prompt_timeout_secs)) while the phone is woken. A node that stops answering is reported **offline** on the phone after [`offline_after_secs`](/reference/configuration/#offline_after_secs), which is how you learn that an instance went away.
+With [remote access](/guides/remote/#turning-it-on) (the `snitchhiker-remote` package, its service enabled), a phone (or a desktop elsewhere) pairs with the node and gets its prompts and alerts, through a relay when the server has no inbound port open ([Phones and remote nodes](/guides/remote/)). That makes `no_match = "ask"` workable on a server: an unknown connection waits (up to [`prompt_timeout_secs`](/reference/configuration/#prompt_timeout_secs)) while the phone is woken. A node that stops answering is reported **offline** on the phone after [`offline_after_secs`](/reference/configuration/#offline_after_secs), which is how you learn that an instance went away.
 
 ## Containers on the server
 

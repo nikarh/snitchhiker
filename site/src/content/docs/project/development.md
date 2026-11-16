@@ -28,12 +28,13 @@ The crates' API documentation (rustdoc) is published with this site: [snitchhike
 - `crates/proto`: the [client protocol](/reference/protocol/): the schema in `proto/`, framing, conversions.
 - `crates/client`: a blocking client of a node's sockets.
 - `crates/daemon`: `snitchhikerd` and the `snitchhiker` command line: runtime, API, prompts, storage, DNS, process facts, peer verification.
-- `crates/remote`: the remote endpoint over iroh: keys, pairing, the streams to devices.
+- `crates/remote`: the remote endpoint over iroh: keys, pairing links and codes, the streams to devices.
+- `crates/bridge`: `snitchhiker-remote`, the node's remote service and the desktop app's helper, which hold the iroh endpoint and hand streams over as file descriptors (decision 0016).
 - `crates/relay`: `snitchhiker-relay`, the relay and push gateway.
 - `crates/ui`: `snitchhiker-ui`, the desktop app (GPUI).
 - `crates/mobile`: the Rust core of the Android app (UniFFI); `android/` holds the app itself (Kotlin, Compose).
 - `crates/e2e`: the end-to-end scenarios, run in the VM.
-- `dist/`: the systemd unit, sysusers file, configuration and packaging.
+- `dist/`: the systemd units, sysusers files, configuration and packaging.
 - `docs/`: the design plan (`plan.md`), decision records, release notes for maintainers.
 - `site/`: this documentation.
 

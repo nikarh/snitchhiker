@@ -263,9 +263,10 @@ anything the UI can read. Snitchhiker instead authenticates the *process*, using
 - A password typed into the UI can be captured by a same-user process on X11, and on Wayland only by injection
   attacks covered below.
 
-So the TPM is used where it helps: sealing the daemon's own long-term node key to the machine. `snitchhikerd
-seal-key` runs `systemd-creds encrypt --with-key=auto` (the TPM when there is one, else the host key) into
-`/etc/credstore.encrypted`, and the unit's `ImportCredential=` hands the daemon the key: no TPM library in our binary.
+So the TPM is used where it helps: sealing the node's long-term key to the machine. `snitchhiker-remote seal-key`
+runs `systemd-creds encrypt --with-key=auto` (the TPM when there is one, else the host key) into
+`/etc/credstore.encrypted`, and the remote service's `ImportCredential=` hands it the key: no TPM library in our
+binary.
 
 ### 4.3 Step-up authorization for dangerous actions
 
@@ -309,8 +310,9 @@ Even a genuine UI session should not be enough for actions that disable protecti
 ### 4.5 Remote security
 
 - **Node identity.**
-  - Each daemon has an Ed25519 key: its iroh endpoint id. It is stored in `/var/lib/snitchhiker/node.key`
-    (`root 0600`), or TPM-sealed through systemd credentials.
+  - Each node has an Ed25519 key: its iroh endpoint id. It is held by the node's remote service
+    (`snitchhiker-remote`, decision 0016), stored in `/var/lib/snitchhiker-remote/node.key` (that service's user,
+    `0600`), or TPM-sealed through systemd credentials.
   - The node's id is its identity. It is shown as a short fingerprint (words or emoji) in the UI and in pairing.
 - **Device identity.** Each client device (phone, remote desktop app) has its own Ed25519 key.
   - Android: the key is generated in the Rust core and stored wrapped by an Android Keystore AES key (StrongBox when
@@ -2234,7 +2236,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
         and binds a queue there; the helper's host connections are tied to the container through the namespace on
         its command line, resolved through the runtime's processes (pasta sandboxes itself).
   - [x] A forwarded packet's sender: the bridge's forwarding database by source address, the veth's peer namespace
-        ([decision 0013](decisions/0013-forwarded-senders.md): the bridge port isn't in the packet's metadata at the IP
+        ([decision 0016](decisions/0013-forwarded-senders.md): the bridge port isn't in the packet's metadata at the IP
         hooks). VM tap → its process via `/proc/<pid>/fdinfo` `iff:`. [x] machined lookups (the command line names
         libvirt's VMs already).
 - [x] **Forward-path interception**
@@ -2307,6 +2309,11 @@ Early because the user's own coding agents benefit immediately. It needs the pro
       (`docs/fdroid/dev.nikarh.snitchhiker.yml`), fastlane texts, icon, screenshots and the 1.0.0 changelog; release
       builds are unsigned without the release key, as F-Droid builds them.
 - [ ] Release 1.0.0.
+- [x] Remote access as a package and service of its own (decision 0016): `snitchhiker-remote` holds the iroh
+      endpoint, as an unprivileged user beside the daemon, and hands it streams as file descriptors; the desktop app
+      starts it as a helper. The daemon and the desktop app no longer link iroh, and a machine managed only locally
+      carries no network stack for it. Settings in `remote.toml`; e2e: the remote scenarios through it, only its user
+      served, its traffic the node's own by process.
 
 ### M10. Later / nice-to-have
 

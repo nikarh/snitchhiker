@@ -24,11 +24,23 @@ The node's endpoint accepts three ALPNs:
 | `snitchhiker-pair/1` | Pairing with a link's one-time secret: one `PairRequest` frame, one `PairResponse`. |
 | `snitchhiker-code/1` | A pairing code's meeting point (a separate, temporary endpoint; below). |
 
-Inside the daemon, each QUIC stream is bridged to a local socket pair and served by the same code as a local connection, with the role the device was paired with. The node's own packets (to its relay, to devices) are never decided by its rules: the kernel lets through what the service's own cgroup sends before anything is queued ([How it works](/internals/how-it-works/#the-table)).
+## The remote service
+
+The endpoint isn't the daemon's: it is `snitchhiker-remote`'s, a service of its own ([decision 0016](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0016-remote-access-as-a-service.md)), installed only where remote access is wanted. It runs as the `snitchhiker-remote` user, with no capability, so the code that faces the network (QUIC, TLS, the relay protocol, hole punching, mDNS) isn't root's.
+
+It connects to the daemon's `/run/snitchhiker/remote.sock`, a `SOCK_SEQPACKET` socket on which the daemon serves that user alone (the kernel's peer credentials), and one service at a time. Then:
+
+- Each QUIC stream a peer opens is bridged to a local socket pair, and its other end is handed to the daemon as a file descriptor (`SCM_RIGHTS`) with the peer's id, which TLS proved, and whether it is a pairing. The daemon decides everything: whether the key is paired, its role, whether a pairing secret is right. It serves the stream with the same code as a local connection.
+- The daemon asks the service for what only the endpoint can do: the node's address for a pairing link, a pairing code's meeting point, a stream to the push gateway. What goes over that stream (who to wake, the node's last word when it stops) is the daemon's.
+- The service's own packets (to its relay, to devices) are never decided by the rules: the daemon knows its process from the connection, and lets its packets through as its own. Another process of the same user is decided like any other.
+
+The service starts with the daemon (it is bound to it) and stops before it: on stopping, it tells the daemon, which says why the node goes to the push gateway first. The protocol between them is `proto/snitchhiker/v1/bridge.proto`; both ends are always the same version.
+
+The desktop app reaches other nodes the same way, the other way round: it starts `snitchhiker-remote client` (by its full path) with one end of a socket pair, gives it the device's key over it, and gets a file descriptor back for each node it connects to. The helper makes itself undumpable (no ptrace, no `/proc/<pid>/mem` for the user's other programs) before it reads the key, and refuses it if something was already tracing it.
 
 ## Keys and pairing
 
-- The node's key is `node.key`, next to its database (root's, `0600`). The desktop app's key is in `/var/lib/snitchhiker-ui/<uid>/`, which only the app can enter.
+- The node's key is `/var/lib/snitchhiker-remote/node.key` (the service's user's, `0600`), or sealed with `systemd-creds`. The desktop app's key is in `/var/lib/snitchhiker-ui/<uid>/`, which only the app can enter.
 - A **link** (`snitchhiker://pair?…`) carries the node's id, its relays and addresses, its name, the role, and a 128-bit one-time secret. The device connects to the id (so TLS proves it reached that node) and sends the secret with its own key. The node compares it in constant time, takes it (single use, 10 minutes), and stores the device's key with its name and role.
 - A **code** (`412-orbit-velvet-canyon`) stands for a link. Its nameplate derives a meeting point's key, which anyone can compute; the node opens it on the LAN (mDNS) and on its relays for one attempt. Device and node run SPAKE2 with the whole code as the password; the device proves the key it derived, and the node sends the link sealed with it (ChaCha20-Poly1305). A failed proof spends the pairing and raises an alert. See [decision 0010](https://github.com/nikarh/snitchhiker/blob/main/docs/decisions/0010-pairing-codes.md).
 - **Unpairing** deletes the key and shuts the device's open connections.

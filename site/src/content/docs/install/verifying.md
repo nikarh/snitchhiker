@@ -29,6 +29,7 @@ Asset names never change, so `https://github.com/nikarh/snitchhiker/releases/lat
 | `snitchhiker-ui_{amd64,arm64}.deb`, `snitchhiker-ui-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-ui-{x86_64,aarch64}.rpm` | The desktop app's packages |
 | `snitchhikerd-{x86_64,aarch64}-linux-gnu` | The daemon alone (also the command line, when run as `snitchhiker`) |
 | `snitchhiker-ui-{x86_64,aarch64}-linux-gnu` | The desktop app alone: it has to be installed setgid and registered, as its package does |
+| `snitchhiker-remote_{amd64,arm64}.deb`, `snitchhiker-remote-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-remote-{x86_64,aarch64}.rpm`, `snitchhiker-remote-{x86_64,aarch64}-linux-gnu` | [Remote access](/guides/remote/#turning-it-on): for nodes that devices reach, and beside the desktop app to reach other nodes |
 | `snitchhiker-relay_{amd64,arm64}.deb`, `snitchhiker-relay-{x86_64,aarch64}.pkg.tar.zst`, `snitchhiker-relay-{x86_64,aarch64}.rpm`, `snitchhiker-relay-{x86_64,aarch64}-linux-gnu` | [The relay](/install/relay/) |
 | `snitchhiker-android-foss.apk`, `snitchhiker-android-play.apk` | [The Android app](/install/android/) |
 | `SHA256SUMS`, `SHA256SUMS.asc` | Checksums of all of the above and their detached GPG signature |

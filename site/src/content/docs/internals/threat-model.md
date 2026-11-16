@@ -84,7 +84,10 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 | A device unpaired while it connects | Lookup and registration under the lock unpairing holds | code review (a race) |
 | A device doing what needs step-up | Waits for a local admin or root to approve | `remote/a-devices-dangerous-request-waits-for-approval` |
 | Silencing the phone | Prompts escalate to devices; muting or unpairing another device needs step-up | `remote/prompts-escalate-to-devices-and-not-to-muted-ones` |
-| Stealing the node's key from disk | Sealed with `systemd-creds` (TPM, or the host key) by `snitchhikerd seal-key` | `daemon/the-node-key-is-sealed-and-keeps-its-id` |
+| Stealing the node's key from disk | Sealed with `systemd-creds` (TPM, or the host key) by `snitchhiker-remote seal-key` | `remote/the-node-key-is-sealed-and-keeps-its-id` |
+| A bug in the network-facing code (QUIC, TLS, relay protocol) | It runs in `snitchhiker-remote`, a user of its own with no capability, not in the root daemon; the daemon decides everything about what it hands over | `remote/only-the-remote-service-is-served` |
+| Posing as the remote service, to claim a device's identity | The daemon's remote socket serves that service's user alone, and one at a time | `remote/only-the-remote-service-is-served` |
+| Using the remote service's exemption to get out | Only its own process is let through undecided, not its user | `remote/the-remote-services-traffic-is-the-nodes-own` |
 
 ## What remains
 
@@ -94,6 +97,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 - **Push payloads through FCM** carry the node's name and, when it went offline, the reason it gave, which Google can read; UnifiedPush delivers them encrypted.
 - **A device's role** is read when it connects; unpairing ends its connections at once.
 - **Kernels before 6.5** have no peer pidfd: clients are refused there rather than checked less exactly.
+- **The remote service** vouches for the keys of the streams it hands over: whoever controls it (root, or a bug in it) can act as any paired device, an admin one included. It can't do more than a paired device could.
 
 ## The November 2026 review
 
