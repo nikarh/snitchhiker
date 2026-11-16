@@ -24,6 +24,8 @@ snitchhiker-relay: the relay Snitchhiker nodes and devices meet through behind N
 
 Usage: snitchhiker-relay [--config <path>]
        snitchhiker-relay push-id [--config <path>]   Print the push gateway's id (for nodes' push_gateway)
+       snitchhiker-relay healthcheck [--config <path>]   Whether the relay this configuration describes serves
+                                                        (for a container's healthcheck: exit status 0 when it does)
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/relay.toml)
@@ -176,6 +178,51 @@ fn cert_config(config: &Config) -> Result<Option<CertConfig>, Error> {
     })
 }
 
+/// Whether the relay serves: its `/healthz` answers 200 over plain HTTP; with TLS, its HTTPS address accepts
+/// connections (the health page is served there, behind TLS). An unspecified bind address is asked on loopback.
+fn healthcheck(config: &Config) -> Result<(), Error> {
+    use std::io::{Read as _, Write as _};
+    let local = |mut address: SocketAddr| {
+        if address.ip().is_unspecified() {
+            address.set_ip(if address.is_ipv4() {
+                std::net::Ipv4Addr::LOCALHOST.into()
+            } else {
+                std::net::Ipv6Addr::LOCALHOST.into()
+            });
+        }
+        address
+    };
+    let timeout = std::time::Duration::from_secs(3);
+    let unhealthy = |what: String| Error::Relay(format!("unhealthy: {what}"));
+    if config.tls != Tls::None {
+        let address = local(config.https_bind);
+        std::net::TcpStream::connect_timeout(&address, timeout)
+            .map_err(|e| unhealthy(format!("{address}: {e}")))?;
+        return Ok(());
+    }
+    let address = local(config.http_bind);
+    let mut stream = std::net::TcpStream::connect_timeout(&address, timeout)
+        .map_err(|e| unhealthy(format!("{address}: {e}")))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| unhealthy(e.to_string()))?;
+    stream
+        .write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .map_err(|e| unhealthy(e.to_string()))?;
+    let mut head = [0_u8; 12];
+    stream
+        .read_exact(&mut head)
+        .map_err(|e| unhealthy(e.to_string()))?;
+    if head.starts_with(b"HTTP/1.1 200") || head.starts_with(b"HTTP/1.0 200") {
+        Ok(())
+    } else {
+        Err(unhealthy(format!(
+            "{address}/healthz answered {}",
+            String::from_utf8_lossy(&head)
+        )))
+    }
+}
+
 async fn run(config: Config) -> Result<(), Error> {
     let cert = cert_config(&config)?;
     let mut relay_config = RelayConfig::new(config.http_bind);
@@ -267,7 +314,11 @@ fn main() -> ExitCode {
             .opt_value_from_str("--config")?
             .unwrap_or_else(|| PathBuf::from("/etc/snitchhiker/relay.toml"));
         let config = load(&path)?;
-        if args.subcommand()?.as_deref() == Some("push-id") {
+        let subcommand = args.subcommand()?;
+        if subcommand.as_deref() == Some("healthcheck") {
+            return healthcheck(&config);
+        }
+        if subcommand.as_deref() == Some("push-id") {
             let push = config
                 .push
                 .ok_or_else(|| Error::Config("no [push] section".to_owned()))?;

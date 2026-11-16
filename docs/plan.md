@@ -2147,8 +2147,8 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] Routing policy (`prompt_routing`: all, escalate), logind lock/idle presence of local clients' users, per-device
         mute; every admin client can answer regardless of notification.
 - [x] **Daemon remote endpoint**
-  - [x] iroh endpoint with the node key, ALPN, the paired-devices table, roles, revocation. [ ] systemd-creds TPM
-        sealing of the key (M9, hardening).
+  - [x] iroh endpoint with the node key, ALPN, the paired-devices table, roles, revocation. [x] systemd-creds TPM
+        sealing of the key (`snitchhikerd seal-key`).
 - [x] **Pairing**
   - [x] Pairing codes: SPAKE2, a meeting point on the LAN (mDNS) and on the relays the device knows, single attempt,
         expiry, failed-attempt alert ([decision 0010](decisions/0010-pairing-codes.md): no rendezvous service).
@@ -2160,8 +2160,9 @@ Early because the user's own coding agents benefit immediately. It needs the pro
   - [x] Connections to remote nodes (reconnecting with backoff, as local ones), LAN discovery (mDNS).
 - [x] **Relay**
   - [x] `snitchhiker-relay`: embedded iroh-relay, ACME or reverse-proxy mode, allow-list, metrics; package and unit.
-  - [x] Presence, offline detection and the registration store: done in M6 with the push channels they feed. [ ] The
-        container image (M9, with the release images).
+  - [x] Presence, offline detection and the registration store: done in M6 with the push channels they feed. [x] The
+        container image (`ghcr.io/nikarh/snitchhiker-relay`, static, FROM scratch, amd64 and arm64, checked read-only
+        with no capabilities before it is pushed).
 - [x] **Step-up from another device**
   - [x] A remote device's dangerous action waits for an approval on the node (its app, with polkit, or root).
 - [x] **Docs:** relay installation and deployment, "Phones and remote nodes" guide (pairing, roles, revocation),

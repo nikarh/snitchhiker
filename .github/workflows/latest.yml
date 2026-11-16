@@ -81,6 +81,11 @@ jobs:
   publish:
     name: Publish
     needs: tag
+    # A called workflow gets no more than this: Publish pushes the relay image, and the package repositories (on
+    # releases only, but the grant is checked whatever runs).
+    permissions:
+      contents: write
+      packages: write
     uses: ./.github/workflows/publish.yml
     with:
       tag: latest

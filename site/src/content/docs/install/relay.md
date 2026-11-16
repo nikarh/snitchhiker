@@ -23,6 +23,28 @@ The packages are also release files ([Verifying downloads](/install/verifying/))
 
 It installs `/usr/bin/snitchhiker-relay`, the unit `snitchhiker-relay.service` (a dynamic user, no privileges but binding ports 80 and 443), and `/etc/snitchhiker/relay.toml`, documented in place. Edit it, then `sudo systemctl enable --now snitchhiker-relay`.
 
+### In a container
+
+The image `ghcr.io/nikarh/snitchhiker-relay` (`X.Y.Z`, `X.Y`, `latest`; `main` for builds of main) holds the static binary alone, runs as nobody, and is built for amd64 and arm64. Its configuration is the packaged one (plain HTTP on port 80): mount yours over `/etc/snitchhiker/relay.toml`, and a volume on `/var/lib/snitchhiker-relay` when it gets certificates from ACME.
+
+```yaml
+services:
+  relay:
+    image: ghcr.io/nikarh/snitchhiker-relay:latest
+    restart: unless-stopped
+    ports: ["80:80", "443:443", "7842:7842/udp"]
+    volumes:
+      - ./relay.toml:/etc/snitchhiker/relay.toml:ro
+      - relay:/var/lib/snitchhiker-relay
+    read_only: true              # it writes only its certificates, to the volume
+    cap_drop: [ALL]              # it needs no capability: ports below 1024 are open to anyone inside a container
+    security_opt: ["no-new-privileges:true"]
+volumes:
+  relay:
+```
+
+The image's healthcheck is `snitchhiker-relay healthcheck`: the relay's `/healthz` over plain HTTP, or with TLS whether its HTTPS port accepts connections. A push gateway's key (`[push] key`) is a file to mount as well, read-only.
+
 ## TLS
 
 Clients reach the relay by HTTPS. Choose one of:

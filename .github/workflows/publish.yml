@@ -90,6 +90,93 @@ jobs:
           path: out/*
           if-no-files-found: error
           retention-days: 3
+      # The relay again, static (musl), for its container image (FROM scratch).
+      - name: Static relay
+        env:
+          SNITCHHIKER_VERSION_SUFFIX: ${{ inputs.version-suffix }}
+          TARGET: ${{ matrix.arch }}-unknown-linux-musl
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup target add "$TARGET"
+          export "CC_${TARGET//-/_}=musl-gcc"
+          cargo build --locked --release --target "$TARGET" -p snitchhiker-relay
+          mkdir -p relay
+          cp "target/$TARGET/release/snitchhiker-relay" relay/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: relay-static-${{ matrix.arch }}
+          path: relay/snitchhiker-relay
+          if-no-files-found: error
+          retention-days: 3
+
+  relay-image:
+    name: Relay image (${{ matrix.arch }})
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            platform: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            platform: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: relay-static-${{ matrix.arch }}
+          path: relay
+      # Built, then checked to run read-only with every capability dropped and report healthy, before it is pushed.
+      - name: Build, check and push
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/snitchhiker-relay
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          chmod +x relay/snitchhiker-relay
+          # Per architecture, under the version's tag (main for builds of main): replaced by the next build of it.
+          if [[ $TAG == v* ]]; then base=${TAG#v}; else base=main; fi
+          image="$IMAGE:$base-${{ matrix.platform }}"
+          scripts/relay-image.sh relay/snitchhiker-relay "$image"
+          docker login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "$GH_TOKEN"
+          docker push --quiet "$image"
+
+  relay-manifest:
+    name: Relay image
+    needs: relay-image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # One image for both architectures, under the release's tags (X.Y.Z, X.Y, latest), or main's (main, sha-<commit>).
+      - name: Tag
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/snitchhiker-relay
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          docker login ghcr.io -u "${{ github.actor }}" --password-stdin <<< "$GH_TOKEN"
+          if [[ $TAG == v* ]]; then
+            base=${TAG#v}
+            tags=("$base" "${base%.*}" latest)
+          else
+            base=main
+            tags=(main "sha-${GITHUB_SHA::7}")
+          fi
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "$IMAGE:$tag" "$IMAGE:$base-amd64" "$IMAGE:$base-arm64"
+          done
 
   android:
     name: Build (Android)
