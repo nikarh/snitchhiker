@@ -32,3 +32,4 @@ snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }
 toml = "1.2.1"
 zbus = "6.3.0"
+zed-font-kit = { version = "0.14.1-zed", default-features = false, features = ["source"] }
