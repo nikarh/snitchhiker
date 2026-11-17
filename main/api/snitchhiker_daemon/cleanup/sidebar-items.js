@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["CRASHES","WINDOW"],"enum":["Outcome"],"fn":["decide","run"]};

@@ -149,7 +149,7 @@
 <tbody>
 <tr>
 <td>A connection no rule allows</td>
-<td>Queued at the output hook, decided before it leaves, while the daemon runs (its tables go when it stops)</td>
+<td>Queued at the output hook, decided before it leaves; <code dir="auto">fail = "closed"</code> keeps the table while the daemon is stopped or restarting (not when it can’t start or keeps crashing)</td>
 <td><code dir="auto">queue/*</code>, <code dir="auto">escape/udp-sendto</code>, <code dir="auto">escape/tcp-fast-open</code>, <code dir="auto">escape/ipv6-and-mapped-ipv4</code></td>
 </tr>
 <tr>
