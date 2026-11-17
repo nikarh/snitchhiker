@@ -111,20 +111,18 @@ description = "Release build of the binaries"
 run = "cargo build --locked --release"
 
 [tasks.package]
-description = "The .deb, rpm and Arch packages of the daemon, the desktop app, remote access and the relay, from a dist build (as releases are), into out/"
-env = { SNITCHHIKER_RELAY = "target/dist/snitchhiker-relay", SNITCHHIKER_REMOTE = "target/dist/snitchhiker-remote" }
-run = [
-  "cargo build --locked --profile dist -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge -p snitchhiker-relay",
-  "scripts/package.sh x86_64 target/dist/snitchhikerd out target/dist/snitchhiker-ui",
-]
+description = "The .deb, rpm and Arch packages of the daemon, the desktop app, remote access and the relay, into out/. A dist build (fat LTO), as releases are; SNITCHHIKER_PROFILE=release for a quicker one without LTO"
+run = """
+profile=${SNITCHHIKER_PROFILE:-dist}
+cargo build --locked --profile "$profile" -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge -p snitchhiker-relay
+SNITCHHIKER_RELAY="target/$profile/snitchhiker-relay" SNITCHHIKER_REMOTE="target/$profile/snitchhiker-remote" \
+  scripts/package.sh x86_64 "target/$profile/snitchhikerd" out "target/$profile/snitchhiker-ui"
+"""
 
 [tasks."package:arch"]
-description = "Quick Arch packages of the daemon, the desktop app and remote access for trying a change on this machine: a release build (no LTO, panics unwind), into out/ (then sudo pacman -U out/*.pkg.tar.zst)"
-env = { SNITCHHIKER_PACKAGERS = "archlinux", SNITCHHIKER_REMOTE = "target/release/snitchhiker-remote" }
-run = [
-  "cargo build --locked --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge",
-  "scripts/package.sh x86_64 target/release/snitchhikerd out target/release/snitchhiker-ui",
-]
+description = "Quick Arch packages for trying a change on this machine: a release build (no LTO, panics unwind), every package, into out/ (then sudo pacman -U out/*.pkg.tar.zst)"
+env = { SNITCHHIKER_PROFILE = "release", SNITCHHIKER_PACKAGERS = "archlinux" }
+run = "mise run package"
 
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from the commits"

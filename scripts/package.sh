@@ -32,6 +32,11 @@ case "${arch}" in
 esac
 
 cd "$(dirname "$0")/.."
+# The nfpm configs take the binaries from target/package: runs side by side wait for each other rather than take each
+# other's binaries.
+mkdir -p target
+exec 9>target/package.lock
+flock 9
 stage=target/package
 rm -rf "${stage}"
 mkdir -p "${stage}"
