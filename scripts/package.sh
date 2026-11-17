@@ -16,7 +16,8 @@
 # Outputs snitchhiker_<amd64|arm64>.deb, snitchhiker-<arch>.rpm and snitchhiker-<arch>.pkg.tar.zst (and with the
 # app's binary, snitchhiker-ui's likewise; with SNITCHHIKER_RELAY=<relay binary>, the relay's likewise; with
 # SNITCHHIKER_REMOTE=<snitchhiker-remote binary>, remote access's likewise), names that
-# don't change between versions, like the other release files.
+# don't change between versions, like the other release files. SNITCHHIKER_PACKAGERS limits the formats (any of deb,
+# archlinux, rpm; all three by default).
 set -euo pipefail
 
 if [[ $# -lt 3 || $# -gt 4 ]]; then
@@ -59,42 +60,39 @@ echo "packaging ${version} as ${deb_version} (deb), ${rpm_version} (rpm) and ${a
 
 export SNITCHHIKER_ARCH=${goarch}
 mkdir -p "${out}"
-SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm.yaml \
-  --packager deb --target "${out}/snitchhiker_${goarch}.deb"
-SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm.yaml \
-  --packager archlinux --target "${out}/snitchhiker-${arch}.pkg.tar.zst"
-SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm.yaml \
-  --packager rpm --target "${out}/snitchhiker-${arch}.rpm"
+
+# The package of one nfpm config (dist/packaging/nfpm<suffix>.yaml) named <name>, in each format asked for.
+package() {
+  local suffix=$1 name=$2 packager
+  for packager in ${SNITCHHIKER_PACKAGERS:-deb archlinux rpm}; do
+    case "${packager}" in
+      deb) SNITCHHIKER_VERSION=${deb_version} nfpm package --config "dist/packaging/nfpm${suffix}.yaml" \
+        --packager deb --target "${out}/${name}_${goarch}.deb" ;;
+      archlinux) SNITCHHIKER_VERSION=${arch_version} nfpm package --config "dist/packaging/nfpm${suffix}.yaml" \
+        --packager archlinux --target "${out}/${name}-${arch}.pkg.tar.zst" ;;
+      rpm) SNITCHHIKER_VERSION=${rpm_version} nfpm package --config "dist/packaging/nfpm${suffix}.yaml" \
+        --packager rpm --target "${out}/${name}-${arch}.rpm" ;;
+      *) echo "unknown packager: ${packager}" >&2 && exit 2 ;;
+    esac
+  done
+}
+
+package "" snitchhiker
 
 # The relay, at the same version, when SNITCHHIKER_RELAY names its binary.
 if [[ -n "${SNITCHHIKER_RELAY:-}" ]]; then
   install -m 0755 "${SNITCHHIKER_RELAY}" "${stage}/snitchhiker-relay"
-  SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
-    --packager deb --target "${out}/snitchhiker-relay_${goarch}.deb"
-  SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
-    --packager archlinux --target "${out}/snitchhiker-relay-${arch}.pkg.tar.zst"
-  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-relay.yaml \
-    --packager rpm --target "${out}/snitchhiker-relay-${arch}.rpm"
+  package -relay snitchhiker-relay
 fi
 
 # Remote access, at the same version, when SNITCHHIKER_REMOTE names its binary.
 if [[ -n "${SNITCHHIKER_REMOTE:-}" ]]; then
   install -m 0755 "${SNITCHHIKER_REMOTE}" "${stage}/snitchhiker-remote"
-  SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
-    --packager deb --target "${out}/snitchhiker-remote_${goarch}.deb"
-  SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
-    --packager archlinux --target "${out}/snitchhiker-remote-${arch}.pkg.tar.zst"
-  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-remote.yaml \
-    --packager rpm --target "${out}/snitchhiker-remote-${arch}.rpm"
+  package -remote snitchhiker-remote
 fi
 
 # The desktop app, at the same version, when its binary is given.
 if [[ -n "${4:-}" ]]; then
   install -m 0755 "$4" "${stage}/snitchhiker-ui"
-  SNITCHHIKER_VERSION=${deb_version} nfpm package --config dist/packaging/nfpm-ui.yaml \
-    --packager deb --target "${out}/snitchhiker-ui_${goarch}.deb"
-  SNITCHHIKER_VERSION=${arch_version} nfpm package --config dist/packaging/nfpm-ui.yaml \
-    --packager archlinux --target "${out}/snitchhiker-ui-${arch}.pkg.tar.zst"
-  SNITCHHIKER_VERSION=${rpm_version} nfpm package --config dist/packaging/nfpm-ui.yaml \
-    --packager rpm --target "${out}/snitchhiker-ui-${arch}.rpm"
+  package -ui snitchhiker-ui
 fi

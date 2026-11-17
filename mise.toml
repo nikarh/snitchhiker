@@ -118,6 +118,14 @@ run = [
   "scripts/package.sh x86_64 target/dist/snitchhikerd out target/dist/snitchhiker-ui",
 ]
 
+[tasks."package:arch"]
+description = "Quick Arch packages of the daemon, the desktop app and remote access for trying a change on this machine: a release build (no LTO, panics unwind), into out/ (then sudo pacman -U out/*.pkg.tar.zst)"
+env = { SNITCHHIKER_PACKAGERS = "archlinux", SNITCHHIKER_REMOTE = "target/release/snitchhiker-remote" }
+run = [
+  "cargo build --locked --release -p snitchhiker-daemon -p snitchhiker-ui -p snitchhiker-bridge",
+  "scripts/package.sh x86_64 target/release/snitchhikerd out target/release/snitchhiker-ui",
+]
+
 [tasks.changelog]
 description = "Regenerate CHANGELOG.md from the commits"
 run = "git cliff --offline -o CHANGELOG.md"
