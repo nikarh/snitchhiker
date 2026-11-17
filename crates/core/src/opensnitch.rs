@@ -20,15 +20,17 @@ use serde::Deserialize;
 use crate::rule::{Action, Tier};
 use crate::spec::{Conditions, FolderSpec, RuleFile, RuleSpec};
 
+// OpenSnitch writes `null` for what a rule doesn't use (`"list": null` in every simple rule): `nullable` takes it as
+// the default.
 #[derive(Debug, Deserialize)]
 struct Rule {
     name: String,
-    #[serde(default = "yes")]
+    #[serde(default = "yes", deserialize_with = "enabled")]
     enabled: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     precedence: bool,
     action: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     duration: String,
     operator: Operator,
 }
@@ -37,18 +39,30 @@ struct Rule {
 struct Operator {
     #[serde(rename = "type")]
     kind: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     operand: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     data: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     sensitive: bool,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "nullable")]
     list: Vec<Operator>,
 }
 
 const fn yes() -> bool {
     true
+}
+
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn enabled<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    Ok(Option::<bool>::deserialize(deserializer)?.unwrap_or(true))
 }
 
 /// The import: the rules that convert, and why each other one doesn't.
@@ -82,12 +96,23 @@ pub fn import(files: &[(String, String)], folder: &str) -> Imported {
                 continue;
             }
         };
-        match convert(&rule) {
+        // A rule that converts but isn't valid (a regular expression Snitchhiker's engine doesn't take, say) is
+        // reported like one that doesn't convert: one such rule mustn't make the whole import fail.
+        match convert(&rule).and_then(|spec| valid(&spec).map(|()| spec)) {
             Ok(spec) => imported.file.rule.push(spec),
             Err(reason) => imported.skipped.push((rule.name, reason)),
         }
     }
     imported
+}
+
+/// Whether the rule is one the daemon takes: its conditions parse and its patterns compile (even when it is off).
+fn valid(spec: &RuleSpec) -> Result<(), String> {
+    let mut rule = spec.to_rule(0, None).map_err(|e| e.to_string())?;
+    rule.enabled = true;
+    crate::engine::RuleSet::compile(&[], &[rule])
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 fn convert(rule: &Rule) -> Result<RuleSpec, String> {
@@ -194,13 +219,15 @@ fn add(conditions: &mut Conditions, operator: &Operator) -> Result<(), String> {
                 other => return Err(format!("`{other}` on dest.host")),
             });
         }
-        "dest.ip" if simple => {
+        // An address, a network, or a range that is exactly one network (`127.0.0.0-127.255.255.255`, as
+        // OpenSnitch's own rules write loopback).
+        "dest.ip" | "dest.network" if simple || operator.kind == "network" => {
             once(&conditions.net)?;
-            conditions.net.push(operator.data.clone());
-        }
-        "dest.network" => {
-            once(&conditions.net)?;
-            conditions.net.push(operator.data.clone());
+            conditions.net.push(
+                crate::system::parse_network(&operator.data)
+                    .map_err(|e| format!("{}: {e}", operator.operand))?
+                    .to_string(),
+            );
         }
         "dest.port" if simple => {
             once(&conditions.port)?;
@@ -308,5 +335,56 @@ mod tests {
         assert_eq!(imported.file.rule, Vec::new());
         let names: Vec<&str> = imported.skipped.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["temp", "env", "broken.json"]);
+    }
+
+    #[test]
+    fn rules_as_opensnitch_writes_them_convert() {
+        // As the daemon and its UI save a rule: every field there, unused ones null.
+        let imported = one(
+            r#"{"created": "2026-06-15T12:05:41+03:00", "updated": "2026-06-15T12:05:41+03:00",
+                "name": "allow-always-192-168-0-1-53-0", "description": "", "enabled": true,
+                "precedence": false, "nolog": false, "action": "allow", "duration": "always",
+                "operator": {"operand": "list", "data": "[{\"type\": \"simple\", \"operand\": \"dest.ip\"}]",
+                  "type": "list", "list": [
+                    {"operand": "dest.ip", "data": "192.168.0.1", "type": "simple", "list": null, "sensitive": false},
+                    {"operand": "dest.port", "data": "53", "type": "simple", "list": null, "sensitive": false},
+                    {"operand": "user.id", "data": "0", "type": "simple", "list": null, "sensitive": false}],
+                  "sensitive": false}}"#,
+        );
+        assert!(imported.skipped.is_empty(), "{:?}", imported.skipped);
+        assert_eq!(imported.file.rule[0].conditions.net, vec!["192.168.0.1/32"]);
+    }
+
+    #[test]
+    fn ranges_convert_and_invalid_rules_are_reported_not_fatal() {
+        let imported = import(
+            &[
+                (
+                    "loopback.json".to_owned(),
+                    r#"{"name": "loopback", "action": "allow", "duration": "always",
+                        "operator": {"type": "network", "operand": "dest.network", "data": "127.0.0.0-127.255.255.255"}}"#
+                        .to_owned(),
+                ),
+                (
+                    "lookahead.json".to_owned(),
+                    r#"{"name": "lookahead", "action": "allow", "duration": "always",
+                        "operator": {"type": "regexp", "operand": "process.path", "data": "^/usr/(?!bin)", "sensitive": true}}"#
+                        .to_owned(),
+                ),
+                (
+                    "ip.json".to_owned(),
+                    r#"{"name": "ip", "action": "allow", "duration": "always",
+                        "operator": {"type": "simple", "operand": "dest.ip", "data": "192.168.0.1"}}"#
+                        .to_owned(),
+                ),
+            ],
+            "OpenSnitch",
+        );
+        let names: Vec<&str> = imported.file.rule.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, vec!["loopback", "ip"]);
+        assert_eq!(imported.file.rule[0].conditions.net, vec!["127.0.0.0/8"]);
+        assert_eq!(imported.file.rule[1].conditions.net, vec!["192.168.0.1/32"]);
+        let skipped: Vec<&str> = imported.skipped.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(skipped, vec!["lookahead"]);
     }
 }
