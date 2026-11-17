@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["PIDFILE","VERSION"],"enum":["Error","Personality"],"fn":["main","out","personality","run_daemon","write_pidfile"]};
+window.SIDEBAR_ITEMS = {"constant":["PIDFILE","VERSION"],"enum":["Error","Personality"],"fn":["main","out","personality","run_daemon","serve","write_pidfile"]};

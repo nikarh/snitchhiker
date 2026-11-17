@@ -244,119 +244,120 @@
 <a href=#244 id=244 data-nosnippet>244</a>    Table {
 <a href=#245 id=245 data-nosnippet>245</a>        queue: shared.config.queue,
 <a href=#246 id=246 data-nosnippet>246</a>        queues: <span class="number">1</span>,
-<a href=#247 id=247 data-nosnippet>247</a>        bypass: <span class="bool-val">false</span>,
-<a href=#248 id=248 data-nosnippet>248</a>        ..Table::default()
-<a href=#249 id=249 data-nosnippet>249</a>    }
-<a href=#250 id=250 data-nosnippet>250</a>}
-<a href=#251 id=251 data-nosnippet>251</a>
-<a href=#252 id=252 data-nosnippet>252</a><span class="kw">fn </span>install(table: <span class="kw-2">&amp;</span>Table) -&gt; std::io::Result&lt;()&gt; {
-<a href=#253 id=253 data-nosnippet>253</a>    <span class="kw">let </span><span class="kw-2">mut </span>socket = snitchhiker_netfilter::netlink::Socket::open()<span class="question-mark">?</span>;
-<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer = Writer::new();
-<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span>batch = encode_install(<span class="kw-2">&amp;mut </span>writer, table, <span class="number">1</span>);
-<a href=#256 id=256 data-nosnippet>256</a>    socket.transact(<span class="kw-2">&amp;</span>writer, batch.first, batch.last)
-<a href=#257 id=257 data-nosnippet>257</a>}
-<a href=#258 id=258 data-nosnippet>258</a>
-<a href=#259 id=259 data-nosnippet>259</a><span class="doccomment">/// The namespace's thread: in the namespace from its first line, until it ends.
-<a href=#260 id=260 data-nosnippet>260</a></span><span class="kw">fn </span>run(daemon: <span class="kw-2">&amp;</span>Arc&lt;Daemon&gt;, source: Source, inode: u64) -&gt; std::io::Result&lt;()&gt; {
-<a href=#261 id=261 data-nosnippet>261</a>    <span class="kw">let </span>shared = <span class="kw-2">&amp;</span>daemon.shared;
-<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>(namespace, ended): (std::fs::File, OwnedFd) = <span class="kw">match </span>source {
-<a href=#263 id=263 data-nosnippet>263</a>        Source::Process(pid) =&gt; {
-<a href=#264 id=264 data-nosnippet>264</a>            <span class="kw">let </span>pidfd = rustix::process::pidfd_open(
-<a href=#265 id=265 data-nosnippet>265</a>                rustix::process::Pid::from_raw(i32::try_from(pid).unwrap_or(-<span class="number">1</span>))
-<a href=#266 id=266 data-nosnippet>266</a>                    .ok_or_else(|| std::io::Error::other(<span class="string">"no such process"</span>))<span class="question-mark">?</span>,
-<a href=#267 id=267 data-nosnippet>267</a>                rustix::process::PidfdFlags::empty(),
-<a href=#268 id=268 data-nosnippet>268</a>            )<span class="question-mark">?</span>;
-<a href=#269 id=269 data-nosnippet>269</a>            (std::fs::File::open(<span class="macro">format!</span>(<span class="string">"/proc/{pid}/ns/net"</span>))<span class="question-mark">?</span>, pidfd)
-<a href=#270 id=270 data-nosnippet>270</a>        }
-<a href=#271 id=271 data-nosnippet>271</a>        Source::Named { path, ended } =&gt; (std::fs::File::open(path)<span class="question-mark">?</span>, ended),
-<a href=#272 id=272 data-nosnippet>272</a>    };
-<a href=#273 id=273 data-nosnippet>273</a>    <span class="comment">// This thread only: the daemon's others stay where they are.
-<a href=#274 id=274 data-nosnippet>274</a>    </span>rustix::thread::move_into_link_name_space(
-<a href=#275 id=275 data-nosnippet>275</a>        namespace.as_fd(),
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="prelude-val">Some</span>(rustix::thread::LinkNameSpaceType::Network),
-<a href=#277 id=277 data-nosnippet>277</a>    )<span class="question-mark">?</span>;
-<a href=#278 id=278 data-nosnippet>278</a>    drop(namespace);
-<a href=#279 id=279 data-nosnippet>279</a>    <span class="kw">let </span>netns = u32::try_from(inode).unwrap_or(<span class="number">0</span>);
-<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>table = table(shared);
-<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span><span class="kw-2">mut </span>monitor = Monitor::open()<span class="question-mark">?</span>;
-<a href=#282 id=282 data-nosnippet>282</a>    install(<span class="kw-2">&amp;</span>table)<span class="question-mark">?</span>;
-<a href=#283 id=283 data-nosnippet>283</a>    <span class="kw">let </span><span class="kw-2">mut </span>queue = Queue::bind(table.queue)<span class="question-mark">?</span>;
-<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span>writer = shared.broker.add_writer(queue.verdict_writer()<span class="question-mark">?</span>);
-<a href=#285 id=285 data-nosnippet>285</a>    shared.namespaces.ready(inode);
-<a href=#286 id=286 data-nosnippet>286</a>    <span class="macro">info!</span>(inode, name = <span class="question-mark">?</span>shared.namespaces.named(inode).map(|n| n.<span class="number">0</span>), <span class="string">"deciding inside a network namespace"</span>);
-<a href=#287 id=287 data-nosnippet>287</a>    <span class="kw">let </span>served = serve(
-<a href=#288 id=288 data-nosnippet>288</a>        daemon,
-<a href=#289 id=289 data-nosnippet>289</a>        <span class="kw-2">&amp;mut </span>queue,
-<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw-2">&amp;mut </span>monitor,
-<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">&amp;</span>table,
-<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw-2">&amp;</span>ended,
-<a href=#293 id=293 data-nosnippet>293</a>        (writer, netns),
-<a href=#294 id=294 data-nosnippet>294</a>    );
-<a href=#295 id=295 data-nosnippet>295</a>    shared.broker.remove_writer(writer);
-<a href=#296 id=296 data-nosnippet>296</a>    <span class="macro">debug!</span>(inode, <span class="string">"a network namespace is let go"</span>);
-<a href=#297 id=297 data-nosnippet>297</a>    served
-<a href=#298 id=298 data-nosnippet>298</a>}
-<a href=#299 id=299 data-nosnippet>299</a>
-<a href=#300 id=300 data-nosnippet>300</a><span class="kw">fn </span>serve(
-<a href=#301 id=301 data-nosnippet>301</a>    daemon: <span class="kw-2">&amp;</span>Daemon,
-<a href=#302 id=302 data-nosnippet>302</a>    queue: <span class="kw-2">&amp;mut </span>Queue,
-<a href=#303 id=303 data-nosnippet>303</a>    monitor: <span class="kw-2">&amp;mut </span>Monitor,
-<a href=#304 id=304 data-nosnippet>304</a>    table: <span class="kw-2">&amp;</span>Table,
-<a href=#305 id=305 data-nosnippet>305</a>    ended: <span class="kw-2">&amp;</span>OwnedFd,
-<a href=#306 id=306 data-nosnippet>306</a>    (writer, netns): (usize, u32),
-<a href=#307 id=307 data-nosnippet>307</a>) -&gt; std::io::Result&lt;()&gt; {
-<a href=#308 id=308 data-nosnippet>308</a>    <span class="kw">use </span>nix::poll::{PollFd, PollFlags, PollTimeout, poll};
-<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">let </span>shared = <span class="kw-2">&amp;</span>daemon.shared;
-<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span><span class="kw-2">mut </span>processes = <span class="kw">crate</span>::process::ProcessCache::new(shared.host);
-<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span><span class="kw-2">mut </span>senders = <span class="kw">crate</span>::forward::Senders::default();
-<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span><span class="kw-2">mut </span>verdicts: Vec&lt;(u32, Verdict)&gt; = Vec::with_capacity(<span class="number">64</span>);
-<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">loop </span>{
-<a href=#314 id=314 data-nosnippet>314</a>        <span class="kw">let </span>(packets, tampered, ended) = {
-<a href=#315 id=315 data-nosnippet>315</a>            <span class="kw">let </span><span class="kw-2">mut </span>fds = [
-<a href=#316 id=316 data-nosnippet>316</a>                PollFd::new(queue.as_fd(), PollFlags::POLLIN),
-<a href=#317 id=317 data-nosnippet>317</a>                PollFd::new(monitor.as_fd(), PollFlags::POLLIN),
-<a href=#318 id=318 data-nosnippet>318</a>                PollFd::new(ended.as_fd(), PollFlags::POLLIN),
-<a href=#319 id=319 data-nosnippet>319</a>            ];
-<a href=#320 id=320 data-nosnippet>320</a>            poll(<span class="kw-2">&amp;mut </span>fds, PollTimeout::NONE).map_err(std::io::Error::from)<span class="question-mark">?</span>;
-<a href=#321 id=321 data-nosnippet>321</a>            <span class="kw">let </span>ready = |fd: <span class="kw-2">&amp;</span>PollFd&lt;<span class="lifetime">'_</span>&gt;| fd.revents().is_some_and(|r| !r.is_empty());
-<a href=#322 id=322 data-nosnippet>322</a>            (ready(<span class="kw-2">&amp;</span>fds[<span class="number">0</span>]), ready(<span class="kw-2">&amp;</span>fds[<span class="number">1</span>]), ready(<span class="kw-2">&amp;</span>fds[<span class="number">2</span>]))
-<a href=#323 id=323 data-nosnippet>323</a>        };
-<a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span>ended {
-<a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-<a href=#326 id=326 data-nosnippet>326</a>        }
-<a href=#327 id=327 data-nosnippet>327</a>        <span class="kw">if </span>tampered &amp;&amp; monitor.deleted(<span class="kw-2">&amp;</span>table.name)<span class="question-mark">? </span>{
-<a href=#328 id=328 data-nosnippet>328</a>            <span class="kw">let </span>put_back = install(table);
-<a href=#329 id=329 data-nosnippet>329</a>            daemon.raise(<span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
-<a href=#330 id=330 data-nosnippet>330</a>                kind: <span class="string">"table_removed"</span>,
-<a href=#331 id=331 data-nosnippet>331</a>                title: <span class="string">"Something in a container removed the daemon's nftables table there"
-<a href=#332 id=332 data-nosnippet>332</a>                    </span>.to_owned(),
-<a href=#333 id=333 data-nosnippet>333</a>                body: <span class="kw">match </span><span class="kw-2">&amp;</span>put_back {
-<a href=#334 id=334 data-nosnippet>334</a>                    <span class="prelude-val">Ok</span>(()) =&gt; <span class="string">"It was put back. A process in the container holds CAP_NET_ADMIN."
-<a href=#335 id=335 data-nosnippet>335</a>                        </span>.to_owned(),
-<a href=#336 id=336 data-nosnippet>336</a>                    <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">format!</span>(<span class="string">"Putting it back failed: {error}"</span>),
-<a href=#337 id=337 data-nosnippet>337</a>                },
-<a href=#338 id=338 data-nosnippet>338</a>                rule: <span class="prelude-val">None</span>,
-<a href=#339 id=339 data-nosnippet>339</a>            });
-<a href=#340 id=340 data-nosnippet>340</a>        }
-<a href=#341 id=341 data-nosnippet>341</a>        <span class="kw">if </span>!packets {
-<a href=#342 id=342 data-nosnippet>342</a>            <span class="kw">continue</span>;
-<a href=#343 id=343 data-nosnippet>343</a>        }
-<a href=#344 id=344 data-nosnippet>344</a>        verdicts.clear();
-<a href=#345 id=345 data-nosnippet>345</a>        <span class="kw">for </span>packet <span class="kw">in </span>queue.receive()<span class="question-mark">? </span>{
-<a href=#346 id=346 data-nosnippet>346</a>            <span class="kw">let </span>(verdict, <span class="kw">_</span>) = <span class="kw">crate</span>::runtime::decide(
-<a href=#347 id=347 data-nosnippet>347</a>                shared,
-<a href=#348 id=348 data-nosnippet>348</a>                <span class="kw-2">&amp;mut </span>processes,
-<a href=#349 id=349 data-nosnippet>349</a>                <span class="kw-2">&amp;mut </span>senders,
-<a href=#350 id=350 data-nosnippet>350</a>                <span class="kw-2">&amp;</span>packet,
-<a href=#351 id=351 data-nosnippet>351</a>                (writer, netns),
-<a href=#352 id=352 data-nosnippet>352</a>            );
-<a href=#353 id=353 data-nosnippet>353</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(verdict) = verdict {
-<a href=#354 id=354 data-nosnippet>354</a>                verdicts.push((packet.id, verdict));
-<a href=#355 id=355 data-nosnippet>355</a>            }
-<a href=#356 id=356 data-nosnippet>356</a>        }
-<a href=#357 id=357 data-nosnippet>357</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(id, verdict) <span class="kw">in </span><span class="kw-2">&amp;</span>verdicts {
-<a href=#358 id=358 data-nosnippet>358</a>            queue.verdict(id, verdict)<span class="question-mark">?</span>;
-<a href=#359 id=359 data-nosnippet>359</a>        }
-<a href=#360 id=360 data-nosnippet>360</a>    }
-<a href=#361 id=361 data-nosnippet>361</a>}
+<a href=#247 id=247 data-nosnippet>247</a>        <span class="comment">// As on the host: with nothing bound to the queue (the daemon killed outright), packets pass.
+<a href=#248 id=248 data-nosnippet>248</a>        </span>bypass: <span class="bool-val">true</span>,
+<a href=#249 id=249 data-nosnippet>249</a>        ..Table::default()
+<a href=#250 id=250 data-nosnippet>250</a>    }
+<a href=#251 id=251 data-nosnippet>251</a>}
+<a href=#252 id=252 data-nosnippet>252</a>
+<a href=#253 id=253 data-nosnippet>253</a><span class="kw">fn </span>install(table: <span class="kw-2">&amp;</span>Table) -&gt; std::io::Result&lt;()&gt; {
+<a href=#254 id=254 data-nosnippet>254</a>    <span class="kw">let </span><span class="kw-2">mut </span>socket = snitchhiker_netfilter::netlink::Socket::open()<span class="question-mark">?</span>;
+<a href=#255 id=255 data-nosnippet>255</a>    <span class="kw">let </span><span class="kw-2">mut </span>writer = Writer::new();
+<a href=#256 id=256 data-nosnippet>256</a>    <span class="kw">let </span>batch = encode_install(<span class="kw-2">&amp;mut </span>writer, table, <span class="number">1</span>);
+<a href=#257 id=257 data-nosnippet>257</a>    socket.transact(<span class="kw-2">&amp;</span>writer, batch.first, batch.last)
+<a href=#258 id=258 data-nosnippet>258</a>}
+<a href=#259 id=259 data-nosnippet>259</a>
+<a href=#260 id=260 data-nosnippet>260</a><span class="doccomment">/// The namespace's thread: in the namespace from its first line, until it ends.
+<a href=#261 id=261 data-nosnippet>261</a></span><span class="kw">fn </span>run(daemon: <span class="kw-2">&amp;</span>Arc&lt;Daemon&gt;, source: Source, inode: u64) -&gt; std::io::Result&lt;()&gt; {
+<a href=#262 id=262 data-nosnippet>262</a>    <span class="kw">let </span>shared = <span class="kw-2">&amp;</span>daemon.shared;
+<a href=#263 id=263 data-nosnippet>263</a>    <span class="kw">let </span>(namespace, ended): (std::fs::File, OwnedFd) = <span class="kw">match </span>source {
+<a href=#264 id=264 data-nosnippet>264</a>        Source::Process(pid) =&gt; {
+<a href=#265 id=265 data-nosnippet>265</a>            <span class="kw">let </span>pidfd = rustix::process::pidfd_open(
+<a href=#266 id=266 data-nosnippet>266</a>                rustix::process::Pid::from_raw(i32::try_from(pid).unwrap_or(-<span class="number">1</span>))
+<a href=#267 id=267 data-nosnippet>267</a>                    .ok_or_else(|| std::io::Error::other(<span class="string">"no such process"</span>))<span class="question-mark">?</span>,
+<a href=#268 id=268 data-nosnippet>268</a>                rustix::process::PidfdFlags::empty(),
+<a href=#269 id=269 data-nosnippet>269</a>            )<span class="question-mark">?</span>;
+<a href=#270 id=270 data-nosnippet>270</a>            (std::fs::File::open(<span class="macro">format!</span>(<span class="string">"/proc/{pid}/ns/net"</span>))<span class="question-mark">?</span>, pidfd)
+<a href=#271 id=271 data-nosnippet>271</a>        }
+<a href=#272 id=272 data-nosnippet>272</a>        Source::Named { path, ended } =&gt; (std::fs::File::open(path)<span class="question-mark">?</span>, ended),
+<a href=#273 id=273 data-nosnippet>273</a>    };
+<a href=#274 id=274 data-nosnippet>274</a>    <span class="comment">// This thread only: the daemon's others stay where they are.
+<a href=#275 id=275 data-nosnippet>275</a>    </span>rustix::thread::move_into_link_name_space(
+<a href=#276 id=276 data-nosnippet>276</a>        namespace.as_fd(),
+<a href=#277 id=277 data-nosnippet>277</a>        <span class="prelude-val">Some</span>(rustix::thread::LinkNameSpaceType::Network),
+<a href=#278 id=278 data-nosnippet>278</a>    )<span class="question-mark">?</span>;
+<a href=#279 id=279 data-nosnippet>279</a>    drop(namespace);
+<a href=#280 id=280 data-nosnippet>280</a>    <span class="kw">let </span>netns = u32::try_from(inode).unwrap_or(<span class="number">0</span>);
+<a href=#281 id=281 data-nosnippet>281</a>    <span class="kw">let </span>table = table(shared);
+<a href=#282 id=282 data-nosnippet>282</a>    <span class="kw">let </span><span class="kw-2">mut </span>monitor = Monitor::open()<span class="question-mark">?</span>;
+<a href=#283 id=283 data-nosnippet>283</a>    install(<span class="kw-2">&amp;</span>table)<span class="question-mark">?</span>;
+<a href=#284 id=284 data-nosnippet>284</a>    <span class="kw">let </span><span class="kw-2">mut </span>queue = Queue::bind(table.queue)<span class="question-mark">?</span>;
+<a href=#285 id=285 data-nosnippet>285</a>    <span class="kw">let </span>writer = shared.broker.add_writer(queue.verdict_writer()<span class="question-mark">?</span>);
+<a href=#286 id=286 data-nosnippet>286</a>    shared.namespaces.ready(inode);
+<a href=#287 id=287 data-nosnippet>287</a>    <span class="macro">info!</span>(inode, name = <span class="question-mark">?</span>shared.namespaces.named(inode).map(|n| n.<span class="number">0</span>), <span class="string">"deciding inside a network namespace"</span>);
+<a href=#288 id=288 data-nosnippet>288</a>    <span class="kw">let </span>served = serve(
+<a href=#289 id=289 data-nosnippet>289</a>        daemon,
+<a href=#290 id=290 data-nosnippet>290</a>        <span class="kw-2">&amp;mut </span>queue,
+<a href=#291 id=291 data-nosnippet>291</a>        <span class="kw-2">&amp;mut </span>monitor,
+<a href=#292 id=292 data-nosnippet>292</a>        <span class="kw-2">&amp;</span>table,
+<a href=#293 id=293 data-nosnippet>293</a>        <span class="kw-2">&amp;</span>ended,
+<a href=#294 id=294 data-nosnippet>294</a>        (writer, netns),
+<a href=#295 id=295 data-nosnippet>295</a>    );
+<a href=#296 id=296 data-nosnippet>296</a>    shared.broker.remove_writer(writer);
+<a href=#297 id=297 data-nosnippet>297</a>    <span class="macro">debug!</span>(inode, <span class="string">"a network namespace is let go"</span>);
+<a href=#298 id=298 data-nosnippet>298</a>    served
+<a href=#299 id=299 data-nosnippet>299</a>}
+<a href=#300 id=300 data-nosnippet>300</a>
+<a href=#301 id=301 data-nosnippet>301</a><span class="kw">fn </span>serve(
+<a href=#302 id=302 data-nosnippet>302</a>    daemon: <span class="kw-2">&amp;</span>Daemon,
+<a href=#303 id=303 data-nosnippet>303</a>    queue: <span class="kw-2">&amp;mut </span>Queue,
+<a href=#304 id=304 data-nosnippet>304</a>    monitor: <span class="kw-2">&amp;mut </span>Monitor,
+<a href=#305 id=305 data-nosnippet>305</a>    table: <span class="kw-2">&amp;</span>Table,
+<a href=#306 id=306 data-nosnippet>306</a>    ended: <span class="kw-2">&amp;</span>OwnedFd,
+<a href=#307 id=307 data-nosnippet>307</a>    (writer, netns): (usize, u32),
+<a href=#308 id=308 data-nosnippet>308</a>) -&gt; std::io::Result&lt;()&gt; {
+<a href=#309 id=309 data-nosnippet>309</a>    <span class="kw">use </span>nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+<a href=#310 id=310 data-nosnippet>310</a>    <span class="kw">let </span>shared = <span class="kw-2">&amp;</span>daemon.shared;
+<a href=#311 id=311 data-nosnippet>311</a>    <span class="kw">let </span><span class="kw-2">mut </span>processes = <span class="kw">crate</span>::process::ProcessCache::new(shared.host);
+<a href=#312 id=312 data-nosnippet>312</a>    <span class="kw">let </span><span class="kw-2">mut </span>senders = <span class="kw">crate</span>::forward::Senders::default();
+<a href=#313 id=313 data-nosnippet>313</a>    <span class="kw">let </span><span class="kw-2">mut </span>verdicts: Vec&lt;(u32, Verdict)&gt; = Vec::with_capacity(<span class="number">64</span>);
+<a href=#314 id=314 data-nosnippet>314</a>    <span class="kw">loop </span>{
+<a href=#315 id=315 data-nosnippet>315</a>        <span class="kw">let </span>(packets, tampered, ended) = {
+<a href=#316 id=316 data-nosnippet>316</a>            <span class="kw">let </span><span class="kw-2">mut </span>fds = [
+<a href=#317 id=317 data-nosnippet>317</a>                PollFd::new(queue.as_fd(), PollFlags::POLLIN),
+<a href=#318 id=318 data-nosnippet>318</a>                PollFd::new(monitor.as_fd(), PollFlags::POLLIN),
+<a href=#319 id=319 data-nosnippet>319</a>                PollFd::new(ended.as_fd(), PollFlags::POLLIN),
+<a href=#320 id=320 data-nosnippet>320</a>            ];
+<a href=#321 id=321 data-nosnippet>321</a>            poll(<span class="kw-2">&amp;mut </span>fds, PollTimeout::NONE).map_err(std::io::Error::from)<span class="question-mark">?</span>;
+<a href=#322 id=322 data-nosnippet>322</a>            <span class="kw">let </span>ready = |fd: <span class="kw-2">&amp;</span>PollFd&lt;<span class="lifetime">'_</span>&gt;| fd.revents().is_some_and(|r| !r.is_empty());
+<a href=#323 id=323 data-nosnippet>323</a>            (ready(<span class="kw-2">&amp;</span>fds[<span class="number">0</span>]), ready(<span class="kw-2">&amp;</span>fds[<span class="number">1</span>]), ready(<span class="kw-2">&amp;</span>fds[<span class="number">2</span>]))
+<a href=#324 id=324 data-nosnippet>324</a>        };
+<a href=#325 id=325 data-nosnippet>325</a>        <span class="kw">if </span>ended {
+<a href=#326 id=326 data-nosnippet>326</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+<a href=#327 id=327 data-nosnippet>327</a>        }
+<a href=#328 id=328 data-nosnippet>328</a>        <span class="kw">if </span>tampered &amp;&amp; monitor.deleted(<span class="kw-2">&amp;</span>table.name)<span class="question-mark">? </span>{
+<a href=#329 id=329 data-nosnippet>329</a>            <span class="kw">let </span>put_back = install(table);
+<a href=#330 id=330 data-nosnippet>330</a>            daemon.raise(<span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
+<a href=#331 id=331 data-nosnippet>331</a>                kind: <span class="string">"table_removed"</span>,
+<a href=#332 id=332 data-nosnippet>332</a>                title: <span class="string">"Something in a container removed the daemon's nftables table there"
+<a href=#333 id=333 data-nosnippet>333</a>                    </span>.to_owned(),
+<a href=#334 id=334 data-nosnippet>334</a>                body: <span class="kw">match </span><span class="kw-2">&amp;</span>put_back {
+<a href=#335 id=335 data-nosnippet>335</a>                    <span class="prelude-val">Ok</span>(()) =&gt; <span class="string">"It was put back. A process in the container holds CAP_NET_ADMIN."
+<a href=#336 id=336 data-nosnippet>336</a>                        </span>.to_owned(),
+<a href=#337 id=337 data-nosnippet>337</a>                    <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">format!</span>(<span class="string">"Putting it back failed: {error}"</span>),
+<a href=#338 id=338 data-nosnippet>338</a>                },
+<a href=#339 id=339 data-nosnippet>339</a>                rule: <span class="prelude-val">None</span>,
+<a href=#340 id=340 data-nosnippet>340</a>            });
+<a href=#341 id=341 data-nosnippet>341</a>        }
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">if </span>!packets {
+<a href=#343 id=343 data-nosnippet>343</a>            <span class="kw">continue</span>;
+<a href=#344 id=344 data-nosnippet>344</a>        }
+<a href=#345 id=345 data-nosnippet>345</a>        verdicts.clear();
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">for </span>packet <span class="kw">in </span>queue.receive()<span class="question-mark">? </span>{
+<a href=#347 id=347 data-nosnippet>347</a>            <span class="kw">let </span>(verdict, <span class="kw">_</span>) = <span class="kw">crate</span>::runtime::decide(
+<a href=#348 id=348 data-nosnippet>348</a>                shared,
+<a href=#349 id=349 data-nosnippet>349</a>                <span class="kw-2">&amp;mut </span>processes,
+<a href=#350 id=350 data-nosnippet>350</a>                <span class="kw-2">&amp;mut </span>senders,
+<a href=#351 id=351 data-nosnippet>351</a>                <span class="kw-2">&amp;</span>packet,
+<a href=#352 id=352 data-nosnippet>352</a>                (writer, netns),
+<a href=#353 id=353 data-nosnippet>353</a>            );
+<a href=#354 id=354 data-nosnippet>354</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(verdict) = verdict {
+<a href=#355 id=355 data-nosnippet>355</a>                verdicts.push((packet.id, verdict));
+<a href=#356 id=356 data-nosnippet>356</a>            }
+<a href=#357 id=357 data-nosnippet>357</a>        }
+<a href=#358 id=358 data-nosnippet>358</a>        <span class="kw">for </span><span class="kw-2">&amp;</span>(id, verdict) <span class="kw">in </span><span class="kw-2">&amp;</span>verdicts {
+<a href=#359 id=359 data-nosnippet>359</a>            queue.verdict(id, verdict)<span class="question-mark">?</span>;
+<a href=#360 id=360 data-nosnippet>360</a>        }
+<a href=#361 id=361 data-nosnippet>361</a>    }
+<a href=#362 id=362 data-nosnippet>362</a>}
 </code></pre></div></section></main></body></html>

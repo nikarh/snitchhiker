@@ -78,7 +78,7 @@
 <a href=#78 id=78 data-nosnippet>78</a>            .spawn(<span class="kw">move </span>|| accept(<span class="kw-2">&amp;</span>daemon, <span class="kw-2">&amp;</span>agent, <span class="kw-2">&amp;</span>Access::Agent))<span class="question-mark">?</span>;
 <a href=#79 id=79 data-nosnippet>79</a>    }
 <a href=#80 id=80 data-nosnippet>80</a>    <span class="comment">// The remote service's, when it is installed: it serves only that service's user. Without it the node works
-<a href=#81 id=81 data-nosnippet>81</a>    // locally, so failing to listen isn't a reason not to start (and, with fail = closed, to cut the machine off).
+<a href=#81 id=81 data-nosnippet>81</a>    // locally, so failing to listen isn't a reason not to start.
 <a href=#82 id=82 data-nosnippet>82</a>    </span><span class="kw">if let </span><span class="prelude-val">Err</span>(error) = <span class="kw">crate</span>::remote::listen(daemon, std::path::Path::new(<span class="kw">crate</span>::remote::SOCKET)) {
 <a href=#83 id=83 data-nosnippet>83</a>        <span class="macro">warn!</span>(%error, <span class="string">"listening for the remote service: remote access won't work"</span>);
 <a href=#84 id=84 data-nosnippet>84</a>    }
@@ -1628,21 +1628,21 @@
 <a href=#1628 id=1628 data-nosnippet>1628</a>}
 <a href=#1629 id=1629 data-nosnippet>1629</a>
 <a href=#1630 id=1630 data-nosnippet>1630</a><span class="kw">fn </span>status(daemon: <span class="kw-2">&amp;</span>Daemon) -&gt; v1::Status {
-<a href=#1631 id=1631 data-nosnippet>1631</a>    <span class="kw">let </span>config: <span class="kw-2">&amp;</span>Config = <span class="kw-2">&amp;</span>daemon.shared.config;
-<a href=#1632 id=1632 data-nosnippet>1632</a>    <span class="kw">let </span>policy = daemon.shared.policy.load();
-<a href=#1633 id=1633 data-nosnippet>1633</a>    <span class="comment">// One lock of the store for both: two in one expression would deadlock (the first is held to its end).
-<a href=#1634 id=1634 data-nosnippet>1634</a>    </span><span class="kw">let </span>(oldest_seq, open_alerts) = {
-<a href=#1635 id=1635 data-nosnippet>1635</a>        <span class="kw">let </span>store = daemon.store();
-<a href=#1636 id=1636 data-nosnippet>1636</a>        (
-<a href=#1637 id=1637 data-nosnippet>1637</a>            store.oldest_seq().ok().flatten().unwrap_or(<span class="number">0</span>),
-<a href=#1638 id=1638 data-nosnippet>1638</a>            store.open_alerts().unwrap_or(<span class="number">0</span>),
-<a href=#1639 id=1639 data-nosnippet>1639</a>        )
-<a href=#1640 id=1640 data-nosnippet>1640</a>    };
-<a href=#1641 id=1641 data-nosnippet>1641</a>    v1::Status {
-<a href=#1642 id=1642 data-nosnippet>1642</a>        daemon_version: daemon.version().to_owned(),
-<a href=#1643 id=1643 data-nosnippet>1643</a>        mode: <span class="kw">crate</span>::policy::mode(policy.mode).into(),
-<a href=#1644 id=1644 data-nosnippet>1644</a>        no_match: <span class="kw">crate</span>::policy::policy(policy.no_match).into(),
-<a href=#1645 id=1645 data-nosnippet>1645</a>        fail_open: config.fail == <span class="kw">crate</span>::config::Fail::Open,
+<a href=#1631 id=1631 data-nosnippet>1631</a>    <span class="kw">let </span>policy = daemon.shared.policy.load();
+<a href=#1632 id=1632 data-nosnippet>1632</a>    <span class="comment">// One lock of the store for both: two in one expression would deadlock (the first is held to its end).
+<a href=#1633 id=1633 data-nosnippet>1633</a>    </span><span class="kw">let </span>(oldest_seq, open_alerts) = {
+<a href=#1634 id=1634 data-nosnippet>1634</a>        <span class="kw">let </span>store = daemon.store();
+<a href=#1635 id=1635 data-nosnippet>1635</a>        (
+<a href=#1636 id=1636 data-nosnippet>1636</a>            store.oldest_seq().ok().flatten().unwrap_or(<span class="number">0</span>),
+<a href=#1637 id=1637 data-nosnippet>1637</a>            store.open_alerts().unwrap_or(<span class="number">0</span>),
+<a href=#1638 id=1638 data-nosnippet>1638</a>        )
+<a href=#1639 id=1639 data-nosnippet>1639</a>    };
+<a href=#1640 id=1640 data-nosnippet>1640</a>    v1::Status {
+<a href=#1641 id=1641 data-nosnippet>1641</a>        daemon_version: daemon.version().to_owned(),
+<a href=#1642 id=1642 data-nosnippet>1642</a>        mode: <span class="kw">crate</span>::policy::mode(policy.mode).into(),
+<a href=#1643 id=1643 data-nosnippet>1643</a>        no_match: <span class="kw">crate</span>::policy::policy(policy.no_match).into(),
+<a href=#1644 id=1644 data-nosnippet>1644</a>        <span class="comment">// The tables are removed when the daemon stops, and pass packets while nothing decides them.
+<a href=#1645 id=1645 data-nosnippet>1645</a>        </span>fail_open: <span class="bool-val">true</span>,
 <a href=#1646 id=1646 data-nosnippet>1646</a>        decided: daemon.shared.decided.load(Ordering::Relaxed),
 <a href=#1647 id=1647 data-nosnippet>1647</a>        dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),
 <a href=#1648 id=1648 data-nosnippet>1648</a>        rules: u32::try_from(daemon.shared.rules.load().len()).unwrap_or(u32::MAX),
