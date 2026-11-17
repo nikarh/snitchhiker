@@ -156,7 +156,7 @@ impl Alerts {
                     .border_color(theme.border)
                     .child(
                         div()
-                            .w(px(220.))
+                            .w(px(280.))
                             .flex_none()
                             .overflow_hidden()
                             .text_ellipsis()

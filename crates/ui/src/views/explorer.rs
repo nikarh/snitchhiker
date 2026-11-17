@@ -267,20 +267,16 @@ impl Explorer {
             .gap_3()
             .px_2()
             .text_color(theme.muted_foreground)
-            .child(div().w(px(420.)).child(name(self.group)))
-            .child(div().w(px(240.)))
-            .child(
-                div()
-                    .w(px(96.))
-                    .text_color(cx.theme().muted_foreground)
-                    .child("trend"),
-            )
-            .child(div().w(px(90.)).text_right().child("Allowed"))
-            .child(div().w(px(90.)).text_right().child("Blocked"))
-            .child(div().w(px(90.)).text_right().child("Sent"))
-            .child(div().w(px(90.)).text_right().child("Received"))
+            // The same widths as the rows', none of them shrinking, so the headings stay over their columns.
+            .child(div().flex_1().min_w_0().child(name(self.group)))
+            .child(div().w(px(240.)).flex_none())
+            .child(div().w(px(96.)).flex_none().child("Trend"))
+            .child(div().w(px(90.)).flex_none().text_right().child("Allowed"))
+            .child(div().w(px(90.)).flex_none().text_right().child("Blocked"))
+            .child(div().w(px(90.)).flex_none().text_right().child("Sent"))
+            .child(div().w(px(90.)).flex_none().text_right().child("Received"))
             .when(self.compare, |row| {
-                row.child(div().w(px(110.)).text_right().child("Before"))
+                row.child(div().w(px(110.)).flex_none().text_right().child("Before"))
             })
             .into_any_element()
     }
@@ -341,8 +337,8 @@ impl Explorer {
             }))
             .child(
                 div()
-                    .w(px(420.))
-                    .flex_none()
+                    .flex_1()
+                    .min_w_0()
                     .overflow_hidden()
                     .text_ellipsis()
                     .child(clipped(
@@ -359,10 +355,17 @@ impl Explorer {
                     .child(div().h_full().w(width(row.blocked)).bg(theme.danger)),
             )
             .child(sparkline(&row.series, theme.primary))
-            .child(div().w(px(90.)).text_right().child(row.allowed.to_string()))
             .child(
                 div()
                     .w(px(90.))
+                    .flex_none()
+                    .text_right()
+                    .child(row.allowed.to_string()),
+            )
+            .child(
+                div()
+                    .w(px(90.))
+                    .flex_none()
                     .text_right()
                     .text_color(theme.danger)
                     .child(row.blocked.to_string()),
@@ -370,6 +373,7 @@ impl Explorer {
             .child(
                 div()
                     .w(px(90.))
+                    .flex_none()
                     .text_right()
                     .text_color(theme.muted_foreground)
                     .child(bytes(row.bytes_out)),
@@ -377,6 +381,7 @@ impl Explorer {
             .child(
                 div()
                     .w(px(90.))
+                    .flex_none()
                     .text_right()
                     .text_color(theme.muted_foreground)
                     .child(bytes(row.bytes_in)),
@@ -384,7 +389,7 @@ impl Explorer {
             // The period before: its count, or that the group is new in this one.
             .when_some(before, |line, before| {
                 let was = before.iter().find(|b| b.key == row.key);
-                line.child(div().w(px(110.)).text_right().child(match was {
+                line.child(div().w(px(110.)).flex_none().text_right().child(match was {
                     Some(was) => (was.allowed + was.blocked).to_string(),
                     None => "new".to_owned(),
                 }))

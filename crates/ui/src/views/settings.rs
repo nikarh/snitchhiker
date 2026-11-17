@@ -89,7 +89,7 @@ impl Setting<'_> {
             .border_b_1()
             .border_color(theme.border)
             .child(
-                v_flex().w(px(320.)).flex_none().child(self.title).child(
+                v_flex().w(px(460.)).flex_none().child(self.title).child(
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
@@ -261,7 +261,7 @@ impl Settings {
                     .gap_3()
                     .child(
                         div()
-                            .w(px(320.))
+                            .w(px(460.))
                             .flex_none()
                             .overflow_hidden()
                             .text_ellipsis()
@@ -270,16 +270,21 @@ impl Settings {
                                 client.path.clone(),
                             )),
                     )
-                    .child(div().w(px(180.)).flex_none().text_color(muted).child(
-                        if client.sha256.is_empty() {
-                            "by path (daemon.toml)".to_owned()
-                        } else {
-                            format!(
-                                "sha256 {}…",
-                                client.sha256.get(..16).unwrap_or(&client.sha256)
-                            )
-                        },
-                    ))
+                    .child(
+                        div()
+                            .w(px(260.))
+                            .flex_none()
+                            .whitespace_nowrap()
+                            .text_color(muted)
+                            .child(if client.sha256.is_empty() {
+                                "by path (daemon.toml)".to_owned()
+                            } else {
+                                format!(
+                                    "sha256 {}…",
+                                    client.sha256.get(..16).unwrap_or(&client.sha256)
+                                )
+                            }),
+                    )
                     .child(if client.current {
                         Tag::success().small().child("trusted")
                     } else {

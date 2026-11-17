@@ -15,6 +15,7 @@ use snitchhiker_proto::v1;
 
 use crate::backend::Request;
 use crate::model::Model;
+use crate::views::text::clipped;
 
 pub struct Devices {
     model: Entity<Model>,
@@ -101,18 +102,40 @@ fn device_row(
         .py_1()
         .border_b_1()
         .border_color(theme.border)
-        .child(div().w_48().child(device.name.clone()))
-        .child(div().w_16().child(if device.role() == v1::Role::Viewer {
-            "viewer"
-        } else {
-            "admin"
-        }))
         .child(
             div()
-                .w_32()
+                .w(px(200.))
+                .flex_none()
+                .overflow_hidden()
+                .text_ellipsis()
+                .child(clipped(
+                    SharedString::from(format!("device-name-{id}")),
+                    device.name.clone(),
+                )),
+        )
+        .child(
+            div()
+                .w(px(64.))
+                .flex_none()
+                .child(if device.role() == v1::Role::Viewer {
+                    "viewer"
+                } else {
+                    "admin"
+                }),
+        )
+        .child(
+            div()
+                .w(px(200.))
+                .flex_none()
+                .overflow_hidden()
+                .text_ellipsis()
                 .text_sm()
+                .font_family(theme.mono_font_family.clone())
                 .text_color(theme.muted_foreground)
-                .child(device.fingerprint.clone()),
+                .child(clipped(
+                    SharedString::from(format!("device-fingerprint-{id}")),
+                    device.fingerprint.clone(),
+                )),
         )
         .child(if device.connected {
             Tag::success().small().child("connected").into_any_element()

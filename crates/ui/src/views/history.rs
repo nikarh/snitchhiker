@@ -4,7 +4,7 @@ use std::sync::mpsc;
 
 use gpui::{
     Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Window,
-    div,
+    div, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
@@ -12,6 +12,7 @@ use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::time;
+use crate::views::text::clipped;
 
 pub struct History {
     model: Entity<Model>,
@@ -58,8 +59,19 @@ impl Render for History {
                             .text_color(muted)
                             .child(time(change.time_ms)),
                     )
-                    .child(div().w_20().text_color(muted).child(change.app.clone()))
-                    .child(div().flex_1().child(change.what.clone()))
+                    .child(
+                        div()
+                            .w(px(150.))
+                            .flex_none()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_color(muted)
+                            .child(clipped(
+                                SharedString::from(format!("change-app-{id}")),
+                                change.app.clone(),
+                            )),
+                    )
+                    .child(div().flex_1().min_w_0().child(change.what.clone()))
                     .child(if first_of_batch {
                         Button::new(SharedString::from(format!("undo-{id}")))
                             .small()

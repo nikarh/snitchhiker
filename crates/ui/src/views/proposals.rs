@@ -10,7 +10,7 @@ use std::time::Instant;
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
-    div, prelude::FluentBuilder as _,
+    div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
@@ -21,6 +21,7 @@ use snitchhiker_proto::{convert, v1};
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::prompts::Focus;
+use crate::views::text::clipped;
 
 /// Durations offered, in order; the session's first.
 const DURATIONS: [(v1::ProposalDuration, &str); 4] = [
@@ -499,13 +500,24 @@ impl Render for Proposals {
                 .gap_3()
                 .child(
                     div()
-                        .w_40()
+                        .w(px(176.))
+                        .flex_none()
                         .text_color(muted)
                         .child(crate::views::events::time(p.created_ms)),
                 )
-                .child(div().w_24().child(state(p.state())))
-                .child(div().w_32().child(agent))
-                .child(div().flex_1().text_color(muted).child(format!(
+                .child(div().w(px(96.)).flex_none().child(state(p.state())))
+                .child(
+                    div()
+                        .w(px(160.))
+                        .flex_none()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(clipped(
+                            SharedString::from(format!("proposal-agent-{}", p.id)),
+                            agent,
+                        )),
+                )
+                .child(div().flex_1().min_w_0().text_color(muted).child(format!(
                     "{} rule{} for {}{}",
                     p.rules.len(),
                     if p.rules.len() == 1 { "" } else { "s" },

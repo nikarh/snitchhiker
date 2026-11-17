@@ -11,6 +11,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
+use gpui_component::switch::Switch;
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use snitchhiker_proto::v1;
@@ -100,6 +101,9 @@ pub fn summary(rule: &v1::SystemRule) -> String {
     }
 }
 
+/// The width of a setting's name and its explanation, beside its choices: wide enough for a line or two.
+const LABEL: f32 = 460.;
+
 impl SystemPage {
     fn choice(
         id: String,
@@ -123,7 +127,7 @@ impl SystemPage {
                 .py_1()
                 .child(
                     v_flex()
-                        .w(px(300.))
+                        .w(px(LABEL))
                         .flex_none()
                         .child(title)
                         .child(div().text_sm().text_color(muted).child(description)),
@@ -202,10 +206,10 @@ impl SystemPage {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(
-                        Button::new(SharedString::from(format!("sys-on-{index}")))
-                            .small()
-                            .label(if enabled { "On" } else { "Off" })
-                            .when_primary(enabled)
+                        Switch::new(SharedString::from(format!("sys-on-{index}")))
+                            .checked(enabled)
+                            .color(theme.success)
+                            .xsmall()
                             .on_click(cx.listener(move |page, _, _, cx| {
                                 page.edit(cx, |f| {
                                     if let Some(rule) = f.rules.get_mut(index) {
@@ -230,17 +234,20 @@ impl SystemPage {
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
+                            .font_family(theme.mono_font_family.clone())
                             .child(clipped(
                                 SharedString::from(format!("sys-summary-{index}")),
                                 summary(rule),
                             )),
                     )
+                    // The match and the description share the room: neither squeezed by a fixed width.
                     .child(
                         div()
-                            .w(px(260.))
-                            .flex_none()
+                            .flex_1()
+                            .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
                             .text_color(theme.muted_foreground)
@@ -283,17 +290,6 @@ fn target_tag(target: v1::SystemTarget) -> gpui_component::tag::Tag {
         v1::SystemTarget::Accept => Tag::success().small().child(label),
         v1::SystemTarget::Drop | v1::SystemTarget::Reject => Tag::danger().small().child(label),
         _ => Tag::secondary().small().child(label),
-    }
-}
-
-/// Primary when `on`.
-trait WhenPrimary {
-    fn when_primary(self, on: bool) -> Self;
-}
-
-impl WhenPrimary for Button {
-    fn when_primary(self, on: bool) -> Self {
-        if on { self.primary() } else { self }
     }
 }
 
