@@ -16,6 +16,7 @@ use snitchhiker_proto::v1;
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::time;
+use crate::views::text::clipped;
 
 pub struct Blocklists {
     model: Entity<Model>,
@@ -109,7 +110,10 @@ impl Blocklists {
                             .overflow_hidden()
                             .text_ellipsis()
                             .text_color(muted)
-                            .child(list.source.clone()),
+                            .child(clipped(
+                                SharedString::from(format!("list-source-{index}")),
+                                list.source.clone(),
+                            )),
                     )
                     .child(refresh)
                     .child(remove),

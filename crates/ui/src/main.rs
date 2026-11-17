@@ -3,6 +3,7 @@
 
 mod app;
 mod backend;
+mod columns;
 mod csv;
 mod env;
 mod history;

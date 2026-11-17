@@ -14,6 +14,7 @@ use snitchhiker_proto::{convert, v1};
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::{bytes, protocol};
+use crate::views::text::clipped;
 
 const COLUMNS: [(&str, &str, f32); 7] = [
     ("state", "State", 130.),
@@ -112,9 +113,10 @@ impl TableDelegate for ConnectionsTable {
         self.order.len()
     }
 
-    fn column(&self, col_ix: usize, _: &App) -> Column {
+    fn column(&self, col_ix: usize, cx: &App) -> Column {
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
-        let column = Column::new(key, name).width(width);
+        let column =
+            Column::new(key, name).width(crate::columns::width(cx, "connections", key, width));
         if col_ix < 6 {
             column.sortable()
         } else {
@@ -156,7 +158,10 @@ impl TableDelegate for ConnectionsTable {
             div()
                 .overflow_hidden()
                 .text_ellipsis()
-                .child(text)
+                .child(clipped(
+                    SharedString::from(format!("connection-{row_ix}-{col_ix}")),
+                    text,
+                ))
                 .into_any_element()
         };
         match col_ix {

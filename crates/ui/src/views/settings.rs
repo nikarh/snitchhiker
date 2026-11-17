@@ -14,6 +14,7 @@ use snitchhiker_proto::v1;
 
 use crate::backend::Request;
 use crate::model::Model;
+use crate::views::text::clipped;
 
 pub struct Settings {
     model: Entity<Model>,
@@ -264,7 +265,10 @@ impl Settings {
                             .flex_none()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(client.path.clone()),
+                            .child(clipped(
+                                SharedString::from(format!("client-{}", client.path)),
+                                client.path.clone(),
+                            )),
                     )
                     .child(div().w(px(180.)).flex_none().text_color(muted).child(
                         if client.sha256.is_empty() {

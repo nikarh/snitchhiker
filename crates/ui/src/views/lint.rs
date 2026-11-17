@@ -17,6 +17,7 @@ use crate::backend::Request;
 use crate::model::Model;
 use crate::views::editor;
 use crate::views::rules::folder_path;
+use crate::views::text::clipped;
 
 /// Rules that decided nothing in this many days are reported.
 const UNUSED_DAYS: u32 = 30;
@@ -179,7 +180,10 @@ impl Lint {
                 v_flex()
                     .flex_1()
                     .overflow_hidden()
-                    .child(div().overflow_hidden().text_ellipsis().child(name))
+                    .child(div().overflow_hidden().text_ellipsis().child(clipped(
+                        SharedString::from(format!("lint-name-{index}")),
+                        name,
+                    )))
                     .child(
                         div()
                             .text_sm()

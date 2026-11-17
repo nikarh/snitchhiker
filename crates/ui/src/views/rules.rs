@@ -21,6 +21,7 @@ use snitchhiker_proto::v1;
 
 use crate::backend::Request;
 use crate::model::Model;
+use crate::views::text::clipped;
 
 const COLUMNS: [(&str, &str, f32); 6] = [
     ("select", "", 36.),
@@ -358,7 +359,10 @@ impl RulesTable {
             .on_drag(DraggedRules { ids, label }, |dragged, _, _, cx| {
                 cx.new(|_| DragPreview(dragged.label.clone()))
             })
-            .child(format!("{}{}", folder_path(list, rule.folder), rule.name))
+            .child(clipped(
+                SharedString::from(format!("rule-name-{id}")),
+                format!("{}{}", folder_path(list, rule.folder), rule.name),
+            ))
             .into_any_element()
     }
 }
@@ -372,9 +376,9 @@ impl TableDelegate for RulesTable {
         self.visible.len()
     }
 
-    fn column(&self, col_ix: usize, _: &App) -> Column {
+    fn column(&self, col_ix: usize, cx: &App) -> Column {
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
-        let column = Column::new(key, name).width(width);
+        let column = Column::new(key, name).width(crate::columns::width(cx, "rules", key, width));
         if (1..=4).contains(&col_ix) {
             column.sortable()
         } else {
@@ -509,17 +513,19 @@ impl TableDelegate for RulesTable {
                     rule.tier() != v1::Tier::Normal && rule.tier() != v1::Tier::Unspecified,
                     |row| row.child(Tag::secondary().small().child(tier_name(rule.tier()))),
                 )
-                .child(div().overflow_hidden().text_ellipsis().child(format!(
-                    "{}{}",
-                    folder_path(&list, rule.folder),
-                    rule.name
+                .child(div().overflow_hidden().text_ellipsis().child(clipped(
+                    SharedString::from(format!("rule-name-{id}")),
+                    format!("{}{}", folder_path(&list, rule.folder), rule.name),
                 )))
                 .into_any_element(),
             4 => div()
                 .overflow_hidden()
                 .text_ellipsis()
                 .text_color(cx.theme().muted_foreground)
-                .child(conditions(rule.conditions.as_ref()))
+                .child(clipped(
+                    SharedString::from(format!("rule-conditions-{id}")),
+                    conditions(rule.conditions.as_ref()),
+                ))
                 .into_any_element(),
             5 if !rule.locked => {
                 let requests = self.requests.clone();
@@ -648,7 +654,7 @@ impl RulesPage {
                 self.table.update(cx, |table, cx| {
                     table.delegate_mut().filter = filter;
                     table.delegate_mut().recompute(cx);
-                    table.refresh(cx);
+                    cx.notify();
                 });
             }
             // A query half typed: the rules shown stay until it reads.
@@ -664,7 +670,7 @@ impl RulesPage {
         self.table.update(cx, |table, cx| {
             table.delegate_mut().folder = folder;
             table.delegate_mut().recompute(cx);
-            table.refresh(cx);
+            cx.notify();
         });
         cx.notify();
     }
@@ -770,7 +776,7 @@ impl RulesPage {
                     .when(!enabled, |d| {
                         d.text_color(theme.muted_foreground).line_through()
                     })
-                    .child(name),
+                    .child(clipped(SharedString::from(format!("folder-{key}")), name)),
             )
             .when_some(folder.filter(|_| !locked), |row, folder| {
                 let toggled = v1::Folder {

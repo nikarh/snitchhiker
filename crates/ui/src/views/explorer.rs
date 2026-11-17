@@ -17,6 +17,7 @@ use snitchhiker_proto::v1;
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::bytes;
+use crate::views::text::clipped;
 
 const DIMENSIONS: [(v1::Dimension, &str); 5] = [
     (v1::Dimension::Program, "Program"),
@@ -344,7 +345,10 @@ impl Explorer {
                     .flex_none()
                     .overflow_hidden()
                     .text_ellipsis()
-                    .child(shown(group, &row.key)),
+                    .child(clipped(
+                        SharedString::from(format!("group-key-{index}")),
+                        shown(group, &row.key),
+                    )),
             )
             .child(
                 h_flex()

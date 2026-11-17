@@ -17,6 +17,7 @@ use snitchhiker_proto::v1;
 
 use crate::backend::Request;
 use crate::model::Model;
+use crate::views::text::clipped;
 
 pub struct SystemPage {
     model: Entity<Model>,
@@ -231,7 +232,10 @@ impl SystemPage {
                             .flex_1()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(summary(rule)),
+                            .child(clipped(
+                                SharedString::from(format!("sys-summary-{index}")),
+                                summary(rule),
+                            )),
                     )
                     .child(
                         div()
@@ -240,7 +244,10 @@ impl SystemPage {
                             .overflow_hidden()
                             .text_ellipsis()
                             .text_color(theme.muted_foreground)
-                            .child(rule.description.clone()),
+                            .child(clipped(
+                                SharedString::from(format!("sys-description-{index}")),
+                                rule.description.clone(),
+                            )),
                     )
                     .child(
                         Button::new(SharedString::from(format!("sys-edit-{index}")))

@@ -20,3 +20,4 @@ pub mod rules;
 pub mod settings;
 pub mod status;
 pub mod system;
+pub mod text;

@@ -14,6 +14,7 @@ use snitchhiker_proto::columns::EventRow;
 
 use crate::model::{Live as LiveData, Model, address};
 use crate::views::events::{action_tag, protocol, time};
+use crate::views::text::clipped;
 
 /// Connections shown in the feed.
 const FEED: usize = 60;
@@ -129,7 +130,16 @@ impl Live {
             list = list.child(
                 h_flex()
                     .gap_3()
-                    .child(div().flex_1().overflow_hidden().text_ellipsis().child(name))
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(clipped(
+                                gpui::SharedString::from(format!("top-{exe}")),
+                                name,
+                            )),
+                    )
                     .child(div().w(px(70.)).text_right().child(allowed.to_string()))
                     .child(
                         div()
@@ -181,17 +191,19 @@ impl Live {
                             .flex_1()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(model.events.string(row.exe).unwrap_or("?").to_owned()),
+                            .child(clipped(
+                                gpui::SharedString::from(format!("recent-exe-{}", row.seq)),
+                                model.events.string(row.exe).unwrap_or("?").to_owned(),
+                            )),
                     )
                     .child(
                         div()
                             .flex_1()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(format!(
-                                "{destination}:{}/{}",
-                                row.port,
-                                protocol(row.protocol)
+                            .child(clipped(
+                                gpui::SharedString::from(format!("recent-to-{}", row.seq)),
+                                format!("{destination}:{}/{}", row.port, protocol(row.protocol)),
                             )),
                     ),
             );

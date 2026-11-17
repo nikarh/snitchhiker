@@ -15,6 +15,7 @@ use crate::backend::Request;
 use crate::model::Model;
 use crate::views::editor;
 use crate::views::events::{action_tag, protocol};
+use crate::views::text::clipped;
 
 pub struct Explain {
     model: Entity<Model>,
@@ -101,13 +102,20 @@ impl Render for Explain {
                             .child(if i == 0 { "decides" } else { "outranked" }),
                     )
                     .child(action_tag(u8::try_from(rule.action).unwrap_or(0)))
-                    .child(div().flex_1().overflow_hidden().text_ellipsis().child(
-                        if rule.name.is_empty() {
-                            format!("rule {}", rule.id)
-                        } else {
-                            rule.name.clone()
-                        },
-                    ))
+                    .child(
+                        div()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(clipped(
+                                SharedString::from(format!("explain-rule-{}", rule.id)),
+                                if rule.name.is_empty() {
+                                    format!("rule {}", rule.id)
+                                } else {
+                                    rule.name.clone()
+                                },
+                            )),
+                    )
                     .child(Tag::secondary().child(tier(rule.tier())))
                     .child(
                         div()

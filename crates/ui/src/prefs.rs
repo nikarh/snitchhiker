@@ -3,6 +3,7 @@
 //! the user's passwd entry, not `$HOME` or `$XDG_CONFIG_HOME`; the file is read and written as the user alone
 //! ([`crate::userfs`]), never through a link.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gpui::{App, Global, Window};
@@ -26,6 +27,9 @@ pub struct Prefs {
     /// The Events table's columns hidden, by key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub events_hidden: Vec<String>,
+    /// Column widths the user set, in pixels: per table, per column key ([`crate::columns`]).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub widths: BTreeMap<String, BTreeMap<String, u16>>,
     /// The Explorer's saved views.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub explorer_views: Vec<ExplorerView>,

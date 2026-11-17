@@ -17,6 +17,7 @@ use snitchhiker_proto::v1;
 use crate::backend::Request;
 use crate::model::Model;
 use crate::views::events::time;
+use crate::views::text::clipped;
 
 pub struct Alerts {
     model: Entity<Model>,
@@ -159,7 +160,10 @@ impl Alerts {
                             .flex_none()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(rule.name.clone()),
+                            .child(clipped(
+                                SharedString::from(format!("alert-name-{id}")),
+                                rule.name.clone(),
+                            )),
                     )
                     .child(
                         div()
@@ -167,7 +171,10 @@ impl Alerts {
                             .overflow_hidden()
                             .text_ellipsis()
                             .text_color(theme.muted_foreground)
-                            .child(what),
+                            .child(clipped(
+                                SharedString::from(format!("alert-what-{id}")),
+                                what,
+                            )),
                     )
                     .child(if rule.enabled {
                         Tag::success().small().child("on")

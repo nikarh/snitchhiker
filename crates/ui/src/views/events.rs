@@ -23,6 +23,7 @@ use snitchhiker_proto::v1;
 use crate::backend::Request;
 use crate::model::{Model, address};
 use crate::views::explain;
+use crate::views::text::clipped;
 
 const COLUMNS: [(&str, &str, f32); 9] = [
     ("time", "Time", 165.),
@@ -167,7 +168,8 @@ impl EventsPage {
         self.error_span = None;
         self.model
             .update(cx, |model, _| model.events.set_query(text, filter));
-        self.table.update(cx, TableState::refresh);
+        // New rows: the columns stay as they are.
+        self.table.update(cx, |_, cx| cx.notify());
         request_page(&self.model, &self.requests, cx);
         cx.notify();
     }
@@ -398,10 +400,10 @@ impl TableDelegate for EventsTable {
         self.model.read(cx).events.len()
     }
 
-    fn column(&self, col_ix: usize, _: &App) -> Column {
+    fn column(&self, col_ix: usize, cx: &App) -> Column {
         let col_ix = self.shown.get(col_ix).copied().unwrap_or(usize::MAX);
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
-        let column = Column::new(key, name).width(width);
+        let column = Column::new(key, name).width(crate::columns::width(cx, "events", key, width));
         if col_ix >= 7 {
             column.text_right()
         } else {
@@ -446,7 +448,10 @@ impl TableDelegate for EventsTable {
         } else {
             line
         }
-        .child(text)
+        .child(clipped(
+            SharedString::from(format!("event-{row_ix}-{col_ix}")),
+            text,
+        ))
         .into_any_element()
     }
 

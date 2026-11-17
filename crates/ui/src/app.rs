@@ -85,17 +85,16 @@ impl App {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // The preferences first: the tables' columns are laid out with the widths kept there.
+        let prefs = crate::prefs::Prefs::load();
+        cx.set_global(prefs.clone());
         let model = cx.new(|_| Model::default());
         let prompts = cx.new(|cx| Prompts::new(model.clone(), requests.clone(), cx));
         let proposals = cx
             .new(|cx| crate::views::proposals::Proposals::new(model.clone(), requests.clone(), cx));
         let events = cx.new(|cx| {
             TableState::new(
-                EventsTable::new(
-                    model.clone(),
-                    requests.clone(),
-                    &crate::prefs::Prefs::load().events_hidden,
-                ),
+                EventsTable::new(model.clone(), requests.clone(), &prefs.events_hidden),
                 window,
                 cx,
             )
@@ -123,10 +122,11 @@ impl App {
             )
         });
         Self::explain_on_double_click(&events, window, cx);
+        crate::columns::keep("events", &events, cx);
+        crate::columns::keep("rules", &rules, cx);
+        crate::columns::keep("connections", &connections, cx);
         // The appearance chosen, or the desktop's (followed as it changes).
-        let prefs = crate::prefs::Prefs::load();
         crate::prefs::apply(prefs.appearance, window, cx);
-        cx.set_global(prefs);
         cx.observe_window_appearance(window, |_, window, cx| {
             if cx
                 .try_global::<crate::prefs::Prefs>()
@@ -222,7 +222,8 @@ impl App {
                             let _ = requests.send(Request::SystemFirewall);
                         }
                         Changed::Events => {
-                            app.events.update(cx, TableState::refresh);
+                            // New rows only: the columns (their widths and sorting) stay as they are.
+                            app.events.update(cx, |_, cx| cx.notify());
                             // A query matching little: older history is looked through until a screenful is found.
                             if app.model.read(cx).events.len() < 100 {
                                 events::request_page(&app.model, &requests, cx);
@@ -234,11 +235,11 @@ impl App {
                         }
                         Changed::Connections => app.connections.update(cx, |table, cx| {
                             table.delegate_mut().recompute(cx);
-                            table.refresh(cx);
+                            cx.notify();
                         }),
                         Changed::Rules => app.rules.update(cx, |table, cx| {
                             table.delegate_mut().recompute(cx);
-                            table.refresh(cx);
+                            cx.notify();
                         }),
                         Changed::Prompts if !app.model.read(cx).prompts.is_empty() => {
                             app.page = Page::Prompts;
