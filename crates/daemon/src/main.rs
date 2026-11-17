@@ -80,12 +80,10 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     if let Some(command) = args.subcommand()? {
         return match command.as_str() {
             "cli" => Ok(cli::run(args, VERSION)?),
-            // Takes out whatever tables a daemon left behind (one killed outright): the service runs it after every
-            // stop, whatever the reason.
+            // After a stop: the tables go, or stay with `fail = closed` (snitchhiker_daemon::cleanup). The service runs
+            // it after every stop, whatever the reason.
             "cleanup" => {
-                if snitchhiker_daemon::runtime::remove_tables(
-                    &snitchhiker_netfilter::nftables::Table::default().name,
-                ) {
+                if snitchhiker_daemon::cleanup::run(&config_path) {
                     Ok(())
                 } else {
                     Err(Error::Cleanup)
@@ -138,11 +136,6 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     info!(version = VERSION, "starting");
     let moved = config.moved();
-    if config.fail.is_some() {
-        tracing::warn!(
-            "`fail` is no longer a setting and is ignored: the daemon's tables are always removed when it stops"
-        );
-    }
     if !moved.is_empty() {
         tracing::warn!(
             settings = moved.join(", "),
@@ -154,7 +147,7 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     let served = serve(&daemon, &signals);
     snitchhiker_daemon::notify::notify("STOPPING=1");
     let _ = std::fs::remove_file(PIDFILE);
-    daemon.stop();
+    daemon.stop(served.is_ok());
     served
 }
 

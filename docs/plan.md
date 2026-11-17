@@ -403,9 +403,10 @@ FROM-scratch container image, which has no libc to link against.
   - `nfq` crate: pure Rust, MIT/Apache.
   - Two queues: one for new flows, one for held flows (re-queue on prompt, like OpenSnitch).
   - `maxlen` tuned. Overflow behaviour (fail-open with `NFQA_CFG_F_FAIL_OPEN`, or drop) follows the node policy.
-- **When the daemon is not running, nothing of it is in the way** ([decision 0017](decisions/0017-never-in-the-way-when-stopped.md)):
-  its tables are removed when it stops or fails to start, and after a crash by the service (`ExecStopPost`); the queue
-  rules always have the bypass flag meanwhile.
+- **Fail policy when the daemon is not running:** `bypass` (fail-open, the default) or no bypass (fail-closed). Per
+  node, shown prominently. Fail-closed never outlasts a daemon that can't run: a failed start removes the tables, and so
+  does the service's cleanup once the daemon crashed 3 times in 5 minutes
+  ([decision 0017](decisions/0017-never-in-the-way-when-stopped.md)).
 - **Self-healing.** Watch the table through netlink notifications instead of polling every 15 s, and restore our chains
   if another tool flushes them (for example `nft flush ruleset`, firewalld, Docker). Alert when that happens.
 - Verdicts:

@@ -244,7 +244,8 @@ fn table(shared: &Shared) -> Table {
     Table {
         queue: shared.config.queue,
         queues: 1,
-        // As on the host: with nothing bound to the queue (the daemon killed outright), packets pass.
+        // With nothing bound to the queue (the daemon killed outright), packets pass, whatever `fail` says: the
+        // service's cleanup after a crash can't reach into the namespaces to remove these tables.
         bypass: true,
         ..Table::default()
     }

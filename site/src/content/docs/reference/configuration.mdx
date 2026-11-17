@@ -27,6 +27,7 @@ no_match = "ask"
 no_client = "deny"
 prompt_timeout_secs = 30
 on_timeout = "deny"
+fail = "open"
 ```
 
 ## Defaults
@@ -70,7 +71,16 @@ What happens to a prompt's connections when nobody answered in time. `"allow"`, 
 
 ### `fail`
 
-No longer a setting: it is accepted and ignored with a warning. Whenever the daemon isn't running, nothing of it is in the way of the network. It removes its tables when it stops or fails to start, the service removes them after a crash, and until then the kernel lets packets past the queues nobody reads.
+What happens to new connections while the daemon isn't running. Default `"open"`.
+
+| Value | |
+| --- | --- |
+| `"open"` | Everything passes. The daemon's tables are removed when it stops, and if it dies without removing them, the kernel lets packets past the queue nobody reads, and the service removes them (`snitchhikerd cleanup`, after every stop). |
+| `"closed"` | Nothing new gets out. After a clean stop (`systemctl stop`, an upgrade's restart) the tables stay in place, so the queue holds new connections until the daemon is back; after a crash they stay for the restart. |
+
+Either way, the daemon never stays in the way when it can't run: a start that fails removes the tables, and so does an error while it runs. With `"closed"`, a daemon that crashed 3 times in 5 minutes has its tables removed too, after each crash until they are that far apart again (the log says so). Removing the package removes them, and `sudo snitchhikerd cleanup` does by hand.
+
+On a workstation `closed` is the point of a firewall, once you trust the daemon to stay up. On a server you reach over the network, keep `open`; the unit restarts the daemon on failure either way.
 
 ### `default_rules`
 

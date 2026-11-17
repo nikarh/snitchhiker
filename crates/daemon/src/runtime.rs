@@ -28,7 +28,7 @@ use snitchhiker_core::rule::{Expiry, FolderId, Rule, RuleId, Tier};
 use snitchhiker_proto::columns::{self, EventRow};
 use snitchhiker_proto::{convert, v1};
 
-use crate::config::{Config, Mode, Policy};
+use crate::config::{Config, Fail, Mode, Policy};
 use crate::dns::{Names, parse_answer};
 use crate::hub::Hub;
 use crate::policy::Effective;
@@ -995,8 +995,9 @@ impl Daemon {
         Ok(count)
     }
 
-    /// Stops, and takes its tables out: with the daemon stopped, traffic flows freely.
-    pub fn stop(&self) {
+    /// Stops, and takes its tables out, unless it stops cleanly (`clean`) with `fail = closed`: then they stay, so
+    /// nothing new gets out until the daemon is back. Serving that ended in an error always takes them out.
+    pub fn stop(&self, clean: bool) {
         // Clients are told before the connections end, so a planned stop isn't taken for a crash.
         let reason = if shutting_down() {
             SHUTDOWN
@@ -1013,7 +1014,11 @@ impl Daemon {
         // A moment for the notices to leave.
         thread::sleep(Duration::from_millis(300));
         let _ = std::fs::remove_file(config_marker(&self.shared.config));
-        remove_tables(&self.table.name);
+        if self.shared.config.fail == Fail::Open || !clean {
+            remove_tables(&self.table.name);
+        } else {
+            info!("fail = closed: the tables stay until the daemon is back");
+        }
         info!(
             decided = self.shared.decided.load(Ordering::Relaxed),
             dropped_events = self.shared.dropped_events.load(Ordering::Relaxed),
@@ -1132,9 +1137,9 @@ fn table_of(config: &Config) -> Table {
         own_cgroup: own_cgroup(),
         queue: config.queue,
         queues: config.queues,
-        // Packets pass while nothing is bound to the queues: a daemon killed outright (no chance to remove its
-        // table) doesn't cut the machine off.
-        bypass: true,
+        // With `fail = open`, packets pass while nothing is bound to the queues: a daemon killed outright (no chance
+        // to remove its table) doesn't cut the machine off.
+        bypass: config.fail == Fail::Open,
         dns_queue: config.dns_queue(),
         forward_from: config
             .forward_from

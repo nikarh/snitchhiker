@@ -41,6 +41,18 @@ pub enum StepUp {
     Off,
 }
 
+/// What happens to new connections while the daemon isn't running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Fail {
+    /// They pass: the tables are removed whenever the daemon stops, and pass packets nothing is there to decide.
+    #[default]
+    Open,
+    /// They don't, after a clean stop (the tables stay until the daemon is back) and for a crash or two; a failed start,
+    /// an error, or a daemon that keeps crashing still removes them ([`crate::cleanup`]).
+    Closed,
+}
+
 /// A setting that moved elsewhere: whatever its value, it is accepted and ignored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Moved;
@@ -72,11 +84,7 @@ pub struct Config {
     /// The local users who administer the node through the desktop app: members of these groups (those who may
     /// become root, usually). Other users' apps see the node and its history, and change nothing.
     pub admin_groups: Vec<String>,
-    /// No longer a setting: whenever the daemon isn't running, nothing of it is in the way of the network (its tables
-    /// are removed when it stops or fails to start, and pass packets while nothing decides them). Accepted, so a
-    /// configuration written before still starts the daemon, and ignored with a warning.
-    #[serde(skip_serializing)]
-    pub fail: Option<Moved>,
+    pub fail: Fail,
     /// NFQUEUE queues, one deciding thread each.
     pub queues: u16,
     /// The first queue number.
@@ -148,7 +156,7 @@ impl Default for Config {
             trusted_clients: Vec::new(),
             step_up: StepUp::Polkit,
             admin_groups: ["wheel", "sudo", "admin"].map(str::to_owned).to_vec(),
-            fail: None,
+            fail: Fail::Open,
             queues: 4,
             queue: 0,
             learn_dns: true,
@@ -277,13 +285,13 @@ mod tests {
     #[test]
     fn reads_every_setting() {
         let config = Config::parse(
-            "mode = \"monitor\"\nno_match = \"allow\"\nfail = \"open\"\nqueues = 2\nqueue = 10\n\
+            "mode = \"monitor\"\nno_match = \"allow\"\nfail = \"closed\"\nqueues = 2\nqueue = 10\n\
              database = \"/tmp/x.db\"\nretention_days = 7\n",
         )
         .unwrap();
         assert_eq!(config.mode, Mode::Monitor);
         assert_eq!(config.no_match, Policy::Allow);
-        assert_eq!(config.fail, Some(Moved));
+        assert_eq!(config.fail, Fail::Closed);
         assert_eq!((config.queue, config.queues), (10, 2));
         assert_eq!(config.retention_days, 7);
     }

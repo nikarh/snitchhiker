@@ -1641,8 +1641,7 @@ fn status(daemon: &Daemon) -> v1::Status {
         daemon_version: daemon.version().to_owned(),
         mode: crate::policy::mode(policy.mode).into(),
         no_match: crate::policy::policy(policy.no_match).into(),
-        // The tables are removed when the daemon stops, and pass packets while nothing decides them.
-        fail_open: true,
+        fail_open: daemon.shared.config.fail == crate::config::Fail::Open,
         decided: daemon.shared.decided.load(Ordering::Relaxed),
         dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),
         rules: u32::try_from(daemon.shared.rules.load().len()).unwrap_or(u32::MAX),

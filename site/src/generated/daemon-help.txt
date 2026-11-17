@@ -13,8 +13,9 @@ Commands:
                          client group. Applies to the next connection; the daemon needn't run.
   untrust-client <path>  Stop trusting it
   trusted-clients        List the trusted client binaries
-  cleanup                Remove the nftables tables a daemon left behind (one that was killed); the service
-                         runs it after every stop
+  cleanup                Remove the nftables tables a daemon left behind. The service runs it after every
+                         stop: with fail = closed it keeps them after a clean stop, and after a crash
+                         unless the daemon crashed 3 times in 5 minutes
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)

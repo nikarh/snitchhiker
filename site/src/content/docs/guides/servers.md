@@ -42,6 +42,8 @@ Before enforcing, make sure the rules allow your own way in and out: SSH (inboun
 ```toml title="/etc/snitchhiker/daemon.toml"
 mode = "enforce"
 no_match = "deny"
+# The default, said out loud: a stopped daemon lets traffic through rather than cutting the machine off.
+fail = "open"
 ```
 
 ```bash

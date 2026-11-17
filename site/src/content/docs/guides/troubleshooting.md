@@ -61,7 +61,7 @@ The app says "You can see this node, but not change it", and changes are refused
 - **The eBPF programs don't load**: the daemon needs Linux 6.5 or newer with BTF (`/sys/kernel/btf/vmlinux`), and the capabilities its unit grants ([Install](/install/linux/)). It doesn't start without them rather than decide connections whose program it can't know.
 - **Another program uses the queues**: NFQUEUE numbers 0 to 4 by default. Move Snitchhiker's with [`queue`](/reference/configuration/#queue-queues).
 
-While the daemon is down, connections aren't decided: it removes its tables when it stops or fails to start, and the service removes them after a crash. If a table is still there with no daemon running (`sudo nft list tables`), `sudo snitchhikerd cleanup` removes it.
+A start that fails removes the daemon's tables, so connections aren't blocked while it can't run. With `fail = "closed"`, they are while it is stopped or restarting after a crash (until it crashed 3 times in 5 minutes); on a machine you reach over the network, keep `fail = "open"`. `sudo snitchhikerd cleanup` removes the tables by hand.
 
 ## Events are missing
 

@@ -28,6 +28,8 @@ overrides:
     depends:
       - glibc
       - systemd
+    scripts:
+      preremove: dist/packaging/arch/pre-remove.sh
   rpm:
     depends:
       - glibc >= 2.35

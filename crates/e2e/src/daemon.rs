@@ -420,6 +420,72 @@ pub fn stopping_removes_the_table() -> Result<(), String> {
     )
 }
 
+pub fn fail_closed_keeps_the_table() -> Result<(), String> {
+    let mut daemon = Running::start("closed", "fail = \"closed\"\n")?;
+    daemon.stop()?;
+    let tables = run("nft", &["list", "tables"])?;
+    let (_listener, port) = listener()?;
+    let connected = mallory_connects(port)?;
+    // By hand, cleanup removes them whatever `fail` says.
+    let cleanup = run("snitchhikerd", &["cleanup"]);
+    let after = run("nft", &["list", "tables"])?;
+    let found = format!("stopped:\n{tables}\nafter cleanup:\n{after}");
+    check(
+        tables.contains("snitchhiker"),
+        "the table was removed",
+        &found,
+    )?;
+    check(
+        !connected,
+        "a connection went through with the daemon stopped",
+        &found,
+    )?;
+    cleanup?;
+    check(
+        !after.contains("snitchhiker"),
+        "`snitchhikerd cleanup` left a table",
+        &found,
+    )
+}
+
+/// With `fail = "closed"`, the service's cleanup after a crash keeps the tables for a restart, and removes them once
+/// the daemon crashed 3 times in 5 minutes.
+pub fn fail_closed_gives_up_on_a_crash_loop() -> Result<(), String> {
+    let mut daemon = Running::start("crash-loop", "fail = \"closed\"\n")?;
+    let config = daemon.config.clone();
+    daemon.kill()?;
+    let _ = std::fs::remove_file(format!("{DIR}/crash-loop/crashes"));
+    let mut seen = Vec::new();
+    for result in ["signal", "core-dump", "oom-kill"] {
+        let output = Command::new("snitchhikerd")
+            .args(["--config", &config, "cleanup"])
+            .env("SERVICE_RESULT", result)
+            .output()
+            .map_err(|e| e.to_string())?;
+        let tables = run("nft", &["list", "tables"])?;
+        seen.push((
+            tables.contains("inet snitchhiker\n"),
+            format!(
+                "{result}: {}\n{}{tables}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            ),
+        ));
+    }
+    let _ = run("snitchhikerd", &["cleanup"]);
+    let found = seen
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let kept: Vec<bool> = seen.iter().map(|(kept, _)| *kept).collect();
+    check(
+        kept == [true, true, false],
+        "the tables weren't kept for the first two crashes and removed at the third",
+        &found,
+    )
+}
+
 /// A daemon killed outright can't remove its table: the kernel lets packets past the queue nobody reads, and
 /// `snitchhikerd cleanup` (what the service runs after every stop) removes it.
 pub fn a_killed_daemon_lets_traffic_through() -> Result<(), String> {
@@ -1764,7 +1830,9 @@ pub fn a_taken_queue_fails_the_start_with_nothing_in_place() -> Result<(), Strin
     let config = format!("{dir}/daemon.toml");
     std::fs::write(
         &config,
-        format!("database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\n"),
+        format!(
+            "database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\nfail = \"closed\"\n"
+        ),
     )
     .map_err(|e| e.to_string())?;
     let started = Command::new("timeout")

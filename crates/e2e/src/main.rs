@@ -188,6 +188,14 @@ const SCENARIOS: &[Scenario] = &[
         daemon::stopping_removes_the_table,
     ),
     (
+        "daemon/fail-closed-keeps-the-table",
+        daemon::fail_closed_keeps_the_table,
+    ),
+    (
+        "daemon/fail-closed-gives-up-on-a-crash-loop",
+        daemon::fail_closed_gives_up_on_a_crash_loop,
+    ),
+    (
         "daemon/a-killed-daemon-lets-traffic-through",
         daemon::a_killed_daemon_lets_traffic_through,
     ),

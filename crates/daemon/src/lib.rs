@@ -7,6 +7,7 @@ pub mod api;
 pub mod approvals;
 pub mod apps;
 pub mod blocklists;
+pub mod cleanup;
 pub mod cli;
 pub mod config;
 pub mod container_events;

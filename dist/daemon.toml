@@ -16,6 +16,11 @@ no_match = "deny"
 #prompt_timeout_secs = 30
 #on_timeout = "deny"
 
+# While the daemon isn't running: open (everything passes; its tables are removed when it stops) or closed (nothing
+# new gets out; after a clean stop, or a crash, the tables stay until it is back). Either way a failed start removes
+# them, and so does a daemon that crashed 3 times in 5 minutes.
+#fail = "open"
+
 # NFQUEUE queues, one deciding thread each, starting at queue number `queue`.
 #queues = 4
 #queue = 0
