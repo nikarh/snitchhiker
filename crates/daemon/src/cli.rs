@@ -17,6 +17,7 @@ Usage: snitchhikerd [--config <path>]
        snitchhikerd [--config <path>] trust-client <path>
        snitchhikerd [--config <path>] untrust-client <path>
        snitchhikerd [--config <path>] trusted-clients
+       snitchhikerd cleanup
        snitchhikerd cli <command> [options]   (the same as `snitchhiker <command>`)
 
 Commands:
@@ -25,6 +26,8 @@ Commands:
                          client group. Applies to the next connection; the daemon needn't run.
   untrust-client <path>  Stop trusting it
   trusted-clients        List the trusted client binaries
+  cleanup                Remove the nftables tables a daemon left behind (one that was killed); the service
+                         runs it after every stop
 
 Options:
   --config <path>  Configuration file (default /etc/snitchhiker/daemon.toml)

@@ -27,7 +27,6 @@ no_match = "ask"
 no_client = "deny"
 prompt_timeout_secs = 30
 on_timeout = "deny"
-fail = "closed"
 ```
 
 ## Defaults
@@ -71,16 +70,7 @@ What happens to a prompt's connections when nobody answered in time. `"allow"`, 
 
 ### `fail`
 
-What happens to new connections while the daemon isn't running. Default `"closed"`.
-
-| Value | |
-| --- | --- |
-| `"closed"` | Nothing new gets out. The table stays in place when the daemon stops, so its queue holds new connections until it is back. |
-| `"open"` | Everything passes. The daemon's table is removed when it stops, and if the daemon dies without removing it, the kernel lets packets past the queue nobody reads. |
-
-On a workstation `closed` is the point of a firewall. On a server you reach over the network, `open` keeps a crashed or stopped daemon from cutting you off; the unit restarts the daemon on failure either way.
-
-## Rules
+No longer a setting: it is accepted and ignored with a warning. Whenever the daemon isn't running, nothing of it is in the way of the network. It removes its tables when it stops or fails to start, the service removes them after a crash, and until then the kernel lets packets past the queues nobody reads.
 
 ### `default_rules`
 

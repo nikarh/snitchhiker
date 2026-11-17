@@ -16,10 +16,6 @@ no_match = "deny"
 #prompt_timeout_secs = 30
 #on_timeout = "deny"
 
-# While the daemon isn't running: closed (nothing new gets out; the table stays when it stops) or open (everything
-# passes; the table is removed when it stops). On servers reached over the network, open is the safer choice.
-fail = "closed"
-
 # NFQUEUE queues, one deciding thread each, starting at queue number `queue`.
 #queues = 4
 #queue = 0

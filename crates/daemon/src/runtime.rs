@@ -28,7 +28,7 @@ use snitchhiker_core::rule::{Expiry, FolderId, Rule, RuleId, Tier};
 use snitchhiker_proto::columns::{self, EventRow};
 use snitchhiker_proto::{convert, v1};
 
-use crate::config::{Config, Fail, Mode, Policy};
+use crate::config::{Config, Mode, Policy};
 use crate::dns::{Names, parse_answer};
 use crate::hub::Hub;
 use crate::policy::Effective;
@@ -177,6 +177,8 @@ impl Daemon {
         let table = table_of(&config);
         install(&table)?;
         info!(queues = config.queues, mode = ?config.mode, "table installed");
+        // From here on a failed start takes the tables back out: a daemon that isn't running is never in the way.
+        let mut installed = Installed(true);
 
         // Until-restart rules from before don't apply any more.
         let mut store = store;
@@ -260,6 +262,7 @@ impl Daemon {
             approvals: crate::approvals::Approvals::default(),
         });
         daemon.spawn_watches(agents)?;
+        installed.0 = false;
         Ok(daemon)
     }
 
@@ -992,8 +995,7 @@ impl Daemon {
         Ok(count)
     }
 
-    /// Stops: with `fail = open` the table is removed, so traffic flows freely; with `fail = closed` it stays, so
-    /// nothing new gets out until the daemon is back.
+    /// Stops, and takes its tables out: with the daemon stopped, traffic flows freely.
     pub fn stop(&self) {
         // Clients are told before the connections end, so a planned stop isn't taken for a crash.
         let reason = if shutting_down() {
@@ -1011,14 +1013,7 @@ impl Daemon {
         // A moment for the notices to leave.
         thread::sleep(Duration::from_millis(300));
         let _ = std::fs::remove_file(config_marker(&self.shared.config));
-        if self.shared.config.fail == Fail::Open {
-            if let Err(error) = remove(&self.table.name) {
-                warn!(%error, "removing the table");
-            }
-            if let Err(error) = crate::system::remove() {
-                warn!(%error, "removing the system firewall");
-            }
-        }
+        remove_tables(&self.table.name);
         info!(
             decided = self.shared.decided.load(Ordering::Relaxed),
             dropped_events = self.shared.dropped_events.load(Ordering::Relaxed),
@@ -1137,7 +1132,9 @@ fn table_of(config: &Config) -> Table {
         own_cgroup: own_cgroup(),
         queue: config.queue,
         queues: config.queues,
-        bypass: config.fail == Fail::Open,
+        // Packets pass while nothing is bound to the queues: a daemon killed outright (no chance to remove its
+        // table) doesn't cut the machine off.
+        bypass: true,
         dns_queue: config.dns_queue(),
         forward_from: config
             .forward_from
@@ -1162,6 +1159,33 @@ fn install(table: &Table) -> std::io::Result<()> {
     let mut writer = Writer::new();
     let batch = encode_install(&mut writer, table, 1);
     socket.transact(&writer, batch.first, batch.last)
+}
+
+/// Takes the daemon's tables out (its own, `name`, and the system firewall's), saying what it couldn't. Removing a
+/// table that isn't there is no error.
+pub fn remove_tables(name: &str) -> bool {
+    let mut removed = true;
+    if let Err(error) = remove(name) {
+        error!(%error, "removing the table");
+        removed = false;
+    }
+    if let Err(error) = crate::system::remove() {
+        error!(%error, "removing the system firewall");
+        removed = false;
+    }
+    removed
+}
+
+/// Takes the tables out when dropped while still set: a start that failed after putting them in place.
+struct Installed(bool);
+
+impl Drop for Installed {
+    fn drop(&mut self) {
+        if self.0 {
+            warn!("the start failed: removing the tables it put in place");
+            remove_tables(&Table::default().name);
+        }
+    }
 }
 
 fn remove(name: &str) -> std::io::Result<()> {

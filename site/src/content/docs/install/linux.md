@@ -91,7 +91,7 @@ The service isn't started on install: the first start is yours to make, after re
 
 ## The service
 
-`snitchhikerd.service` is `Type=notify` and starts before `network-pre.target`: it is reported started once the table, the eBPF programs and the sockets are in place, so with `fail = "closed"` no new connection gets out undecided, at boot or ever. It restarts on failure, without a limit. `systemctl reload snitchhikerd` reads the rules again (the rule files in `rules.d` included); changes to `daemon.toml` need a restart.
+`snitchhikerd.service` is `Type=notify` and starts before `network-pre.target`: it is reported started once the table, the eBPF programs and the sockets are in place, so no new connection gets out undecided while it runs. It restarts on failure, without a limit. When it stops, fails to start or crashes, its tables are removed (by the daemon, or by `snitchhikerd cleanup` the unit runs after every stop), so a daemon that isn't running never cuts the machine off. `systemctl reload snitchhikerd` reads the rules again (the rule files in `rules.d` included); changes to `daemon.toml` need a restart.
 
 The daemon runs as root with only the capabilities it uses:
 
@@ -106,7 +106,7 @@ It sees the system read-only (`ProtectSystem=strict`, `ProtectHome=read-only`) a
 
 ## Upgrading
 
-The system's updates (`apt upgrade`, `pacman -Syu`, `dnf upgrade`) bring new versions from the repository, which holds the newest release. The package doesn't restart the running daemon: `sudo systemctl restart snitchhikerd` when convenient (with `fail = "closed"`, new connections wait in the queue meanwhile, rather than getting out undecided). A changed `daemon.toml` is kept; the database is migrated when the new daemon starts, keeping the rules and the history. Clients and nodes of the same major version understand each other in both directions, so the apps and the nodes needn't be upgraded together.
+The system's updates (`apt upgrade`, `pacman -Syu`, `dnf upgrade`) bring new versions from the repository, which holds the newest release. The package doesn't restart the running daemon: `sudo systemctl restart snitchhikerd` when convenient. A changed `daemon.toml` is kept; the database is migrated when the new daemon starts, keeping the rules and the history. Clients and nodes of the same major version understand each other in both directions, so the apps and the nodes needn't be upgraded together.
 
 ## Removing it
 
@@ -116,4 +116,4 @@ sudo pacman -R snitchhiker       # Arch Linux
 sudo dnf remove snitchhiker      # Fedora
 ```
 
-The daemon removes its nftables table when it stops, unless `fail = "closed"` keeps it in place; then removing the package leaves a table that holds new connections in a queue nobody reads. Delete it with `sudo nft delete table inet snitchhiker`, and the history with `sudo rm -r /var/lib/snitchhiker`.
+The daemon's nftables tables go when it stops, so removing the package leaves none. Delete the history with `sudo rm -r /var/lib/snitchhiker`.

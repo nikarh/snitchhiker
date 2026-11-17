@@ -30,17 +30,6 @@ pub enum Policy {
     Ask,
 }
 
-/// What happens to new connections while the daemon isn't running.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Fail {
-    /// They pass (and the daemon's table is removed when it stops).
-    Open,
-    /// They don't (and the table stays when the daemon stops).
-    #[default]
-    Closed,
-}
-
 /// What confirms a dangerous action asked for by a client (not root).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -83,7 +72,11 @@ pub struct Config {
     /// The local users who administer the node through the desktop app: members of these groups (those who may
     /// become root, usually). Other users' apps see the node and its history, and change nothing.
     pub admin_groups: Vec<String>,
-    pub fail: Fail,
+    /// No longer a setting: whenever the daemon isn't running, nothing of it is in the way of the network (its tables
+    /// are removed when it stops or fails to start, and pass packets while nothing decides them). Accepted, so a
+    /// configuration written before still starts the daemon, and ignored with a warning.
+    #[serde(skip_serializing)]
+    pub fail: Option<Moved>,
     /// NFQUEUE queues, one deciding thread each.
     pub queues: u16,
     /// The first queue number.
@@ -110,7 +103,7 @@ pub struct Config {
     /// With `escalate`: how long a prompt waits for the clients on this machine before remote devices are notified.
     pub escalate_after_secs: u64,
     /// Moved to `/etc/snitchhiker/remote.toml` (`snitchhiker-remote`, decision 0016): accepted, so a configuration
-    /// written before doesn't stop the daemon (and with `fail = closed`, the network), and ignored with a warning.
+    /// written before doesn't stop the daemon, and ignored with a warning.
     #[serde(skip_serializing)]
     pub remote: Option<Moved>,
     #[serde(skip_serializing)]
@@ -155,7 +148,7 @@ impl Default for Config {
             trusted_clients: Vec::new(),
             step_up: StepUp::Polkit,
             admin_groups: ["wheel", "sudo", "admin"].map(str::to_owned).to_vec(),
-            fail: Fail::Closed,
+            fail: None,
             queues: 4,
             queue: 0,
             learn_dns: true,
@@ -290,7 +283,7 @@ mod tests {
         .unwrap();
         assert_eq!(config.mode, Mode::Monitor);
         assert_eq!(config.no_match, Policy::Allow);
-        assert_eq!(config.fail, Fail::Open);
+        assert_eq!(config.fail, Some(Moved));
         assert_eq!((config.queue, config.queues), (10, 2));
         assert_eq!(config.retention_days, 7);
     }

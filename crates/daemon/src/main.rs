@@ -36,6 +36,8 @@ enum Error {
     UnknownCommand(String),
     #[error("signals: {0}")]
     Signals(#[from] nix::Error),
+    #[error("the tables couldn't all be removed")]
+    Cleanup,
     #[error("writing to stdout: {0}")]
     Stdout(#[source] io::Error),
 }
@@ -78,6 +80,17 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     if let Some(command) = args.subcommand()? {
         return match command.as_str() {
             "cli" => Ok(cli::run(args, VERSION)?),
+            // Takes out whatever tables a daemon left behind (one killed outright): the service runs it after every
+            // stop, whatever the reason.
+            "cleanup" => {
+                if snitchhiker_daemon::runtime::remove_tables(
+                    &snitchhiker_netfilter::nftables::Table::default().name,
+                ) {
+                    Ok(())
+                } else {
+                    Err(Error::Cleanup)
+                }
+            }
             "trust-client" => {
                 let path: PathBuf = args.free_from_str()?;
                 let entry = trust::trust(&Config::load(&config_path)?, &path)?;
@@ -125,6 +138,11 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     info!(version = VERSION, "starting");
     let moved = config.moved();
+    if config.fail.is_some() {
+        tracing::warn!(
+            "`fail` is no longer a setting and is ignored: the daemon's tables are always removed when it stops"
+        );
+    }
     if !moved.is_empty() {
         tracing::warn!(
             settings = moved.join(", "),
@@ -132,11 +150,20 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
         );
     }
     let daemon = Daemon::start(config)?;
-    snitchhiker_daemon::api::spawn(&daemon).map_err(snitchhiker_daemon::runtime::Error::from)?;
+    // However serving ends (a signal, or an error), the daemon stops, and its tables go with it.
+    let served = serve(&daemon, &signals);
+    snitchhiker_daemon::notify::notify("STOPPING=1");
+    let _ = std::fs::remove_file(PIDFILE);
+    daemon.stop();
+    served
+}
+
+/// Serves until SIGTERM or SIGINT; SIGHUP reloads the rules.
+fn serve(daemon: &std::sync::Arc<Daemon>, signals: &SigSet) -> Result<(), Error> {
+    snitchhiker_daemon::api::spawn(daemon).map_err(snitchhiker_daemon::runtime::Error::from)?;
     write_pidfile();
     // The table is in place: from now on no new connection gets out undecided.
     snitchhiker_daemon::notify::notify("READY=1");
-    // SIGHUP reloads; SIGTERM or SIGINT end the loop.
     while signals.wait()? == Signal::SIGHUP {
         match daemon.reload_rules() {
             Ok(count) => info!(rules = count, "rules reloaded"),
@@ -151,9 +178,6 @@ fn run_daemon(mut args: pico_args::Arguments) -> Result<(), Error> {
             }
         }
     }
-    snitchhiker_daemon::notify::notify("STOPPING=1");
-    let _ = std::fs::remove_file(PIDFILE);
-    daemon.stop();
     Ok(())
 }
 

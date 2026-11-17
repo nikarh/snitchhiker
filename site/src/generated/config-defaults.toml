@@ -8,7 +8,6 @@ client_group = "snitchhiker-ui"
 trusted_clients = []
 step_up = "polkit"
 admin_groups = ["wheel", "sudo", "admin"]
-fail = "closed"
 queues = 4
 queue = 0
 learn_dns = true

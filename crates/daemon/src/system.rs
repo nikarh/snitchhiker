@@ -12,7 +12,7 @@ use snitchhiker_netfilter::nftables::{
 };
 use snitchhiker_proto::v1;
 
-use crate::config::{Config, Fail};
+use crate::config::Config;
 
 pub const TABLE: &str = "snitchhiker_system";
 
@@ -122,7 +122,7 @@ pub fn table(firewall: &Firewall, config: &Config) -> SystemTable {
                             Target::Queue => SystemTarget::Queue {
                                 number: config.queue,
                                 total: config.queues,
-                                bypass: config.fail == Fail::Open,
+                                bypass: true,
                             },
                         },
                     });

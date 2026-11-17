@@ -27,7 +27,7 @@ Its `output` chain, at the mangle priority of the local-out hook, sends to the q
 - TCP packets with SYN set and FIN, RST and ACK clear: new connections, and their retransmissions.
 - Other packets of new or related flows: the first packet of a UDP flow, ICMP, and the like.
 
-Everything else, the rest of every connection, never leaves the kernel. The daemon's own traffic isn't queued: what it marks, and, when it runs as its systemd service, whatever the sockets of its own cgroup send (sockets a library opened, which it can't mark). Run any other way, its packets are queued and passed by the process the kernel names for them. The node's [remote service](/internals/remote/#the-remote-service)'s packets are queued and passed the same way, by its process, while the daemon serves it. Its own traffic isn't in the history. Flows are spread over `queues` queues, each with its own thread; with `fail = "open"` the queue rules have the bypass flag, so packets pass while nobody reads the queue.
+Everything else, the rest of every connection, never leaves the kernel. The daemon's own traffic isn't queued: what it marks, and, when it runs as its systemd service, whatever the sockets of its own cgroup send (sockets a library opened, which it can't mark). Run any other way, its packets are queued and passed by the process the kernel names for them. The node's [remote service](/internals/remote/#the-remote-service)'s packets are queued and passed the same way, by its process, while the daemon serves it. Its own traffic isn't in the history. Flows are spread over `queues` queues, each with its own thread. The queue rules have the bypass flag, so packets pass while nobody reads the queue (the daemon was killed before it could remove its table).
 
 ## Attribution
 

@@ -184,12 +184,12 @@ const SCENARIOS: &[Scenario] = &[
         daemon::monitor_records_but_never_blocks,
     ),
     (
-        "daemon/fail-closed-keeps-the-table",
-        daemon::fail_closed_keeps_the_table,
+        "daemon/stopping-removes-the-table",
+        daemon::stopping_removes_the_table,
     ),
     (
-        "daemon/fail-open-removes-the-table",
-        daemon::fail_open_removes_the_table,
+        "daemon/a-killed-daemon-lets-traffic-through",
+        daemon::a_killed_daemon_lets_traffic_through,
     ),
     ("daemon/reject-fails-at-once", daemon::reject_fails_at_once),
     (

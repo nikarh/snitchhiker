@@ -1,5 +1,5 @@
 //! The daemon itself, as installed: rules decide, monitor mode only records, rule changes apply at once, and stopping
-//! follows the fail policy.
+//! removes its tables.
 
 use std::net::TcpListener;
 use std::path::Path;
@@ -406,35 +406,47 @@ pub fn monitor_records_but_never_blocks() -> Result<(), String> {
     )
 }
 
-pub fn fail_closed_keeps_the_table() -> Result<(), String> {
-    let mut daemon = Running::start("closed", "fail = \"closed\"\n")?;
+pub fn stopping_removes_the_table() -> Result<(), String> {
+    let mut daemon = Running::start("stopped", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
     daemon.stop()?;
     let tables = run("nft", &["list", "tables"])?;
     let (_listener, port) = listener()?;
     let connected = mallory_connects(port)?;
-    check(
-        tables.contains("snitchhiker"),
-        "the table was removed",
-        &tables,
-    )?;
-    check(
-        !connected,
-        "a connection went through with the daemon stopped",
-        &tables,
-    )
-}
-
-pub fn fail_open_removes_the_table() -> Result<(), String> {
-    let mut daemon = Running::start("open", "fail = \"open\"\n")?;
-    daemon.stop()?;
-    let tables = run("nft", &["list", "tables"])?;
-    let (_listener, port) = listener()?;
-    let connected = mallory_connects(port)?;
-    check(!tables.contains("snitchhiker"), "the table stayed", &tables)?;
+    check(!tables.contains("snitchhiker"), "a table stayed", &tables)?;
     check(
         connected,
         "a connection was blocked with the daemon stopped",
         &tables,
+    )
+}
+
+/// A daemon killed outright can't remove its table: the kernel lets packets past the queue nobody reads, and
+/// `snitchhikerd cleanup` (what the service runs after every stop) removes it.
+pub fn a_killed_daemon_lets_traffic_through() -> Result<(), String> {
+    let mut daemon = Running::start("killed", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
+    let (_listener, port) = listener()?;
+    let blocked = !mallory_connects(port)?;
+    daemon.kill()?;
+    let tables = run("nft", &["list", "tables"])?;
+    let connected = mallory_connects(port)?;
+    let cleanup = run("snitchhikerd", &["cleanup"]);
+    let after = run("nft", &["list", "tables"])?;
+    let found = format!("before cleanup:\n{tables}\nafter:\n{after}");
+    check(
+        blocked,
+        "the daemon didn't block before it was killed",
+        &found,
+    )?;
+    check(
+        connected,
+        "a connection was blocked with the daemon killed",
+        &found,
+    )?;
+    cleanup?;
+    check(
+        !after.contains("snitchhiker"),
+        "`snitchhikerd cleanup` left a table",
+        &found,
     )
 }
 
@@ -505,8 +517,18 @@ pub fn service_starts_ready_and_stops() -> Result<(), String> {
         &["-u", "snitchhikerd", "--no-pager", "-n", "20"],
     )
     .unwrap_or_default();
+    // Killed outright, it can't remove its tables: the service's ExecStopPost does, before the restart.
+    run("systemctl", &["kill", "--signal=KILL", "snitchhikerd"])?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut state = String::new();
+    while !state.contains("SubState=auto-restart") && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(50));
+        state = run("systemctl", &["show", "-p", "SubState", "snitchhikerd"]).unwrap_or_default();
+    }
+    let killed = run("nft", &["list", "tables"]).unwrap_or_default();
     run("systemctl", &["stop", "snitchhikerd"])?;
     let after = run("systemctl", &["show", "-p", "ActiveState", "snitchhikerd"])?;
+    let stopped = run("nft", &["list", "tables"]).unwrap_or_default();
     let _ = run("nft", &["delete", "table", "inet", "snitchhiker"]);
     let tables = tables?;
     let status = status?;
@@ -527,9 +549,19 @@ pub fn service_starts_ready_and_stops() -> Result<(), String> {
         &table,
     )?;
     check(
+        state.contains("SubState=auto-restart") && !killed.contains("snitchhiker"),
+        "the tables stayed after the service was killed",
+        &format!("{state}\n{killed}"),
+    )?;
+    check(
         after.contains("ActiveState=inactive"),
         "the service didn't stop",
         &after,
+    )?;
+    check(
+        !stopped.contains("snitchhiker"),
+        "the tables stayed after the service stopped",
+        &stopped,
     )
 }
 
@@ -1732,9 +1764,7 @@ pub fn a_taken_queue_fails_the_start_with_nothing_in_place() -> Result<(), Strin
     let config = format!("{dir}/daemon.toml");
     std::fs::write(
         &config,
-        format!(
-            "database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\nfail = \"closed\"\n"
-        ),
+        format!("database = \"{dir}/state.db\"\nrules_dir = \"{dir}/rules.d\"\n"),
     )
     .map_err(|e| e.to_string())?;
     let started = Command::new("timeout")

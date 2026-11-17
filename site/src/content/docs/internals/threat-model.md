@@ -43,7 +43,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 
 | Threat | Met by | Tested by |
 | --- | --- | --- |
-| A connection no rule allows | Queued at the output hook, decided before it leaves; `fail = "closed"` keeps the table while the daemon is down | `queue/*`, `escape/udp-sendto`, `escape/tcp-fast-open`, `escape/ipv6-and-mapped-ipv4` |
+| A connection no rule allows | Queued at the output hook, decided before it leaves, while the daemon runs (its tables go when it stops) | `queue/*`, `escape/udp-sendto`, `escape/tcp-fast-open`, `escape/ipv6-and-mapped-ipv4` |
 | ICMP, raw and packet sockets | Ping sockets queued like any flow; raw sockets need privileges | `escape/icmp-ping-socket`, `escape/raw-sockets-need-privileges` |
 | Passing for an allowed program | The program is the executable the kernel resolved, checked against the process's start time | `escape/spoofed-process-name`, `escape/non-dumpable-process-is-not-root` |
 | An allowed path over another file | Mount namespaces made without privileges are a container's context, where host rules don't apply | `escape/allowed-path-in-a-private-mount-namespace` |

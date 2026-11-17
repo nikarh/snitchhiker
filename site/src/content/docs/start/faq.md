@@ -16,7 +16,7 @@ It does the same job (asking which programs may connect where), and imports Open
 
 ## Will it break my machine?
 
-Not by being installed: the packages start in **monitor mode**, which records everything and blocks nothing ([Quick start](/start/quick-start/)). Once enforcing, what happens to connections no rule allows is yours to choose (`no_match`), and so is what happens while the daemon isn't running (`fail`: closed by default, open for a machine you reach over the network). Loopback is allowed by the built-in System folder, and the daemon's own traffic is never queued.
+Not by being installed: the packages start in **monitor mode**, which records everything and blocks nothing ([Quick start](/start/quick-start/)). Once enforcing, what happens to connections no rule allows is yours to choose (`no_match`). While the daemon isn't running nothing is blocked: its tables are removed when it stops, fails to start or crashes. Loopback is allowed by the built-in System folder, and the daemon's own traffic is never queued.
 
 ## Does it slow the network down?
 

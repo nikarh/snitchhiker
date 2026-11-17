@@ -78,7 +78,7 @@ pub fn spawn(daemon: &Arc<Daemon>) -> std::io::Result<()> {
             .spawn(move || accept(&daemon, &agent, &Access::Agent))?;
     }
     // The remote service's, when it is installed: it serves only that service's user. Without it the node works
-    // locally, so failing to listen isn't a reason not to start (and, with fail = closed, to cut the machine off).
+    // locally, so failing to listen isn't a reason not to start.
     if let Err(error) = crate::remote::listen(daemon, std::path::Path::new(crate::remote::SOCKET)) {
         warn!(%error, "listening for the remote service: remote access won't work");
     }
@@ -1628,7 +1628,6 @@ fn reload(daemon: &Daemon) -> v1::response::Result {
 }
 
 fn status(daemon: &Daemon) -> v1::Status {
-    let config: &Config = &daemon.shared.config;
     let policy = daemon.shared.policy.load();
     // One lock of the store for both: two in one expression would deadlock (the first is held to its end).
     let (oldest_seq, open_alerts) = {
@@ -1642,7 +1641,8 @@ fn status(daemon: &Daemon) -> v1::Status {
         daemon_version: daemon.version().to_owned(),
         mode: crate::policy::mode(policy.mode).into(),
         no_match: crate::policy::policy(policy.no_match).into(),
-        fail_open: config.fail == crate::config::Fail::Open,
+        // The tables are removed when the daemon stops, and pass packets while nothing decides them.
+        fail_open: true,
         decided: daemon.shared.decided.load(Ordering::Relaxed),
         dropped_events: daemon.shared.dropped_events.load(Ordering::Relaxed),
         rules: u32::try_from(daemon.shared.rules.load().len()).unwrap_or(u32::MAX),

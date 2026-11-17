@@ -38,7 +38,7 @@ the other end with the same code as a local connection.
   itself undumpable before reading the key, and refuses it if something already traces it.
 - **Settings** move from `daemon.toml` to `/etc/snitchhiker/remote.toml` (`relays`, `port`, `lan_discovery`,
   `push_gateway`, `offline_after_secs`). In `daemon.toml` they are accepted and ignored with a warning: a stale key
-  stopping the daemon would, with `fail = "closed"`, cut the machine off.
+  stopping the daemon would, with `fail = "closed"` (since gone, decision 0017), cut the machine off.
 
 ## Consequences
 

@@ -41,4 +41,4 @@ Targets: **accept**, **drop**, **reject** (ICMP "port unreachable"; a TCP reset 
 
 A change that blocks the way you reach the machine locks you out. `snitchhiker system import <file> --trial 60` installs a firewall on trial: unless `snitchhiker system confirm` comes within 60 seconds, the previous one comes back by itself. Remote clients use this for every change.
 
-Every change is in the [history](/guides/rules/#history-and-undo) and can be undone. Turning the firewall off, or the inbound policy from drop to accept, is a [dangerous action](/reference/configuration/#step_up). When the daemon stops with `fail = "open"`, the system table is removed with its own.
+Every change is in the [history](/guides/rules/#history-and-undo) and can be undone. Turning the firewall off, or the inbound policy from drop to accept, is a [dangerous action](/reference/configuration/#step_up). When the daemon stops, the system table is removed with its own.

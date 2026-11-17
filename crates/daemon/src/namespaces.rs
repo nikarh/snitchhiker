@@ -244,7 +244,8 @@ fn table(shared: &Shared) -> Table {
     Table {
         queue: shared.config.queue,
         queues: 1,
-        bypass: false,
+        // As on the host: with nothing bound to the queue (the daemon killed outright), packets pass.
+        bypass: true,
         ..Table::default()
     }
 }

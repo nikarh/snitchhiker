@@ -45,8 +45,8 @@ debug = false
 strip = true
 
 # What packages and releases are built with: smaller (about a third, all of it code) and a little faster, at a few
-# minutes more of building. A panic ends the process: systemd restarts the daemon, and with fail = "closed" nothing
-# gets out meanwhile, rather than a thread gone and the rest running on.
+# minutes more of building. A panic ends the process, rather than a thread gone and the rest running on: systemd
+# removes its tables (ExecStopPost) and restarts it.
 [profile.dist]
 inherits = "release"
 lto = "fat"

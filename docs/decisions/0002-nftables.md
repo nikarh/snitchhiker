@@ -14,7 +14,7 @@ element change (what made portcullis slow next to barbican). `rustables` is GPL-
 - The table is replaced in one batch (created, deleted, created again with its chains and rules). Nothing outside our
   table is ever listed or touched.
 - New TCP connections (SYN only) and the first packets of other flows go to several queues, spread by flow hash.
-  Queue overflow drops (`NFQA_CFG_F_FAIL_OPEN` cleared); only the "no daemon bound" bypass can fail open, by policy.
+  Queue overflow drops (`NFQA_CFG_F_FAIL_OPEN` cleared); only the "no daemon bound" bypass lets packets pass (always set, decision 0017).
 - The kernel reports the sending socket's uid and gid with each packet (`NFQA_CFG_F_UID_GID`).
 
 ## Evidence

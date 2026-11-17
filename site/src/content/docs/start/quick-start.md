@@ -20,7 +20,7 @@ sudo snitchhiker status
 version          0.1.0
 mode             Monitor
 no match         Deny
-fail open        false
+fail open        true
 rules            1
 decided          214
 dropped events   0
@@ -68,5 +68,5 @@ sudo systemctl restart snitchhikerd
 From now on a connection no rule allows is dropped. `snitchhiker events` shows what was blocked and why. To be asked instead, use `no_match = "ask"`: see [Prompts](/guides/prompts/).
 
 :::caution
-On a machine you reach over the network, allow your way in and out (SSH, the package mirrors) before enforcing, and consider `fail = "open"`, so that a stopped daemon doesn't cut the machine off. See [Configuration](/reference/configuration/#fail).
+On a machine you reach over the network, allow your way in and out (SSH, the package mirrors) before enforcing. A stopped daemon never cuts the machine off: its tables go with it.
 :::

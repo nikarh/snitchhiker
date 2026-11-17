@@ -1,15 +1,16 @@
 [Unit]
 Description=Snitchhiker: interactive application firewall
 Documentation=https://github.com/nikarh/snitchhiker
-# The table is in place, and the daemon reports itself ready, before the network comes up: with fail = closed, no
-# new connection gets out undecided, at boot or ever.
+# The table is in place, and the daemon reports itself ready, before the network comes up: no new connection gets out
+# undecided while it runs. When it isn't running, nothing of it is in the way: it removes its tables when it stops or
+# fails to start, ExecStopPost removes them after a crash, and until then they pass packets nothing is there to decide.
 Wants=network-pre.target
 Before=network-pre.target
 DefaultDependencies=no
 After=local-fs.target
 Before=shutdown.target
 Conflicts=shutdown.target
-# Keep trying for as long as it takes: with fail = closed nothing new gets out while it is down.
+# Keep trying for as long as it takes: while it is down, connections aren't decided.
 StartLimitIntervalSec=0
 
 [Service]
@@ -17,6 +18,8 @@ Type=notify
 # Settings are in /etc/snitchhiker/daemon.toml: change them there, then restart. SIGHUP reloads the rules.
 ExecStart=/usr/bin/snitchhikerd
 ExecReload=/bin/kill -HUP $MAINPID
+# After every stop, whatever ended it (a crash, the OOM killer, SIGKILL): the tables go.
+ExecStopPost=/usr/bin/snitchhikerd cleanup
 Restart=on-failure
 RestartSec=1s
 # A backstop: the daemon stays far below this (under 50 MB with 10 000 rules and a million events); a leak is
