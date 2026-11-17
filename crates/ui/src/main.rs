@@ -22,7 +22,7 @@ mod views;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use gpui::{AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use gpui_component::Root;
 
 fn main() -> ExitCode {
@@ -57,6 +57,12 @@ fn main() -> ExitCode {
             let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Snitchhiker".into()),
+                    ..TitlebarOptions::default()
+                }),
+                // The desktop entry's name (snitchhiker.desktop): the window manager groups the window under its icon.
+                app_id: Some("snitchhiker".to_owned()),
                 ..WindowOptions::default()
             };
             let _ = cx.open_window(options, |window, cx| {

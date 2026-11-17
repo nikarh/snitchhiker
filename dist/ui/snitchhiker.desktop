@@ -9,3 +9,4 @@ Terminal=false
 Categories=Network;Security;System;
 Keywords=firewall;network;opensnitch;
 StartupNotify=false
+StartupWMClass=snitchhiker
