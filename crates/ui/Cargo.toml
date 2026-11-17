@@ -26,6 +26,7 @@ ipnet = "2.12.2"
 nix = { version = "0.32.0", default-features = false, features = ["fs", "socket", "user"] }
 qrcode = { version = "0.14.1", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 snitchhiker-client = { version = "0.1.0", path = "../client", features = ["cache"] }
 snitchhiker-core = { version = "0.1.0", path = "../core" }
 snitchhiker-proto = { version = "0.1.0", path = "../proto" }

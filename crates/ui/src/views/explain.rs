@@ -101,7 +101,7 @@ impl Render for Explain {
                             .text_color(muted)
                             .child(if i == 0 { "decides" } else { "outranked" }),
                     )
-                    .child(action_tag(u8::try_from(rule.action).unwrap_or(0)))
+                    .child(action_tag(u8::try_from(rule.action).unwrap_or(0), cx))
                     .child(
                         div()
                             .flex_1()

@@ -7,12 +7,13 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    AnyElement, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Window, div, prelude::FluentBuilder as _,
+    AnyElement, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::tag::Tag;
-use gpui_component::{ActiveTheme as _, Disableable as _, Sizable as _, h_flex, v_flex};
+use gpui_component::{ActiveTheme as _, Disableable as _, Icon, Sizable as _, h_flex, v_flex};
 use snitchhiker_proto::v1;
 
 use crate::backend::Request;
@@ -121,6 +122,61 @@ impl Prompts {
         });
     }
 
+    /// One of the rules a prompt can leave, to choose.
+    fn suggestion(
+        id: u64,
+        index: usize,
+        suggestion: &v1::Suggestion,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let theme = cx.theme().clone();
+        h_flex()
+            .id(SharedString::from(format!("suggestion-{id}-{index}")))
+            .gap_2()
+            .px_2()
+            .py_1()
+            .rounded(theme.radius)
+            .border_1()
+            .cursor_pointer()
+            .border_color(if selected {
+                theme.table_active_border
+            } else {
+                gpui::transparent_black()
+            })
+            .when(selected, |row| row.bg(theme.table_active))
+            .hover(|row| row.bg(theme.table_hover))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(choice) = this.choices.get_mut(&id) {
+                    choice.suggestion = index;
+                }
+                cx.notify();
+            }))
+            .child(
+                Icon::new(if selected {
+                    gpui_kit_assets::IconName::CircleDot
+                } else {
+                    gpui_kit_assets::IconName::Circle
+                })
+                .small()
+                .text_color(if selected {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_sm()
+                    .child(suggestion.label.clone()),
+            )
+            .when(suggestion.broad, |row| {
+                row.child(Tag::warning().small().child("broad"))
+            })
+    }
+
     fn card(&self, prompt: &v1::Prompt, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let id = prompt.id;
         let choice = self.choices.get(&id).copied();
@@ -132,27 +188,9 @@ impl Prompts {
             .enumerate()
             .map(|(index, suggestion)| {
                 let selected = choice.is_some_and(|c| c.suggestion == index);
-                let button = Button::new(SharedString::from(format!("suggestion-{id}-{index}")))
-                    .label(suggestion.label.clone())
-                    .small()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if let Some(choice) = this.choices.get_mut(&id) {
-                            choice.suggestion = index;
-                        }
-                        cx.notify();
-                    }));
-                let button = if selected {
-                    button.primary()
-                } else {
-                    button.ghost()
-                };
-                h_flex()
-                    .gap_2()
-                    .child(button)
-                    .when(suggestion.broad, |row| {
-                        row.child(Tag::warning().small().child("broad"))
-                    })
-            });
+                Self::suggestion(id, index, suggestion, selected, cx)
+            })
+            .collect::<Vec<_>>();
         let durations = DURATIONS.iter().enumerate().map(|(index, (_, label))| {
             let button = Button::new(SharedString::from(format!("duration-{id}-{index}")))
                 .label(*label)
@@ -175,29 +213,53 @@ impl Prompts {
                 .disabled(!armed)
                 .on_click(cx.listener(move |this, _, _, _| this.answer(id, action)))
         };
+        let section = |name: &'static str| {
+            div()
+                .text_xs()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .text_color(theme.muted_foreground)
+                .child(name)
+        };
         v_flex()
-            .gap_3()
-            .p_4()
+            .flex_none()
+            .max_w(px(880.))
             .border_1()
             .border_color(theme.border)
-            .rounded_md()
-            .bg(theme.background)
+            .rounded(theme.radius_lg)
+            .overflow_hidden()
+            .bg(theme.table)
             .child(header(prompt, &theme))
-            .when(!prompt.agent_note.is_empty(), |card| {
-                card.child(crate::views::proposals::agents_words(
-                    "The agent that started it says (not verified):",
-                    &prompt.agent_note,
-                    &theme,
-                ))
-            })
-            .child(v_flex().gap_1().children(suggestions))
-            .child(h_flex().gap_1().children(durations))
             .child(
-                h_flex()
-                    .gap_2()
-                    .child(answer("Allow", v1::Action::Allow).primary())
-                    .child(answer("Deny", v1::Action::Deny))
-                    .child(answer("Reject", v1::Action::Reject).danger()),
+                v_flex()
+                    .gap_3()
+                    .p_4()
+                    .when(!prompt.agent_note.is_empty(), |card| {
+                        card.child(crate::views::proposals::agents_words(
+                            "The agent that started it says (not verified):",
+                            &prompt.agent_note,
+                            &theme,
+                        ))
+                    })
+                    .child(section("Rule to leave"))
+                    .child(v_flex().gap_0p5().children(suggestions))
+                    .child(section("For"))
+                    .child(h_flex().gap_1().flex_wrap().children(durations))
+                    .child(
+                        h_flex()
+                            .pt_2()
+                            .gap_2()
+                            .child(answer("Allow", v1::Action::Allow).primary())
+                            .child(answer("Deny", v1::Action::Deny).outline())
+                            .child(answer("Reject", v1::Action::Reject).danger())
+                            .when(!armed, |row| {
+                                row.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child("Answers arm a moment after the window is focused"),
+                                )
+                            }),
+                    ),
             )
             .into_any_element()
     }
@@ -247,9 +309,11 @@ impl Render for Prompts {
         let mut cards: Vec<AnyElement> = approvals.iter().map(|a| self.approval(a, cx)).collect();
         cards.extend(prompts.iter().map(|p| self.card(p, window, cx)));
         v_flex()
+            .id("prompts")
             .size_full()
+            .overflow_y_scroll()
             .gap_4()
-            .p_4()
+            .p_5()
             .when(cards.is_empty(), |page| {
                 page.child(
                     div()
@@ -261,35 +325,66 @@ impl Render for Prompts {
     }
 }
 
-/// Who connects where.
-fn header(prompt: &v1::Prompt, theme: &gpui_component::theme::Theme) -> AnyElement {
+/// One line of who wants to connect where, and one of the details (the program's path, the user, how many wait):
+/// for the prompt's card and the sign above the other pages.
+#[must_use]
+pub fn summary(prompt: &v1::Prompt) -> (String, String) {
     let destination = prompt.hosts.first().cloned().unwrap_or_else(|| {
         snitchhiker_proto::convert::address_from(&prompt.address)
             .map_or_else(String::new, |a| a.to_string())
     });
     let user = if prompt.user.is_empty() {
-        prompt.uid.to_string()
+        format!("uid {}", prompt.uid)
     } else {
         prompt.user.clone()
     };
+    let name = if prompt.exe.is_empty() {
+        "An unknown program"
+    } else {
+        prompt.exe.rsplit('/').next().unwrap_or(&prompt.exe)
+    };
+    let what = format!(
+        "{name} wants {destination} port {} ({})",
+        prompt.port,
+        protocol(u8::try_from(prompt.protocol).unwrap_or(0))
+    );
+    let detail = format!(
+        "{} · {user} · {} waiting",
+        program_name(prompt),
+        prompt.waiting
+    );
+    (what, detail)
+}
+
+/// Who connects where, on the signal colour, with what weakens what is known about it.
+fn header(prompt: &v1::Prompt, theme: &gpui_component::theme::Theme) -> AnyElement {
+    let (what, detail) = summary(prompt);
     v_flex()
         .gap_1()
-        .child(div().text_lg().child(program_name(prompt)))
-        .child(div().text_color(theme.muted_foreground).child(format!(
-            "{user} → {destination}:{} ({}), {} waiting",
-            prompt.port,
-            protocol(u8::try_from(prompt.protocol).unwrap_or(0)),
-            prompt.waiting
-        )))
+        .px_4()
+        .py_3()
+        .bg(crate::theme::signal())
+        .text_color(crate::theme::on_signal())
+        .child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child(what),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_family(theme.mono_font_family.clone())
+                .child(detail),
+        )
         .when(prompt.exe_writable, |info| {
-            info.child(Tag::warning().child("Its executable is writable by a user other than root"))
+            info.child(Tag::danger().child("Its executable is writable by a user other than root"))
         })
         .when(
             prompt.container.as_ref().is_some_and(|c| c.net_admin),
             |info| {
                 info.child(
-                    Tag::warning()
-                        .child("Its container can change its own network (CAP_NET_ADMIN)"),
+                    Tag::danger().child("Its container can change its own network (CAP_NET_ADMIN)"),
                 )
             },
         )

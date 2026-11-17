@@ -63,7 +63,13 @@ pub fn qr(text: &str, cell: f32) -> AnyElement {
 fn other_nodes(theme: &gpui_component::theme::Theme) -> AnyElement {
     v_flex()
         .gap_2()
-        .child(div().pt_4().text_lg().child("Other nodes"))
+        .child(
+            div()
+                .pt_4()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Other nodes"),
+        )
         .child(div().text_color(theme.muted_foreground).child(
             "This app can manage other nodes too (a server, another machine): pair it with one.",
         ))
@@ -179,7 +185,7 @@ impl Devices {
             .border_1()
             .border_color(theme.border)
             .rounded_md()
-            .child(div().text_lg().child("Pair a device"))
+            .child(div().text_lg().font_weight(gpui::FontWeight::SEMIBOLD).child("Pair a device"))
             .child(div().text_color(theme.muted_foreground).child(
                 "Scan the code with the phone, or paste the link into Add node on the other machine. It \
                  pairs one device, within 10 minutes.",
@@ -230,7 +236,12 @@ impl Render for Devices {
                     .child(
                         h_flex()
                             .gap_3()
-                            .child(div().text_lg().child("Paired devices"))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Paired devices"),
+                            )
                             .child({
                                 let requests = requests.clone();
                                 Button::new("pair-device")

@@ -27,7 +27,7 @@ pub fn section(
         .child(
             h_flex()
                 .gap_2()
-                .child(div().flex_1().text_lg().child("Envelopes"))
+                .child(div().flex_1().text_lg().font_weight(gpui::FontWeight::SEMIBOLD).child("Envelopes"))
                 .child(
                     Button::new("envelope-add")
                         .small()

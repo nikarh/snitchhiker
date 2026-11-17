@@ -272,7 +272,12 @@ impl Render for Alerts {
                         h_flex()
                             .pt_4()
                             .gap_3()
-                            .child(div().text_lg().child("Alert rules"))
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child("Alert rules"),
+                            )
                             .child(div().flex_1())
                             .child(
                                 Button::new("alert-rule-add")

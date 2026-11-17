@@ -184,7 +184,7 @@ impl Live {
                         h_flex()
                             .w(px(70.))
                             .flex_none()
-                            .child(action_tag(row.action)),
+                            .child(action_tag(row.action, cx)),
                     )
                     .child(
                         div()

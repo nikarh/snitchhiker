@@ -51,7 +51,7 @@ pages='
 page events
 sleep 2
 shot events
-click 518 121
+click 485 160
 sleep 2
 shot explain
 key Escape
@@ -64,7 +64,7 @@ shot containers
 page rules
 sleep 2
 shot rules
-click 1165 121
+click 1232 89
 sleep 2
 shot rule-editor
 key Escape

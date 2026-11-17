@@ -4,11 +4,11 @@ use std::sync::mpsc;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Window, div,
+    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
+    div, px,
 };
 use gpui_component::button::Button;
-use gpui_component::sidebar::{Sidebar, SidebarGroup, SidebarMenu, SidebarMenuItem};
 use gpui_component::table::{DataTable, TableEvent, TableState};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
@@ -22,6 +22,7 @@ use crate::views::explain;
 use crate::views::explorer::Explorer;
 use crate::views::history::History;
 use crate::views::prompts::Prompts;
+use crate::views::rail;
 use crate::views::rules::{RulesPage, RulesTable};
 use crate::views::settings::Settings;
 use crate::views::status::Status;
@@ -314,53 +315,41 @@ impl App {
         .detach();
     }
 
-    fn item(
-        &self,
-        page: Page,
-        label: SharedString,
-        icon: impl Into<gpui_component::Icon>,
-        cx: &mut Context<Self>,
-    ) -> SidebarMenuItem {
-        SidebarMenuItem::new(label)
-            .icon(icon)
-            .active(self.page == page)
-            .on_click(cx.listener(move |app, _, _, cx| {
-                app.page = page;
-                if page == Page::Explorer {
-                    app.explorer.read(cx).query();
-                }
-                if page == Page::Containers {
-                    app.explorer
-                        .update(cx, |explorer, _| explorer.by_containers());
-                    app.explorer.read(cx).query();
-                }
-                if page == Page::Connections {
-                    let _ = app.requests.send(Request::Connections);
-                }
-                if page == Page::Settings {
-                    app.settings.read(cx).refresh();
-                }
-                if page == Page::Firewall {
-                    app.system.read(cx).refresh();
-                }
-                if page == Page::Alerts {
-                    app.alerts.read(cx).refresh();
-                }
-                if page == Page::Proposals {
-                    app.proposals.read(cx).refresh();
-                }
-                if page == Page::Devices {
-                    app.devices.read(cx).refresh();
-                }
-                if page == Page::Blocklists {
-                    app.blocklists.read(cx).refresh();
-                }
-                cx.notify();
-            }))
+    /// Shows `page`, asking the node for what it lists afresh.
+    fn go(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.page = page;
+        match page {
+            Page::Explorer => self.explorer.read(cx).query(),
+            Page::Containers => {
+                self.explorer
+                    .update(cx, |explorer, _| explorer.by_containers());
+                self.explorer.read(cx).query();
+            }
+            Page::Connections => {
+                let _ = self.requests.send(Request::Connections);
+            }
+            Page::Settings => self.settings.read(cx).refresh(),
+            Page::Firewall => self.system.read(cx).refresh(),
+            Page::Alerts => self.alerts.read(cx).refresh(),
+            Page::Proposals => self.proposals.read(cx).refresh(),
+            Page::Devices => self.devices.read(cx).refresh(),
+            Page::Blocklists => self.blocklists.read(cx).refresh(),
+            _ => {}
+        }
+        cx.notify();
     }
 }
 
 impl App {
+    /// The name of the page shown, as the rail has it.
+    fn title(&self) -> &'static str {
+        Self::places(0, 0, 0)
+            .into_iter()
+            .flatten()
+            .find(|(page, ..)| *page == self.page)
+            .map_or("", |(_, label, ..)| label)
+    }
+
     /// The page shown.
     fn page(&self) -> AnyElement {
         match self.page {
@@ -376,7 +365,8 @@ impl App {
                     .size_full()
                     .child(
                         h_flex()
-                            .p_2()
+                            .px_4()
+                            .py_2()
                             .gap_2()
                             .child(
                                 Button::new("refresh-connections")
@@ -414,110 +404,217 @@ impl App {
 }
 
 impl App {
-    /// The pages of this node, with counts of what waits.
-    fn sidebar(&self, cx: &mut Context<Self>) -> Sidebar<SidebarGroup<SidebarMenu>> {
-        let waiting = self.model.read(cx).prompts.len();
-        let open_alerts = self.model.read(cx).open_alerts;
-        let alerts_label: SharedString = if open_alerts == 0 {
-            "Alerts".into()
-        } else {
-            format!("Alerts ({open_alerts})").into()
-        };
-        let proposing = self.model.read(cx).pending_proposals();
-        let proposals_label: SharedString = if proposing == 0 {
-            "Proposals".into()
-        } else {
-            format!("Proposals ({proposing})").into()
-        };
-        let prompts_label: SharedString = if waiting == 0 {
-            "Prompts".into()
-        } else {
-            format!("Prompts ({waiting})").into()
-        };
-        let node = self
-            .model
-            .read(cx)
+    /// The pages, in groups, with how many things wait on each.
+    fn places(
+        waiting: usize,
+        proposing: usize,
+        open_alerts: usize,
+    ) -> [Vec<(Page, &'static str, gpui_component::Icon, usize)>; 4] {
+        [
+            vec![
+                (Page::Prompts, "Prompts", IconName::Bell.into(), waiting),
+                (
+                    Page::Proposals,
+                    "Proposals",
+                    gpui_kit_assets::IconName::Bot.into(),
+                    proposing,
+                ),
+                (
+                    Page::Alerts,
+                    "Alerts",
+                    gpui_kit_assets::IconName::TriangleAlert.into(),
+                    open_alerts,
+                ),
+            ],
+            vec![
+                (
+                    Page::Live,
+                    "Live",
+                    gpui_kit_assets::IconName::Activity.into(),
+                    0,
+                ),
+                (Page::Events, "Events", IconName::LayoutDashboard.into(), 0),
+                (Page::Explorer, "Explorer", IconName::ChartPie.into(), 0),
+                (
+                    Page::Containers,
+                    "Containers & VMs",
+                    gpui_kit_assets::IconName::Container.into(),
+                    0,
+                ),
+                (Page::Connections, "Connections", IconName::Globe.into(), 0),
+            ],
+            vec![
+                (Page::Rules, "Rules", IconName::BookOpen.into(), 0),
+                (Page::History, "History", IconName::Undo.into(), 0),
+                (
+                    Page::Firewall,
+                    "Firewall",
+                    gpui_kit_assets::IconName::Shield.into(),
+                    0,
+                ),
+                (Page::Blocklists, "Blocklists", IconName::CircleX.into(), 0),
+            ],
+            vec![
+                (Page::Status, "Status", IconName::Info.into(), 0),
+                (
+                    Page::Devices,
+                    "Devices",
+                    gpui_kit_assets::IconName::Smartphone.into(),
+                    0,
+                ),
+                (Page::Settings, "Settings", IconName::Settings.into(), 0),
+            ],
+        ]
+    }
+
+    /// The pages of this node, in the order of the work: what waits for an answer, what happens, what decides, and
+    /// the node itself; with counts of what waits.
+    fn rail(&self, cx: &mut Context<Self>) -> AnyElement {
+        let model = self.model.read(cx);
+        let waiting = model.prompts.len();
+        let open_alerts = usize::try_from(model.open_alerts).unwrap_or(usize::MAX);
+        let proposing = model.pending_proposals();
+        let node = model
             .node
             .as_ref()
             .map_or_else(|| "Snitchhiker".to_owned(), |n| n.node_name.clone());
-        Sidebar::new("pages")
-            .header(div().p_2().text_lg().child(node))
+        let state = match (&model.disconnected, &model.status) {
+            (Some(_), _) => "not connected".to_owned(),
+            (None, Some(status)) => status
+                .mode()
+                .as_str_name()
+                .trim_start_matches("MODE_")
+                .to_lowercase(),
+            (None, None) => "connecting…".to_owned(),
+        };
+        let groups = Self::places(waiting, proposing, open_alerts);
+        let theme = cx.theme().clone();
+        let mut column = v_flex()
+            .id("pages")
+            .w(px(rail::WIDTH))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .pb_3()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.sidebar_border)
             .child(
-                SidebarGroup::new("Node").child(
-                    SidebarMenu::new()
-                        .child(self.item(Page::Prompts, prompts_label, IconName::Bell, cx))
-                        .child(self.item(
-                            Page::Proposals,
-                            proposals_label,
-                            gpui_kit_assets::IconName::Bot,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Alerts,
-                            alerts_label,
-                            gpui_kit_assets::IconName::TriangleAlert,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Live,
-                            "Live".into(),
-                            gpui_kit_assets::IconName::Activity,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Events,
-                            "Events".into(),
-                            IconName::LayoutDashboard,
-                            cx,
-                        ))
-                        .child(self.item(Page::Explorer, "Explorer".into(), IconName::ChartPie, cx))
-                        .child(self.item(
-                            Page::Containers,
-                            "Containers & VMs".into(),
-                            IconName::LayoutDashboard,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Connections,
-                            "Connections".into(),
-                            IconName::Globe,
-                            cx,
-                        ))
-                        .child(self.item(Page::Rules, "Rules".into(), IconName::BookOpen, cx))
-                        .child(self.item(Page::History, "History".into(), IconName::Undo, cx))
-                        .child(self.item(Page::Status, "Status".into(), IconName::Info, cx))
-                        .child(self.item(
-                            Page::Firewall,
-                            "Firewall".into(),
-                            gpui_kit_assets::IconName::Shield,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Devices,
-                            "Devices".into(),
-                            gpui_kit_assets::IconName::Smartphone,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Blocklists,
-                            "Blocklists".into(),
-                            IconName::CircleX,
-                            cx,
-                        ))
-                        .child(self.item(
-                            Page::Settings,
-                            "Settings".into(),
-                            IconName::Settings,
-                            cx,
-                        )),
-                ),
-            )
+                v_flex()
+                    .flex_none()
+                    .h(px(64.))
+                    .justify_center()
+                    .px_4()
+                    .mb_2()
+                    .border_b_1()
+                    .border_color(theme.sidebar_accent)
+                    .child(
+                        div()
+                            .text_color(gpui::white())
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .text_base()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(node),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.sidebar_foreground)
+                            .child(state),
+                    ),
+            );
+        for (index, group) in groups.into_iter().enumerate() {
+            if index > 0 {
+                column = column.child(rail::gap());
+            }
+            for (page, label, icon, count) in group {
+                column = column.child(
+                    rail::item(
+                        SharedString::from(format!("page-{label}")),
+                        Some(icon),
+                        label,
+                        self.page == page,
+                        count,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |app, _, _, cx| app.go(page, cx))),
+                );
+            }
+        }
+        column.into_any_element()
+    }
+
+    /// The first prompt waiting, on every page but the prompts': it goes there.
+    fn sign(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let prompts = &self.model.read(cx).prompts;
+        let prompt = prompts.values().next()?;
+        if self.page == Page::Prompts {
+            return None;
+        }
+        let (what, detail) = crate::views::prompts::summary(prompt);
+        let more = match prompts.len() {
+            1 => String::new(),
+            n => format!(" · {} more waiting", n - 1),
+        };
+        let mono = cx.theme().mono_font_family.clone();
+        Some(
+            h_flex()
+                .id("prompt-sign")
+                .flex_none()
+                .gap_4()
+                .px_5()
+                .py_2p5()
+                .bg(crate::theme::signal())
+                .text_color(crate::theme::on_signal())
+                .cursor_pointer()
+                .on_click(cx.listener(|app, _, _, cx| app.go(Page::Prompts, cx)))
+                .child(
+                    gpui_component::Icon::new(gpui_kit_assets::IconName::ArrowRight)
+                        .text_color(crate::theme::on_signal()),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .child(what),
+                        )
+                        .child(
+                            div()
+                                .text_xs()
+                                .font_family(mono)
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .child(format!("{detail}{more}")),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .px_3()
+                        .py_1()
+                        .rounded(cx.theme().radius)
+                        .bg(crate::theme::on_signal())
+                        .text_color(gpui::white())
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("Answer"),
+                )
+                .into_any_element(),
+        )
     }
 }
 
 impl Render for App {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let sidebar = self.sidebar(cx);
+        let rail = self.rail(cx);
+        let sign = self.sign(cx);
         let page = self.page();
         // A user outside the node's admin groups sees it and changes nothing.
         let viewer = self
@@ -530,10 +627,12 @@ impl Render for App {
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
-            .child(sidebar)
+            .child(rail)
             .child(
                 v_flex()
                     .flex_1()
+                    // As narrow as the window leaves it: what is wider wraps or scrolls, never pushes out.
+                    .min_w_0()
                     .h_full()
                     .overflow_hidden()
                     .children(self.warnings.iter().map(|warning| {
@@ -544,6 +643,18 @@ impl Render for App {
                             .text_color(cx.theme().warning_foreground)
                             .child(warning.text())
                     }))
+                    .children(sign)
+                    .child(
+                        h_flex()
+                            .flex_none()
+                            .h(px(44.))
+                            .px_4()
+                            .border_b_1()
+                            .border_color(cx.theme().border)
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(self.title()),
+                    )
                     .when(viewer, |this| {
                         this.child(
                             div()

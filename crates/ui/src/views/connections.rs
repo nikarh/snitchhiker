@@ -154,10 +154,12 @@ impl TableDelegate for ConnectionsTable {
         else {
             return div().into_any_element();
         };
+        let mono = cx.theme().mono_font_family.clone();
         let text = |text: String| {
             div()
                 .overflow_hidden()
                 .text_ellipsis()
+                .font_family(mono.clone())
                 .child(clipped(
                     SharedString::from(format!("connection-{row_ix}-{col_ix}")),
                     text,

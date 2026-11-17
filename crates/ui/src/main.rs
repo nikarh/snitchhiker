@@ -14,6 +14,7 @@ mod prefs;
 mod remote;
 mod session;
 mod shell;
+mod theme;
 mod tray;
 mod userfs;
 mod views;
@@ -52,6 +53,7 @@ fn main() -> ExitCode {
         .with_assets(gpui_kit_assets::AllAssets)
         .run(move |cx| {
             gpui_component::init(cx);
+            theme::install(cx);
             let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
             let options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

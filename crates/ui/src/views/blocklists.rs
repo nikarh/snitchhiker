@@ -144,7 +144,7 @@ impl Render for Blocklists {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(div().flex_1().text_xl().child("Blocklists"))
+                    .child(div().flex_1())
                     .child(
                         Button::new("list-add")
                             .small()

@@ -529,8 +529,13 @@ impl Render for Proposals {
             })
             .children(cards)
             .when(!answered.is_empty(), |page| {
-                page.child(div().text_lg().child("Answered"))
-                    .children(history)
+                page.child(
+                    div()
+                        .text_lg()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .child("Answered"),
+                )
+                .children(history)
             })
             .child(crate::views::envelopes::section(
                 self.model.read(cx).envelopes.as_ref(),

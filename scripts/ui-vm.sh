@@ -89,13 +89,15 @@ sleep 4
 rm -rf /tmp/ui-shots && install -d -m 755 /tmp/ui-shots
 session() { runuser -u mallory -- env XDG_RUNTIME_DIR=/run/user/\$uid WAYLAND_DISPLAY=wayland-1 "\$@"; }
 click() { session /tmp/snitchhiker-e2e-ui --click "\$1" "\$2"; sleep 1; }
-# A page of the sidebar, by name: its entries are 36 pixels apart from Prompts down.
+# A page of the rail, by name: its entries are 30 pixels apart from Prompts down (at 109, under the node's name), with
+# 12 more between the groups.
 page() {
-  local i=0 name
-  for name in prompts proposals alerts live events explorer containers connections rules history status firewall \
-    devices blocklists settings; do
-    if [ "\$name" = "\$1" ]; then click 66 \$((139 + 36 * i)); return; fi
-    i=\$((i + 1))
+  local y=109 name
+  for name in prompts proposals alerts - live events explorer containers connections - rules history firewall \
+    blocklists - status devices settings; do
+    if [ "\$name" = - ]; then y=\$((y + 12)); continue; fi
+    if [ "\$name" = "\$1" ]; then click 100 \$y; return; fi
+    y=\$((y + 30))
   done
   echo "no page \$1" >&2
   return 1

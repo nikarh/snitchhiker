@@ -4,6 +4,7 @@
 use std::sync::mpsc;
 
 use chrono::{Local, TimeZone as _};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
     Styled as _, Window, div,
@@ -13,7 +14,6 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::table::DataTable;
 use gpui_component::table::{Column, TableDelegate, TableState};
-use gpui_component::tag::Tag;
 use gpui_component::v_flex;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex};
 use snitchhiker_core::query::{self, EventFilter};
@@ -26,7 +26,7 @@ use crate::views::explain;
 use crate::views::text::clipped;
 
 const COLUMNS: [(&str, &str, f32); 9] = [
-    ("time", "Time", 165.),
+    ("time", "Time", 176.),
     ("action", "Action", 76.),
     ("why", "", 44.),
     ("program", "Program", 240.),
@@ -263,14 +263,17 @@ impl Render for EventsPage {
             .size_full()
             .child(
                 v_flex()
-                    .p_2()
+                    .px_4()
+                    .py_2()
                     .gap_1()
                     .child(
                         h_flex()
+                            .flex_wrap()
                             .gap_2()
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w(gpui::px(280.))
                                     .child(Input::new(&self.input).cleanable(true)),
                             )
                             .child(self.columns_menu())
@@ -341,15 +344,31 @@ pub fn protocol(number: u8) -> SharedString {
     }
 }
 
-/// An action's tag.
+/// An action, as a mark and a word in its colour: filled for allow and deny, hollow for reject (a deny that
+/// answers the program).
 #[must_use]
-pub fn action_tag(action: u8) -> Tag {
-    match v1::Action::try_from(i32::from(action)) {
-        Ok(v1::Action::Allow) => Tag::success().child("allow"),
-        Ok(v1::Action::Deny) => Tag::danger().child("deny"),
-        Ok(v1::Action::Reject) => Tag::warning().child("reject"),
-        _ => Tag::secondary().child("?"),
-    }
+pub fn action_tag(action: u8, cx: &App) -> gpui::Div {
+    let theme = cx.theme();
+    let (word, color, filled) = match v1::Action::try_from(i32::from(action)) {
+        Ok(v1::Action::Allow) => ("allow", theme.success, true),
+        Ok(v1::Action::Deny) => ("deny", theme.danger, true),
+        Ok(v1::Action::Reject) => ("reject", theme.danger, false),
+        _ => ("?", theme.muted_foreground, false),
+    };
+    h_flex()
+        .gap_1p5()
+        .text_color(color)
+        .font_weight(gpui::FontWeight::SEMIBOLD)
+        .child(
+            div()
+                .flex_none()
+                .size(gpui::px(8.))
+                .rounded(gpui::px(2.))
+                .border_1()
+                .border_color(color)
+                .when(filled, |mark| mark.bg(color)),
+        )
+        .child(word)
 }
 
 fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
@@ -424,7 +443,7 @@ impl TableDelegate for EventsTable {
             return div().into_any_element();
         };
         if col_ix == 1 {
-            return action_tag(row.action).into_any_element();
+            return action_tag(row.action, cx).into_any_element();
         }
         if col_ix == 2 {
             let (model, requests, seq) = (self.model.clone(), self.requests.clone(), row.seq);
@@ -441,7 +460,14 @@ impl TableDelegate for EventsTable {
         // The columns of `cell`, which doesn't have the info button's.
         let col_ix = if col_ix > 2 { col_ix - 1 } else { col_ix };
         let text = cell(row, col_ix, model);
-        let line = h_flex().w_full().overflow_hidden().text_ellipsis();
+        let line = h_flex()
+            .w_full()
+            .overflow_hidden()
+            .text_ellipsis()
+            // Times, paths, addresses and counts in the monospace face; the user's name not.
+            .when(col_ix != 5, |line| {
+                line.font_family(cx.theme().mono_font_family.clone())
+            });
         // The byte counts line up on the right, as their headers do.
         if col_ix >= 6 {
             line.justify_end()

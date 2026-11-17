@@ -13,6 +13,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
+use gpui_component::switch::Switch;
 use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex};
@@ -25,10 +26,10 @@ use crate::views::text::clipped;
 
 const COLUMNS: [(&str, &str, f32); 6] = [
     ("select", "", 36.),
-    ("on", "On", 60.),
+    ("on", "On", 56.),
     ("action", "Action", 72.),
     ("name", "Folder / name", 230.),
-    ("conditions", "Conditions", 250.),
+    ("conditions", "Conditions", 300.),
     ("actions", "", 130.),
 ];
 
@@ -367,6 +368,37 @@ impl RulesTable {
     }
 }
 
+impl RulesTable {
+    /// A rule's Edit and Delete.
+    fn actions_cell(&self, rule: &v1::Rule) -> gpui::AnyElement {
+        let id = rule.id;
+        let requests = self.requests.clone();
+        let editing = (self.model.clone(), self.requests.clone(), rule.clone());
+        h_flex()
+            .gap_1()
+            .child(
+                Button::new(SharedString::from(format!("edit-{id}")))
+                    .small()
+                    .ghost()
+                    .label("Edit")
+                    .on_click(move |_, window, cx| {
+                        let (model, requests, rule) = editing.clone();
+                        crate::views::editor::open(model, requests, Some(rule), window, cx);
+                    }),
+            )
+            .child(
+                Button::new(SharedString::from(format!("delete-{id}")))
+                    .small()
+                    .ghost()
+                    .label("Delete")
+                    .on_click(move |_, _, _| {
+                        let _ = requests.send(Request::DeleteRule { id });
+                    }),
+            )
+            .into_any_element()
+    }
+}
+
 impl TableDelegate for RulesTable {
     fn columns_count(&self, _: &App) -> usize {
         COLUMNS.len()
@@ -490,10 +522,14 @@ impl TableDelegate for RulesTable {
             1 => {
                 let enabled = rule.enabled;
                 let requests = self.requests.clone();
-                Button::new(SharedString::from(format!("enable-{id}")))
-                    .small()
-                    .label(if enabled { "On" } else { "Off" })
-                    .when(enabled, ButtonVariants::primary)
+                Switch::new(SharedString::from(format!("enable-{id}")))
+                    .checked(enabled)
+                    .color(cx.theme().success)
+                    .tooltip(if enabled {
+                        "On: switch it off"
+                    } else {
+                        "Off: switch it on"
+                    })
                     .on_click(move |_, _, _| {
                         let _ = requests.send(Request::SetRuleEnabled {
                             id,
@@ -502,7 +538,7 @@ impl TableDelegate for RulesTable {
                     })
                     .into_any_element()
             }
-            2 => crate::views::events::action_tag(u8::try_from(rule.action).unwrap_or(0))
+            2 => crate::views::events::action_tag(u8::try_from(rule.action).unwrap_or(0), cx)
                 .into_any_element(),
             // The tier, when it isn't the usual one.
             3 if !rule.locked => self.name_cell(rule, &list),
@@ -521,38 +557,14 @@ impl TableDelegate for RulesTable {
             4 => div()
                 .overflow_hidden()
                 .text_ellipsis()
+                .font_family(cx.theme().mono_font_family.clone())
                 .text_color(cx.theme().muted_foreground)
                 .child(clipped(
                     SharedString::from(format!("rule-conditions-{id}")),
                     conditions(rule.conditions.as_ref()),
                 ))
                 .into_any_element(),
-            5 if !rule.locked => {
-                let requests = self.requests.clone();
-                let editing = (self.model.clone(), self.requests.clone(), rule.clone());
-                h_flex()
-                    .gap_1()
-                    .child(
-                        Button::new(SharedString::from(format!("edit-{id}")))
-                            .small()
-                            .ghost()
-                            .label("Edit")
-                            .on_click(move |_, window, cx| {
-                                let (model, requests, rule) = editing.clone();
-                                crate::views::editor::open(model, requests, Some(rule), window, cx);
-                            }),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("delete-{id}")))
-                            .small()
-                            .ghost()
-                            .label("Delete")
-                            .on_click(move |_, _, _| {
-                                let _ = requests.send(Request::DeleteRule { id });
-                            }),
-                    )
-                    .into_any_element()
-            }
+            5 if !rule.locked => self.actions_cell(rule),
             _ => div().into_any_element(),
         }
     }
@@ -786,10 +798,10 @@ impl RulesPage {
                 let deleting = folder.id;
                 let requests_delete = requests.clone();
                 row.child(
-                    Button::new(SharedString::from(format!("folder-on-{key}")))
+                    Switch::new(SharedString::from(format!("folder-on-{key}")))
                         .xsmall()
-                        .ghost()
-                        .label(if folder.enabled { "On" } else { "Off" })
+                        .checked(folder.enabled)
+                        .color(theme.success)
                         .tooltip("Switch the folder, and everything in it, off or on")
                         .on_click(move |_, _, _| {
                             let _ = requests.send(Request::UpdateFolder(toggled.clone()));
@@ -1074,11 +1086,15 @@ impl Render for RulesPage {
             .child(
                 v_flex()
                     .flex_1()
+                    .min_w_0()
                     .h_full()
                     .overflow_hidden()
                     .child(
                         h_flex()
-                            .p_2()
+                            .w_full()
+                            .flex_wrap()
+                            .px_4()
+                            .py_2()
                             .gap_2()
                             .child(
                                 Button::new("select-all")
@@ -1093,7 +1109,12 @@ impl Render for RulesPage {
                                         });
                                     }),
                             )
-                            .child(div().flex_1().child(Input::new(&self.search).cleanable(true)))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(280.))
+                                    .child(Input::new(&self.search).cleanable(true)),
+                            )
                             .child(self.import_button())
                             .child({
                                 let model = self.model.clone();
@@ -1136,10 +1157,10 @@ impl Render for RulesPage {
                                     }),
                             ),
                     )
-                    .child(div().px_2().child(hints))
+                    .child(div().px_4().child(hints))
                     .children(self.error.clone().map(|error| {
                         div()
-                            .px_2()
+                            .px_4()
                             .text_sm()
                             .text_color(cx.theme().danger)
                             .child(error)

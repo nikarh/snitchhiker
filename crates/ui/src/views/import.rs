@@ -173,7 +173,12 @@ impl Render for Preview {
         }
         let mut page = v_flex().gap_3();
         // Rules.
-        page = page.child(div().text_lg().child("Rules"));
+        page = page.child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Rules"),
+        );
         match &self.rules {
             Err(e) => page = page.child(div().text_color(muted).child(format!("Not read: {e}"))),
             Ok((_, names)) => {
@@ -210,7 +215,13 @@ impl Render for Preview {
             }
         }
         // The system firewall.
-        page = page.child(div().pt_2().text_lg().child("System firewall"));
+        page = page.child(
+            div()
+                .pt_2()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("System firewall"),
+        );
         if let Some(e) = &self.firewall_error {
             page = page.child(div().text_color(muted).child(format!("Not read: {e}")));
         }

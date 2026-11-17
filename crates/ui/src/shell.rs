@@ -4,7 +4,8 @@
 
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Window, div, prelude::FluentBuilder as _,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::input::{Input, InputState};
@@ -230,9 +231,15 @@ impl Shell {
         let theme = cx.theme().clone();
         v_flex()
             .size_full()
+            .max_w(px(640.))
             .gap_3()
             .p_6()
-            .child(div().text_lg().child("Add a node"))
+            .child(
+                div()
+                    .text_xl()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child("Add a node"),
+            )
             .child(div().text_color(theme.muted_foreground).child(
                 "On the other node, run `sudo snitchhiker pair` (or Devices → Pair a device in its app), and paste \
                  the link it shows, or type its code.",
@@ -269,56 +276,64 @@ impl Render for Shell {
         let theme = cx.theme().clone();
         // With this machine's node alone there is nothing to choose: no column (Add node is on the Devices page).
         let column = v_flex()
-            .w_40()
+            .w(px(168.))
+            .flex_none()
             .h_full()
-            .p_2()
-            .gap_1()
+            .pt_4()
+            .gap_0p5()
             .border_r_1()
-            .border_color(theme.border)
+            .border_color(theme.sidebar_accent)
             .bg(theme.sidebar)
             .child(
                 div()
-                    .px_2()
-                    .pb_1()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
+                    .px_4()
+                    .pb_2()
+                    .text_xs()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(theme.sidebar_foreground)
                     .child("Nodes"),
             )
             .children(self.nodes.iter().enumerate().map(|(index, node)| {
                 let selected = index == self.current && self.adding.is_none();
-                let button = Button::new(SharedString::from(format!("node-{index}")))
-                    .small()
-                    .label(node.name.clone())
-                    .on_click(cx.listener(move |shell, _, _, cx| {
-                        shell.current = index;
-                        shell.adding = None;
-                        cx.notify();
-                    }));
-                h_flex()
-                    .gap_1()
-                    .child(if selected {
-                        button.primary()
+                let waiting = node.app.read(cx).waiting(cx);
+                crate::views::rail::item(
+                    SharedString::from(format!("node-{index}")),
+                    Some(gpui_component::Icon::new(if node.remote.is_some() {
+                        gpui_kit_assets::IconName::Server
                     } else {
-                        button.ghost()
-                    })
-                    .when(node.remote.is_some(), |row| {
-                        row.child(
-                            Button::new(SharedString::from(format!("forget-node-{index}")))
-                                .xsmall()
-                                .ghost()
-                                .label("×")
-                                .on_click(
-                                    cx.listener(move |shell, _, _, cx| shell.forget(index, cx)),
-                                ),
-                        )
-                    })
+                        gpui_kit_assets::IconName::Monitor
+                    })),
+                    node.name.clone(),
+                    selected,
+                    waiting,
+                    cx,
+                )
+                .on_click(cx.listener(move |shell, _, _, cx| {
+                    shell.current = index;
+                    shell.adding = None;
+                    cx.notify();
+                }))
+                .when(node.remote.is_some() && selected, |row| {
+                    row.child(
+                        Button::new(SharedString::from(format!("forget-node-{index}")))
+                            .xsmall()
+                            .ghost()
+                            .icon(gpui_kit_assets::IconName::X)
+                            .tooltip("Forget this node")
+                            .on_click(cx.listener(move |shell, _, _, cx| shell.forget(index, cx))),
+                    )
+                })
             }))
             .child(
-                Button::new("add-node")
-                    .small()
-                    .ghost()
-                    .label("Add node")
-                    .on_click(cx.listener(|shell, _, window, cx| shell.start_adding(window, cx))),
+                crate::views::rail::item(
+                    "add-node",
+                    Some(gpui_component::Icon::new(gpui_kit_assets::IconName::Plus)),
+                    "Add node",
+                    self.adding.is_some(),
+                    0,
+                    cx,
+                )
+                .on_click(cx.listener(|shell, _, window, cx| shell.start_adding(window, cx))),
             );
         let main = if self.adding.is_some() {
             self.adding_form(cx)
@@ -333,6 +348,6 @@ impl Render for Shell {
             .bg(theme.background)
             .text_color(theme.foreground)
             .when(self.nodes.len() > 1, |shell| shell.child(column))
-            .child(div().flex_1().h_full().child(main))
+            .child(div().flex_1().min_w_0().h_full().child(main))
     }
 }
