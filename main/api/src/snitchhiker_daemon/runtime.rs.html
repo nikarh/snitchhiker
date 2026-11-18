@@ -1348,698 +1348,714 @@
 <a href=#1348 id=1348 data-nosnippet>1348</a>    pid: u32,
 <a href=#1349 id=1349 data-nosnippet>1349</a>    cookie: <span class="prelude-ty">Option</span>&lt;u64&gt;,
 <a href=#1350 id=1350 data-nosnippet>1350</a>    container: <span class="prelude-ty">Option</span>&lt;Arc&lt;str&gt;&gt;,
-<a href=#1351 id=1351 data-nosnippet>1351</a>) -&gt; Event {
-<a href=#1352 id=1352 data-nosnippet>1352</a>    Event {
-<a href=#1353 id=1353 data-nosnippet>1353</a>        time_ms: facts.now_ms,
-<a href=#1354 id=1354 data-nosnippet>1354</a>        exe,
-<a href=#1355 id=1355 data-nosnippet>1355</a>        host: facts.hosts.first().cloned(),
-<a href=#1356 id=1356 data-nosnippet>1356</a>        uid: facts.uid,
-<a href=#1357 id=1357 data-nosnippet>1357</a>        pid,
-<a href=#1358 id=1358 data-nosnippet>1358</a>        protocol: facts.protocol,
-<a href=#1359 id=1359 data-nosnippet>1359</a>        address: facts.address,
-<a href=#1360 id=1360 data-nosnippet>1360</a>        port: facts.port,
-<a href=#1361 id=1361 data-nosnippet>1361</a>        context: context_code(facts.context),
-<a href=#1362 id=1362 data-nosnippet>1362</a>        action: Action::Deny,
-<a href=#1363 id=1363 data-nosnippet>1363</a>        source: Source::Policy,
-<a href=#1364 id=1364 data-nosnippet>1364</a>        rule: <span class="prelude-val">None</span>,
-<a href=#1365 id=1365 data-nosnippet>1365</a>        cookie,
-<a href=#1366 id=1366 data-nosnippet>1366</a>        container,
-<a href=#1367 id=1367 data-nosnippet>1367</a>    }
-<a href=#1368 id=1368 data-nosnippet>1368</a>}
-<a href=#1369 id=1369 data-nosnippet>1369</a>
-<a href=#1370 id=1370 data-nosnippet>1370</a><span class="doccomment">/// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
-<a href=#1371 id=1371 data-nosnippet>1371</a>/// that may answer listens for prompts (a viewer only sees them), or a device can be woken to.
-<a href=#1372 id=1372 data-nosnippet>1372</a></span><span class="kw">pub fn </span>asks(shared: <span class="kw-2">&amp;</span>Shared) -&gt; bool {
-<a href=#1373 id=1373 data-nosnippet>1373</a>    <span class="kw">let </span>policy = shared.policy.load();
-<a href=#1374 id=1374 data-nosnippet>1374</a>    policy.no_match == Policy::Ask
-<a href=#1375 id=1375 data-nosnippet>1375</a>        &amp;&amp; policy.mode == Mode::Enforce
-<a href=#1376 id=1376 data-nosnippet>1376</a>        &amp;&amp; (shared.hub.has_answerers(v1::Topic::Prompts) || shared.router.can_wake_someone())
-<a href=#1377 id=1377 data-nosnippet>1377</a>}
-<a href=#1378 id=1378 data-nosnippet>1378</a>
-<a href=#1379 id=1379 data-nosnippet>1379</a><span class="doccomment">/// What a policy does without asking (`ask` falls back to `no_client`).
-<a href=#1380 id=1380 data-nosnippet>1380</a></span><span class="attr">#[must_use]
-<a href=#1381 id=1381 data-nosnippet>1381</a></span><span class="kw">pub fn </span>policy_action(policy: Policy, no_client: Action) -&gt; Action {
-<a href=#1382 id=1382 data-nosnippet>1382</a>    <span class="kw">match </span>policy {
-<a href=#1383 id=1383 data-nosnippet>1383</a>        Policy::Allow =&gt; Action::Allow,
-<a href=#1384 id=1384 data-nosnippet>1384</a>        Policy::Deny =&gt; Action::Deny,
-<a href=#1385 id=1385 data-nosnippet>1385</a>        Policy::Reject =&gt; Action::Reject,
-<a href=#1386 id=1386 data-nosnippet>1386</a>        Policy::Ask =&gt; no_client,
-<a href=#1387 id=1387 data-nosnippet>1387</a>    }
-<a href=#1388 id=1388 data-nosnippet>1388</a>}
-<a href=#1389 id=1389 data-nosnippet>1389</a>
-<a href=#1390 id=1390 data-nosnippet>1390</a><span class="doccomment">/// The verdict for one packet (none: it is held for a prompt), recording what happened, and the socket to close for a
-<a href=#1391 id=1391 data-nosnippet>1391</a>/// rejected connection.
-<a href=#1392 id=1392 data-nosnippet>1392</a>/// The context a connection comes from: the process's own (its cgroup names its container), or, for a rootless
-<a href=#1393 id=1393 data-nosnippet>1393</a>/// container's user-mode network helper, the container it connects for (`true`: the program in it is unknown).
-<a href=#1394 id=1394 data-nosnippet>1394</a></span><span class="kw">fn </span>context_of(
-<a href=#1395 id=1395 data-nosnippet>1395</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1396 id=1396 data-nosnippet>1396</a>    owner: <span class="prelude-ty">Option</span>&lt;snitchhiker_ebpf::FlowOwner&gt;,
-<a href=#1397 id=1397 data-nosnippet>1397</a>    process: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::process::ProcessInfo&gt;,
-<a href=#1398 id=1398 data-nosnippet>1398</a>) -&gt; (ContextKind, <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">crate</span>::contexts::Identified&gt;&gt;, bool) {
-<a href=#1399 id=1399 data-nosnippet>1399</a>    <span class="kw">let </span>(<span class="prelude-val">Some</span>(owner), <span class="prelude-val">Some</span>(process)) = (owner, process) <span class="kw">else </span>{
-<a href=#1400 id=1400 data-nosnippet>1400</a>        <span class="kw">return </span>(ContextKind::Host, <span class="prelude-val">None</span>, <span class="bool-val">false</span>);
-<a href=#1401 id=1401 data-nosnippet>1401</a>    };
-<a href=#1402 id=1402 data-nosnippet>1402</a>    <span class="comment">// A helper makes its connections from the host's network namespace (rootless, it runs in the runtime's user
-<a href=#1403 id=1403 data-nosnippet>1403</a>    // namespace): a program of that name inside a container is no helper.
-<a href=#1404 id=1404 data-nosnippet>1404</a>    </span><span class="kw">if </span><span class="kw">crate</span>::contexts::is_network_helper(<span class="kw-2">&amp;</span>process.exe)
-<a href=#1405 id=1405 data-nosnippet>1405</a>        &amp;&amp; std::fs::metadata(<span class="macro">format!</span>(<span class="string">"/proc/{}/ns/net"</span>, owner.pid))
-<a href=#1406 id=1406 data-nosnippet>1406</a>            .is_ok_and(|m| u32::try_from(m.ino()).ok() == <span class="prelude-val">Some</span>(shared.netns))
-<a href=#1407 id=1407 data-nosnippet>1407</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(served) =
-<a href=#1408 id=1408 data-nosnippet>1408</a>            shared
-<a href=#1409 id=1409 data-nosnippet>1409</a>                .contexts
-<a href=#1410 id=1410 data-nosnippet>1410</a>                .served_by(owner.pid, owner.start_boottime, <span class="kw-2">&amp;</span>process.exe)
-<a href=#1411 id=1411 data-nosnippet>1411</a>    {
-<a href=#1412 id=1412 data-nosnippet>1412</a>        <span class="kw">return </span>(ContextKind::Container, <span class="prelude-val">Some</span>(served), <span class="bool-val">true</span>);
-<a href=#1413 id=1413 data-nosnippet>1413</a>    }
-<a href=#1414 id=1414 data-nosnippet>1414</a>    <span class="kw">let </span>container = (process.context == ContextKind::Container)
-<a href=#1415 id=1415 data-nosnippet>1415</a>        .then(|| shared.contexts.container(owner.pid, owner.cgroup))
-<a href=#1416 id=1416 data-nosnippet>1416</a>        .flatten();
-<a href=#1417 id=1417 data-nosnippet>1417</a>    (process.context, container, <span class="bool-val">false</span>)
-<a href=#1418 id=1418 data-nosnippet>1418</a>}
-<a href=#1419 id=1419 data-nosnippet>1419</a>
-<a href=#1420 id=1420 data-nosnippet>1420</a><span class="doccomment">/// The netfilter hook of forwarded packets.
-<a href=#1421 id=1421 data-nosnippet>1421</a></span><span class="kw">const </span>NF_INET_FORWARD: u8 = <span class="number">2</span>;
-<a href=#1422 id=1422 data-nosnippet>1422</a><span class="doccomment">/// `NF_INET_LOCAL_OUT`: the netfilter hook of packets this host sends.
-<a href=#1423 id=1423 data-nosnippet>1423</a></span><span class="kw">const </span>NF_INET_LOCAL_OUT: u8 = <span class="number">3</span>;
-<a href=#1424 id=1424 data-nosnippet>1424</a>
-<a href=#1425 id=1425 data-nosnippet>1425</a><span class="doccomment">/// The owner of a forwarded packet's flow, as its sender's namespace recorded it (see [`crate::forward`]).
-<a href=#1426 id=1426 data-nosnippet>1426</a></span><span class="kw">fn </span>forwarded_owner(
-<a href=#1427 id=1427 data-nosnippet>1427</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1428 id=1428 data-nosnippet>1428</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
-<a href=#1429 id=1429 data-nosnippet>1429</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1430 id=1430 data-nosnippet>1430</a>    key: <span class="kw-2">&amp;</span>FlowKey,
-<a href=#1431 id=1431 data-nosnippet>1431</a>) -&gt; Owner {
-<a href=#1432 id=1432 data-nosnippet>1432</a>    <span class="kw">let </span>(<span class="prelude-val">Some</span>(bridge), <span class="prelude-val">Some</span>(mac)) = (queued.in_interface, queued.source_mac) <span class="kw">else </span>{
-<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="macro">debug!</span>(in_interface = <span class="question-mark">?</span>queued.in_interface, mac = <span class="question-mark">?</span>queued.source_mac, <span class="string">"a forwarded packet without its sender's link"</span>);
-<a href=#1434 id=1434 data-nosnippet>1434</a>        <span class="kw">return </span>Owner::Unknown;
-<a href=#1435 id=1435 data-nosnippet>1435</a>    };
-<a href=#1436 id=1436 data-nosnippet>1436</a>    <span class="kw">for </span>fresh <span class="kw">in </span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>] {
-<a href=#1437 id=1437 data-nosnippet>1437</a>        <span class="kw">let </span>sender = senders.sender(bridge, mac, fresh);
-<a href=#1438 id=1438 data-nosnippet>1438</a>        <span class="macro">debug!</span>(bridge, <span class="question-mark">?</span>mac, <span class="question-mark">?</span>sender, fresh, <span class="string">"a forwarded packet's sender"</span>);
-<a href=#1439 id=1439 data-nosnippet>1439</a>        <span class="kw">match </span>sender {
-<a href=#1440 id=1440 data-nosnippet>1440</a>            <span class="prelude-val">Some</span>(<span class="kw">crate</span>::forward::Sender::Netns(netns)) =&gt; {
-<a href=#1441 id=1441 data-nosnippet>1441</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(owner) = shared.attribution.owner(<span class="kw-2">&amp;</span>FlowKey { netns, ..<span class="kw-2">*</span>key }) {
-<a href=#1442 id=1442 data-nosnippet>1442</a>                    <span class="kw">return </span>Owner::Process(owner);
-<a href=#1443 id=1443 data-nosnippet>1443</a>                }
-<a href=#1444 id=1444 data-nosnippet>1444</a>            }
-<a href=#1445 id=1445 data-nosnippet>1445</a>            <span class="prelude-val">Some</span>(<span class="kw">crate</span>::forward::Sender::Tap(tap)) =&gt; <span class="kw">return </span>Owner::Tap(tap),
-<a href=#1446 id=1446 data-nosnippet>1446</a>            <span class="prelude-val">None </span>=&gt; {}
-<a href=#1447 id=1447 data-nosnippet>1447</a>        }
-<a href=#1448 id=1448 data-nosnippet>1448</a>    }
-<a href=#1449 id=1449 data-nosnippet>1449</a>    Owner::Unknown
-<a href=#1450 id=1450 data-nosnippet>1450</a>}
-<a href=#1451 id=1451 data-nosnippet>1451</a>
-<a href=#1452 id=1452 data-nosnippet>1452</a><span class="doccomment">/// Who sent a queued packet.
-<a href=#1453 id=1453 data-nosnippet>1453</a></span><span class="kw">enum </span>Owner {
-<a href=#1454 id=1454 data-nosnippet>1454</a>    <span class="doccomment">/// The process that opened its flow.
-<a href=#1455 id=1455 data-nosnippet>1455</a>    </span>Process(snitchhiker_ebpf::FlowOwner),
-<a href=#1456 id=1456 data-nosnippet>1456</a>    <span class="doccomment">/// A VM, through this tap.
-<a href=#1457 id=1457 data-nosnippet>1457</a>    </span>Tap(Arc&lt;str&gt;),
-<a href=#1458 id=1458 data-nosnippet>1458</a>    Unknown,
-<a href=#1459 id=1459 data-nosnippet>1459</a>}
-<a href=#1460 id=1460 data-nosnippet>1460</a>
-<a href=#1461 id=1461 data-nosnippet>1461</a><span class="doccomment">/// Who opened a queued packet's flow: on this host, or, for a forwarded packet, in its sender's namespace.
-<a href=#1462 id=1462 data-nosnippet>1462</a></span><span class="kw">fn </span>owner_of(
-<a href=#1463 id=1463 data-nosnippet>1463</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1464 id=1464 data-nosnippet>1464</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
-<a href=#1465 id=1465 data-nosnippet>1465</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1466 id=1466 data-nosnippet>1466</a>    (key, source): (<span class="kw-2">&amp;</span>FlowKey, std::net::IpAddr),
-<a href=#1467 id=1467 data-nosnippet>1467</a>) -&gt; Owner {
-<a href=#1468 id=1468 data-nosnippet>1468</a>    <span class="kw">if </span>queued.hook == NF_INET_FORWARD {
-<a href=#1469 id=1469 data-nosnippet>1469</a>        forwarded_owner(shared, senders, queued, key)
-<a href=#1470 id=1470 data-nosnippet>1470</a>    } <span class="kw">else </span>{
-<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="comment">// A flow the programs didn't record: its socket, if exactly one process holds it.
-<a href=#1472 id=1472 data-nosnippet>1472</a>        </span>shared
-<a href=#1473 id=1473 data-nosnippet>1473</a>            .attribution
-<a href=#1474 id=1474 data-nosnippet>1474</a>            .owner(key)
-<a href=#1475 id=1475 data-nosnippet>1475</a>            .or_else(|| {
-<a href=#1476 id=1476 data-nosnippet>1476</a>                <span class="kw">crate</span>::fallback::owner(
-<a href=#1477 id=1477 data-nosnippet>1477</a>                    key.protocol,
-<a href=#1478 id=1478 data-nosnippet>1478</a>                    (source, key.source_port),
-<a href=#1479 id=1479 data-nosnippet>1479</a>                    (key.destination, key.destination_port),
-<a href=#1480 id=1480 data-nosnippet>1480</a>                )
-<a href=#1481 id=1481 data-nosnippet>1481</a>            })
-<a href=#1482 id=1482 data-nosnippet>1482</a>            .map_or(Owner::Unknown, Owner::Process)
-<a href=#1483 id=1483 data-nosnippet>1483</a>    }
-<a href=#1484 id=1484 data-nosnippet>1484</a>}
-<a href=#1485 id=1485 data-nosnippet>1485</a>
-<a href=#1486 id=1486 data-nosnippet>1486</a><span class="doccomment">/// Packets never decided, sent by `pid` (when a program was found):
-<a href=#1487 id=1487 data-nosnippet>1487</a>///
-<a href=#1488 id=1488 data-nosnippet>1488</a>/// - the daemon's own traffic, as marked packets aren't queued: sockets a library opened, which it can't mark, but the
-<a href=#1489 id=1489 data-nosnippet>1489</a>///   kernel names their process;
-<a href=#1490 id=1490 data-nosnippet>1490</a>/// - the node's remote service's (`snitchhiker-remote`, `remote_pid` while it is connected: the relay, devices, the
-<a href=#1491 id=1491 data-nosnippet>1491</a>///   push gateway), the node's own as well: a prompt about it couldn't reach the devices it would cut off;
-<a href=#1492 id=1492 data-nosnippet>1492</a>/// - ICMP and IGMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"; its multicast
-<a href=#1493 id=1493 data-nosnippet>1493</a>///   membership reports): no socket a program opened sent it (the queue names the owner of any socket backed by a
-<a href=#1494 id=1494 data-nosnippet>1494</a>///   file, raw and ping sockets included), so there is no program to decide about or ask.
-<a href=#1495 id=1495 data-nosnippet>1495</a></span><span class="kw">fn </span>never_decided(shared: <span class="kw-2">&amp;</span>Shared, pid: <span class="prelude-ty">Option</span>&lt;u32&gt;, queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;, protocol: u8) -&gt; bool {
-<a href=#1496 id=1496 data-nosnippet>1496</a>    <span class="kw">match </span>pid {
-<a href=#1497 id=1497 data-nosnippet>1497</a>        <span class="prelude-val">Some</span>(pid) =&gt; {
-<a href=#1498 id=1498 data-nosnippet>1498</a>            pid == std::process::id()
-<a href=#1499 id=1499 data-nosnippet>1499</a>                || (pid != <span class="number">0 </span>&amp;&amp; pid == shared.remote_pid.load(Ordering::Relaxed))
-<a href=#1500 id=1500 data-nosnippet>1500</a>        }
-<a href=#1501 id=1501 data-nosnippet>1501</a>        <span class="prelude-val">None </span>=&gt; {
-<a href=#1502 id=1502 data-nosnippet>1502</a>            queued.hook == NF_INET_LOCAL_OUT
-<a href=#1503 id=1503 data-nosnippet>1503</a>                &amp;&amp; queued.uid.is_none()
-<a href=#1504 id=1504 data-nosnippet>1504</a>                &amp;&amp; <span class="macro">matches!</span>(
-<a href=#1505 id=1505 data-nosnippet>1505</a>                    protocol,
-<a href=#1506 id=1506 data-nosnippet>1506</a>                    packet::IPPROTO_ICMP | packet::IPPROTO_ICMPV6 | packet::IPPROTO_IGMP
-<a href=#1507 id=1507 data-nosnippet>1507</a>                )
-<a href=#1508 id=1508 data-nosnippet>1508</a>        }
-<a href=#1509 id=1509 data-nosnippet>1509</a>    }
-<a href=#1510 id=1510 data-nosnippet>1510</a>}
-<a href=#1511 id=1511 data-nosnippet>1511</a>
-<a href=#1512 id=1512 data-nosnippet>1512</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decide(
-<a href=#1513 id=1513 data-nosnippet>1513</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1514 id=1514 data-nosnippet>1514</a>    processes: <span class="kw-2">&amp;mut </span>ProcessCache,
-<a href=#1515 id=1515 data-nosnippet>1515</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
-<a href=#1516 id=1516 data-nosnippet>1516</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1517 id=1517 data-nosnippet>1517</a>    (queue, netns): (usize, u32),
-<a href=#1518 id=1518 data-nosnippet>1518</a>) -&gt; (<span class="prelude-ty">Option</span>&lt;Verdict&gt;, <span class="prelude-ty">Option</span>&lt;SocketId&gt;) {
-<a href=#1519 id=1519 data-nosnippet>1519</a>    shared.decided.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
-<a href=#1520 id=1520 data-nosnippet>1520</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(headers) = packet::parse(queued.payload) <span class="kw">else </span>{
-<a href=#1521 id=1521 data-nosnippet>1521</a>        <span class="comment">// Not IPv4 or IPv6: nothing rules speak about.
-<a href=#1522 id=1522 data-nosnippet>1522</a>        </span><span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
-<a href=#1523 id=1523 data-nosnippet>1523</a>    };
-<a href=#1524 id=1524 data-nosnippet>1524</a>    <span class="kw">let </span>key = FlowKey {
-<a href=#1525 id=1525 data-nosnippet>1525</a>        netns,
-<a href=#1526 id=1526 data-nosnippet>1526</a>        protocol: headers.protocol,
-<a href=#1527 id=1527 data-nosnippet>1527</a>        source_port: headers.source_port,
-<a href=#1528 id=1528 data-nosnippet>1528</a>        destination: headers.destination,
-<a href=#1529 id=1529 data-nosnippet>1529</a>        destination_port: headers.destination_port,
-<a href=#1530 id=1530 data-nosnippet>1530</a>    };
-<a href=#1531 id=1531 data-nosnippet>1531</a>    <span class="kw">let </span>(owner, vm) = <span class="kw">match </span>owner_of(shared, senders, queued, (<span class="kw-2">&amp;</span>key, headers.source)) {
-<a href=#1532 id=1532 data-nosnippet>1532</a>        Owner::Process(owner) =&gt; (<span class="prelude-val">Some</span>(owner), <span class="prelude-val">None</span>),
-<a href=#1533 id=1533 data-nosnippet>1533</a>        Owner::Tap(tap) =&gt; (<span class="prelude-val">None</span>, shared.contexts.vm_on_tap(<span class="kw-2">&amp;</span>tap)),
-<a href=#1534 id=1534 data-nosnippet>1534</a>        Owner::Unknown =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#1351 id=1351 data-nosnippet>1351</a>    interface: <span class="prelude-ty">Option</span>&lt;Arc&lt;str&gt;&gt;,
+<a href=#1352 id=1352 data-nosnippet>1352</a>) -&gt; Event {
+<a href=#1353 id=1353 data-nosnippet>1353</a>    Event {
+<a href=#1354 id=1354 data-nosnippet>1354</a>        time_ms: facts.now_ms,
+<a href=#1355 id=1355 data-nosnippet>1355</a>        exe,
+<a href=#1356 id=1356 data-nosnippet>1356</a>        host: facts.hosts.first().cloned(),
+<a href=#1357 id=1357 data-nosnippet>1357</a>        uid: facts.uid,
+<a href=#1358 id=1358 data-nosnippet>1358</a>        pid,
+<a href=#1359 id=1359 data-nosnippet>1359</a>        protocol: facts.protocol,
+<a href=#1360 id=1360 data-nosnippet>1360</a>        address: facts.address,
+<a href=#1361 id=1361 data-nosnippet>1361</a>        port: facts.port,
+<a href=#1362 id=1362 data-nosnippet>1362</a>        context: context_code(facts.context),
+<a href=#1363 id=1363 data-nosnippet>1363</a>        action: Action::Deny,
+<a href=#1364 id=1364 data-nosnippet>1364</a>        source: Source::Policy,
+<a href=#1365 id=1365 data-nosnippet>1365</a>        rule: <span class="prelude-val">None</span>,
+<a href=#1366 id=1366 data-nosnippet>1366</a>        cookie,
+<a href=#1367 id=1367 data-nosnippet>1367</a>        container,
+<a href=#1368 id=1368 data-nosnippet>1368</a>        interface,
+<a href=#1369 id=1369 data-nosnippet>1369</a>    }
+<a href=#1370 id=1370 data-nosnippet>1370</a>}
+<a href=#1371 id=1371 data-nosnippet>1371</a>
+<a href=#1372 id=1372 data-nosnippet>1372</a><span class="doccomment">/// Whether a connection no rule decides is held for a prompt: the policy asks, the daemon enforces, and some client
+<a href=#1373 id=1373 data-nosnippet>1373</a>/// that may answer listens for prompts (a viewer only sees them), or a device can be woken to.
+<a href=#1374 id=1374 data-nosnippet>1374</a></span><span class="kw">pub fn </span>asks(shared: <span class="kw-2">&amp;</span>Shared) -&gt; bool {
+<a href=#1375 id=1375 data-nosnippet>1375</a>    <span class="kw">let </span>policy = shared.policy.load();
+<a href=#1376 id=1376 data-nosnippet>1376</a>    policy.no_match == Policy::Ask
+<a href=#1377 id=1377 data-nosnippet>1377</a>        &amp;&amp; policy.mode == Mode::Enforce
+<a href=#1378 id=1378 data-nosnippet>1378</a>        &amp;&amp; (shared.hub.has_answerers(v1::Topic::Prompts) || shared.router.can_wake_someone())
+<a href=#1379 id=1379 data-nosnippet>1379</a>}
+<a href=#1380 id=1380 data-nosnippet>1380</a>
+<a href=#1381 id=1381 data-nosnippet>1381</a><span class="doccomment">/// What a policy does without asking (`ask` falls back to `no_client`).
+<a href=#1382 id=1382 data-nosnippet>1382</a></span><span class="attr">#[must_use]
+<a href=#1383 id=1383 data-nosnippet>1383</a></span><span class="kw">pub fn </span>policy_action(policy: Policy, no_client: Action) -&gt; Action {
+<a href=#1384 id=1384 data-nosnippet>1384</a>    <span class="kw">match </span>policy {
+<a href=#1385 id=1385 data-nosnippet>1385</a>        Policy::Allow =&gt; Action::Allow,
+<a href=#1386 id=1386 data-nosnippet>1386</a>        Policy::Deny =&gt; Action::Deny,
+<a href=#1387 id=1387 data-nosnippet>1387</a>        Policy::Reject =&gt; Action::Reject,
+<a href=#1388 id=1388 data-nosnippet>1388</a>        Policy::Ask =&gt; no_client,
+<a href=#1389 id=1389 data-nosnippet>1389</a>    }
+<a href=#1390 id=1390 data-nosnippet>1390</a>}
+<a href=#1391 id=1391 data-nosnippet>1391</a>
+<a href=#1392 id=1392 data-nosnippet>1392</a><span class="doccomment">/// The verdict for one packet (none: it is held for a prompt), recording what happened, and the socket to close for a
+<a href=#1393 id=1393 data-nosnippet>1393</a>/// rejected connection.
+<a href=#1394 id=1394 data-nosnippet>1394</a>/// The context a connection comes from: the process's own (its cgroup names its container), or, for a rootless
+<a href=#1395 id=1395 data-nosnippet>1395</a>/// container's user-mode network helper, the container it connects for (`true`: the program in it is unknown).
+<a href=#1396 id=1396 data-nosnippet>1396</a></span><span class="kw">fn </span>context_of(
+<a href=#1397 id=1397 data-nosnippet>1397</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1398 id=1398 data-nosnippet>1398</a>    owner: <span class="prelude-ty">Option</span>&lt;snitchhiker_ebpf::FlowOwner&gt;,
+<a href=#1399 id=1399 data-nosnippet>1399</a>    process: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">crate</span>::process::ProcessInfo&gt;,
+<a href=#1400 id=1400 data-nosnippet>1400</a>) -&gt; (ContextKind, <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">crate</span>::contexts::Identified&gt;&gt;, bool) {
+<a href=#1401 id=1401 data-nosnippet>1401</a>    <span class="kw">let </span>(<span class="prelude-val">Some</span>(owner), <span class="prelude-val">Some</span>(process)) = (owner, process) <span class="kw">else </span>{
+<a href=#1402 id=1402 data-nosnippet>1402</a>        <span class="kw">return </span>(ContextKind::Host, <span class="prelude-val">None</span>, <span class="bool-val">false</span>);
+<a href=#1403 id=1403 data-nosnippet>1403</a>    };
+<a href=#1404 id=1404 data-nosnippet>1404</a>    <span class="comment">// A helper makes its connections from the host's network namespace (rootless, it runs in the runtime's user
+<a href=#1405 id=1405 data-nosnippet>1405</a>    // namespace): a program of that name inside a container is no helper.
+<a href=#1406 id=1406 data-nosnippet>1406</a>    </span><span class="kw">if </span><span class="kw">crate</span>::contexts::is_network_helper(<span class="kw-2">&amp;</span>process.exe)
+<a href=#1407 id=1407 data-nosnippet>1407</a>        &amp;&amp; std::fs::metadata(<span class="macro">format!</span>(<span class="string">"/proc/{}/ns/net"</span>, owner.pid))
+<a href=#1408 id=1408 data-nosnippet>1408</a>            .is_ok_and(|m| u32::try_from(m.ino()).ok() == <span class="prelude-val">Some</span>(shared.netns))
+<a href=#1409 id=1409 data-nosnippet>1409</a>        &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(served) =
+<a href=#1410 id=1410 data-nosnippet>1410</a>            shared
+<a href=#1411 id=1411 data-nosnippet>1411</a>                .contexts
+<a href=#1412 id=1412 data-nosnippet>1412</a>                .served_by(owner.pid, owner.start_boottime, <span class="kw-2">&amp;</span>process.exe)
+<a href=#1413 id=1413 data-nosnippet>1413</a>    {
+<a href=#1414 id=1414 data-nosnippet>1414</a>        <span class="kw">return </span>(ContextKind::Container, <span class="prelude-val">Some</span>(served), <span class="bool-val">true</span>);
+<a href=#1415 id=1415 data-nosnippet>1415</a>    }
+<a href=#1416 id=1416 data-nosnippet>1416</a>    <span class="kw">let </span>container = (process.context == ContextKind::Container)
+<a href=#1417 id=1417 data-nosnippet>1417</a>        .then(|| shared.contexts.container(owner.pid, owner.cgroup))
+<a href=#1418 id=1418 data-nosnippet>1418</a>        .flatten();
+<a href=#1419 id=1419 data-nosnippet>1419</a>    (process.context, container, <span class="bool-val">false</span>)
+<a href=#1420 id=1420 data-nosnippet>1420</a>}
+<a href=#1421 id=1421 data-nosnippet>1421</a>
+<a href=#1422 id=1422 data-nosnippet>1422</a><span class="doccomment">/// The interface a connection leaves through; a forwarded one's, the one it came in through (its bridge).
+<a href=#1423 id=1423 data-nosnippet>1423</a></span><span class="kw">fn </span>interface_of(senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders, queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;str&gt;&gt; {
+<a href=#1424 id=1424 data-nosnippet>1424</a>    <span class="kw">if </span>queued.hook == NF_INET_FORWARD {
+<a href=#1425 id=1425 data-nosnippet>1425</a>        queued.in_interface
+<a href=#1426 id=1426 data-nosnippet>1426</a>    } <span class="kw">else </span>{
+<a href=#1427 id=1427 data-nosnippet>1427</a>        queued.out_interface
+<a href=#1428 id=1428 data-nosnippet>1428</a>    }
+<a href=#1429 id=1429 data-nosnippet>1429</a>    .and_then(|index| senders.interface(index))
+<a href=#1430 id=1430 data-nosnippet>1430</a>}
+<a href=#1431 id=1431 data-nosnippet>1431</a>
+<a href=#1432 id=1432 data-nosnippet>1432</a><span class="doccomment">/// The netfilter hook of forwarded packets.
+<a href=#1433 id=1433 data-nosnippet>1433</a></span><span class="kw">const </span>NF_INET_FORWARD: u8 = <span class="number">2</span>;
+<a href=#1434 id=1434 data-nosnippet>1434</a><span class="doccomment">/// `NF_INET_LOCAL_OUT`: the netfilter hook of packets this host sends.
+<a href=#1435 id=1435 data-nosnippet>1435</a></span><span class="kw">const </span>NF_INET_LOCAL_OUT: u8 = <span class="number">3</span>;
+<a href=#1436 id=1436 data-nosnippet>1436</a>
+<a href=#1437 id=1437 data-nosnippet>1437</a><span class="doccomment">/// The owner of a forwarded packet's flow, as its sender's namespace recorded it (see [`crate::forward`]).
+<a href=#1438 id=1438 data-nosnippet>1438</a></span><span class="kw">fn </span>forwarded_owner(
+<a href=#1439 id=1439 data-nosnippet>1439</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1440 id=1440 data-nosnippet>1440</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
+<a href=#1441 id=1441 data-nosnippet>1441</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1442 id=1442 data-nosnippet>1442</a>    key: <span class="kw-2">&amp;</span>FlowKey,
+<a href=#1443 id=1443 data-nosnippet>1443</a>) -&gt; Owner {
+<a href=#1444 id=1444 data-nosnippet>1444</a>    <span class="kw">let </span>(<span class="prelude-val">Some</span>(bridge), <span class="prelude-val">Some</span>(mac)) = (queued.in_interface, queued.source_mac) <span class="kw">else </span>{
+<a href=#1445 id=1445 data-nosnippet>1445</a>        <span class="macro">debug!</span>(in_interface = <span class="question-mark">?</span>queued.in_interface, mac = <span class="question-mark">?</span>queued.source_mac, <span class="string">"a forwarded packet without its sender's link"</span>);
+<a href=#1446 id=1446 data-nosnippet>1446</a>        <span class="kw">return </span>Owner::Unknown;
+<a href=#1447 id=1447 data-nosnippet>1447</a>    };
+<a href=#1448 id=1448 data-nosnippet>1448</a>    <span class="kw">for </span>fresh <span class="kw">in </span>[<span class="bool-val">false</span>, <span class="bool-val">true</span>] {
+<a href=#1449 id=1449 data-nosnippet>1449</a>        <span class="kw">let </span>sender = senders.sender(bridge, mac, fresh);
+<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="macro">debug!</span>(bridge, <span class="question-mark">?</span>mac, <span class="question-mark">?</span>sender, fresh, <span class="string">"a forwarded packet's sender"</span>);
+<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="kw">match </span>sender {
+<a href=#1452 id=1452 data-nosnippet>1452</a>            <span class="prelude-val">Some</span>(<span class="kw">crate</span>::forward::Sender::Netns(netns)) =&gt; {
+<a href=#1453 id=1453 data-nosnippet>1453</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(owner) = shared.attribution.owner(<span class="kw-2">&amp;</span>FlowKey { netns, ..<span class="kw-2">*</span>key }) {
+<a href=#1454 id=1454 data-nosnippet>1454</a>                    <span class="kw">return </span>Owner::Process(owner);
+<a href=#1455 id=1455 data-nosnippet>1455</a>                }
+<a href=#1456 id=1456 data-nosnippet>1456</a>            }
+<a href=#1457 id=1457 data-nosnippet>1457</a>            <span class="prelude-val">Some</span>(<span class="kw">crate</span>::forward::Sender::Tap(tap)) =&gt; <span class="kw">return </span>Owner::Tap(tap),
+<a href=#1458 id=1458 data-nosnippet>1458</a>            <span class="prelude-val">None </span>=&gt; {}
+<a href=#1459 id=1459 data-nosnippet>1459</a>        }
+<a href=#1460 id=1460 data-nosnippet>1460</a>    }
+<a href=#1461 id=1461 data-nosnippet>1461</a>    Owner::Unknown
+<a href=#1462 id=1462 data-nosnippet>1462</a>}
+<a href=#1463 id=1463 data-nosnippet>1463</a>
+<a href=#1464 id=1464 data-nosnippet>1464</a><span class="doccomment">/// Who sent a queued packet.
+<a href=#1465 id=1465 data-nosnippet>1465</a></span><span class="kw">enum </span>Owner {
+<a href=#1466 id=1466 data-nosnippet>1466</a>    <span class="doccomment">/// The process that opened its flow.
+<a href=#1467 id=1467 data-nosnippet>1467</a>    </span>Process(snitchhiker_ebpf::FlowOwner),
+<a href=#1468 id=1468 data-nosnippet>1468</a>    <span class="doccomment">/// A VM, through this tap.
+<a href=#1469 id=1469 data-nosnippet>1469</a>    </span>Tap(Arc&lt;str&gt;),
+<a href=#1470 id=1470 data-nosnippet>1470</a>    Unknown,
+<a href=#1471 id=1471 data-nosnippet>1471</a>}
+<a href=#1472 id=1472 data-nosnippet>1472</a>
+<a href=#1473 id=1473 data-nosnippet>1473</a><span class="doccomment">/// Who opened a queued packet's flow: on this host, or, for a forwarded packet, in its sender's namespace.
+<a href=#1474 id=1474 data-nosnippet>1474</a></span><span class="kw">fn </span>owner_of(
+<a href=#1475 id=1475 data-nosnippet>1475</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1476 id=1476 data-nosnippet>1476</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
+<a href=#1477 id=1477 data-nosnippet>1477</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1478 id=1478 data-nosnippet>1478</a>    (key, source): (<span class="kw-2">&amp;</span>FlowKey, std::net::IpAddr),
+<a href=#1479 id=1479 data-nosnippet>1479</a>) -&gt; Owner {
+<a href=#1480 id=1480 data-nosnippet>1480</a>    <span class="kw">if </span>queued.hook == NF_INET_FORWARD {
+<a href=#1481 id=1481 data-nosnippet>1481</a>        forwarded_owner(shared, senders, queued, key)
+<a href=#1482 id=1482 data-nosnippet>1482</a>    } <span class="kw">else </span>{
+<a href=#1483 id=1483 data-nosnippet>1483</a>        <span class="comment">// A flow the programs didn't record: its socket, if exactly one process holds it.
+<a href=#1484 id=1484 data-nosnippet>1484</a>        </span>shared
+<a href=#1485 id=1485 data-nosnippet>1485</a>            .attribution
+<a href=#1486 id=1486 data-nosnippet>1486</a>            .owner(key)
+<a href=#1487 id=1487 data-nosnippet>1487</a>            .or_else(|| {
+<a href=#1488 id=1488 data-nosnippet>1488</a>                <span class="kw">crate</span>::fallback::owner(
+<a href=#1489 id=1489 data-nosnippet>1489</a>                    key.protocol,
+<a href=#1490 id=1490 data-nosnippet>1490</a>                    (source, key.source_port),
+<a href=#1491 id=1491 data-nosnippet>1491</a>                    (key.destination, key.destination_port),
+<a href=#1492 id=1492 data-nosnippet>1492</a>                )
+<a href=#1493 id=1493 data-nosnippet>1493</a>            })
+<a href=#1494 id=1494 data-nosnippet>1494</a>            .map_or(Owner::Unknown, Owner::Process)
+<a href=#1495 id=1495 data-nosnippet>1495</a>    }
+<a href=#1496 id=1496 data-nosnippet>1496</a>}
+<a href=#1497 id=1497 data-nosnippet>1497</a>
+<a href=#1498 id=1498 data-nosnippet>1498</a><span class="doccomment">/// Packets never decided, sent by `pid` (when a program was found):
+<a href=#1499 id=1499 data-nosnippet>1499</a>///
+<a href=#1500 id=1500 data-nosnippet>1500</a>/// - the daemon's own traffic, as marked packets aren't queued: sockets a library opened, which it can't mark, but the
+<a href=#1501 id=1501 data-nosnippet>1501</a>///   kernel names their process;
+<a href=#1502 id=1502 data-nosnippet>1502</a>/// - the node's remote service's (`snitchhiker-remote`, `remote_pid` while it is connected: the relay, devices, the
+<a href=#1503 id=1503 data-nosnippet>1503</a>///   push gateway), the node's own as well: a prompt about it couldn't reach the devices it would cut off;
+<a href=#1504 id=1504 data-nosnippet>1504</a>/// - ICMP and IGMP the kernel itself sends (its errors about a flow it has, such as "port unreachable"; its multicast
+<a href=#1505 id=1505 data-nosnippet>1505</a>///   membership reports): no socket a program opened sent it (the queue names the owner of any socket backed by a
+<a href=#1506 id=1506 data-nosnippet>1506</a>///   file, raw and ping sockets included), so there is no program to decide about or ask.
+<a href=#1507 id=1507 data-nosnippet>1507</a></span><span class="kw">fn </span>never_decided(shared: <span class="kw-2">&amp;</span>Shared, pid: <span class="prelude-ty">Option</span>&lt;u32&gt;, queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;, protocol: u8) -&gt; bool {
+<a href=#1508 id=1508 data-nosnippet>1508</a>    <span class="kw">match </span>pid {
+<a href=#1509 id=1509 data-nosnippet>1509</a>        <span class="prelude-val">Some</span>(pid) =&gt; {
+<a href=#1510 id=1510 data-nosnippet>1510</a>            pid == std::process::id()
+<a href=#1511 id=1511 data-nosnippet>1511</a>                || (pid != <span class="number">0 </span>&amp;&amp; pid == shared.remote_pid.load(Ordering::Relaxed))
+<a href=#1512 id=1512 data-nosnippet>1512</a>        }
+<a href=#1513 id=1513 data-nosnippet>1513</a>        <span class="prelude-val">None </span>=&gt; {
+<a href=#1514 id=1514 data-nosnippet>1514</a>            queued.hook == NF_INET_LOCAL_OUT
+<a href=#1515 id=1515 data-nosnippet>1515</a>                &amp;&amp; queued.uid.is_none()
+<a href=#1516 id=1516 data-nosnippet>1516</a>                &amp;&amp; <span class="macro">matches!</span>(
+<a href=#1517 id=1517 data-nosnippet>1517</a>                    protocol,
+<a href=#1518 id=1518 data-nosnippet>1518</a>                    packet::IPPROTO_ICMP | packet::IPPROTO_ICMPV6 | packet::IPPROTO_IGMP
+<a href=#1519 id=1519 data-nosnippet>1519</a>                )
+<a href=#1520 id=1520 data-nosnippet>1520</a>        }
+<a href=#1521 id=1521 data-nosnippet>1521</a>    }
+<a href=#1522 id=1522 data-nosnippet>1522</a>}
+<a href=#1523 id=1523 data-nosnippet>1523</a>
+<a href=#1524 id=1524 data-nosnippet>1524</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decide(
+<a href=#1525 id=1525 data-nosnippet>1525</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1526 id=1526 data-nosnippet>1526</a>    processes: <span class="kw-2">&amp;mut </span>ProcessCache,
+<a href=#1527 id=1527 data-nosnippet>1527</a>    senders: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::forward::Senders,
+<a href=#1528 id=1528 data-nosnippet>1528</a>    queued: <span class="kw-2">&amp;</span>Packet&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1529 id=1529 data-nosnippet>1529</a>    (queue, netns): (usize, u32),
+<a href=#1530 id=1530 data-nosnippet>1530</a>) -&gt; (<span class="prelude-ty">Option</span>&lt;Verdict&gt;, <span class="prelude-ty">Option</span>&lt;SocketId&gt;) {
+<a href=#1531 id=1531 data-nosnippet>1531</a>    shared.decided.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+<a href=#1532 id=1532 data-nosnippet>1532</a>    <span class="kw">let </span><span class="prelude-val">Some</span>(headers) = packet::parse(queued.payload) <span class="kw">else </span>{
+<a href=#1533 id=1533 data-nosnippet>1533</a>        <span class="comment">// Not IPv4 or IPv6: nothing rules speak about.
+<a href=#1534 id=1534 data-nosnippet>1534</a>        </span><span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
 <a href=#1535 id=1535 data-nosnippet>1535</a>    };
-<a href=#1536 id=1536 data-nosnippet>1536</a>    <span class="kw">if </span>never_decided(shared, owner.map(|o| o.pid), queued, headers.protocol) {
-<a href=#1537 id=1537 data-nosnippet>1537</a>        <span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
-<a href=#1538 id=1538 data-nosnippet>1538</a>    }
-<a href=#1539 id=1539 data-nosnippet>1539</a>    <span class="kw">let </span>process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
-<a href=#1540 id=1540 data-nosnippet>1540</a>    <span class="kw">let </span>now = now_ms();
-<a href=#1541 id=1541 data-nosnippet>1541</a>    <span class="comment">// The user as the kernel recorded it when the socket was opened (the queue's uid is the socket's owner, for
-<a href=#1542 id=1542 data-nosnippet>1542</a>    // packets the attribution programs didn't see).
-<a href=#1543 id=1543 data-nosnippet>1543</a>    </span><span class="kw">let </span>uid = owner.map(|o| o.uid).or(queued.uid).unwrap_or(u32::MAX);
-<a href=#1544 id=1544 data-nosnippet>1544</a>    <span class="kw">let </span>home = process.as_ref().and_then(|<span class="kw">_</span>| processes.home(uid));
-<a href=#1545 id=1545 data-nosnippet>1545</a>    <span class="kw">let </span>pid = owner.map_or(<span class="number">0</span>, |o| o.pid);
-<a href=#1546 id=1546 data-nosnippet>1546</a>    <span class="kw">let </span>hosts = shared
-<a href=#1547 id=1547 data-nosnippet>1547</a>        .names
-<a href=#1548 id=1548 data-nosnippet>1548</a>        .read()
-<a href=#1549 id=1549 data-nosnippet>1549</a>        .unwrap_or_else(PoisonError::into_inner)
-<a href=#1550 id=1550 data-nosnippet>1550</a>        .lookup(pid, headers.destination, now);
-<a href=#1551 id=1551 data-nosnippet>1551</a>    <span class="kw">let </span>empty: <span class="kw-2">&amp;</span>[String] = <span class="kw-2">&amp;</span>[];
-<a href=#1552 id=1552 data-nosnippet>1552</a>    <span class="kw">let </span>(context, container, helper) = <span class="kw">if </span>vm.is_some() {
-<a href=#1553 id=1553 data-nosnippet>1553</a>        (ContextKind::Vm, <span class="prelude-val">None</span>, <span class="bool-val">false</span>)
-<a href=#1554 id=1554 data-nosnippet>1554</a>    } <span class="kw">else </span>{
-<a href=#1555 id=1555 data-nosnippet>1555</a>        context_of(shared, owner, process.as_deref())
-<a href=#1556 id=1556 data-nosnippet>1556</a>    };
-<a href=#1557 id=1557 data-nosnippet>1557</a>    <span class="comment">// A helper's connection for a namespace decided inside was decided there already, with its program: deciding it
-<a href=#1558 id=1558 data-nosnippet>1558</a>    // again here, knowing less, could only contradict that. Until then, the daemon starts deciding inside.
-<a href=#1559 id=1559 data-nosnippet>1559</a>    </span><span class="kw">if </span>helper &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>((pid, inode)) = container.as_ref().and_then(|c| c.served) {
-<a href=#1560 id=1560 data-nosnippet>1560</a>        <span class="kw">if </span>shared.namespaces.is_managed(inode) {
-<a href=#1561 id=1561 data-nosnippet>1561</a>            <span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
-<a href=#1562 id=1562 data-nosnippet>1562</a>        }
-<a href=#1563 id=1563 data-nosnippet>1563</a>        shared.namespaces.request(pid, inode);
-<a href=#1564 id=1564 data-nosnippet>1564</a>    }
-<a href=#1565 id=1565 data-nosnippet>1565</a>    <span class="comment">// A network helper isn't the program: the one in the container is, unknown from out here.
-<a href=#1566 id=1566 data-nosnippet>1566</a>    </span><span class="kw">let </span>process = <span class="kw">if </span>helper { <span class="prelude-val">None </span>} <span class="kw">else </span>{ process };
-<a href=#1567 id=1567 data-nosnippet>1567</a>    <span class="comment">// A named namespace's connections (queued inside it) carry its name.
-<a href=#1568 id=1568 data-nosnippet>1568</a>    </span><span class="kw">let </span>named = (netns != shared.netns)
-<a href=#1569 id=1569 data-nosnippet>1569</a>        .then(|| shared.namespaces.named(u64::from(netns)))
-<a href=#1570 id=1570 data-nosnippet>1570</a>        .flatten();
-<a href=#1571 id=1571 data-nosnippet>1571</a>    <span class="comment">// Hashed only while a rule pins a binary.
-<a href=#1572 id=1572 data-nosnippet>1572</a>    </span><span class="kw">let </span>sha256 = process
-<a href=#1573 id=1573 data-nosnippet>1573</a>        .as_ref()
-<a href=#1574 id=1574 data-nosnippet>1574</a>        .filter(|<span class="kw">_</span>| shared.rules.load().needs_sha256())
-<a href=#1575 id=1575 data-nosnippet>1575</a>        .and_then(|p| <span class="kw">crate</span>::process::sha256_of(p.pid));
-<a href=#1576 id=1576 data-nosnippet>1576</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(found) = container.as_deref() {
-<a href=#1577 id=1577 data-nosnippet>1577</a>        note_net_admin(shared, found);
-<a href=#1578 id=1578 data-nosnippet>1578</a>    }
-<a href=#1579 id=1579 data-nosnippet>1579</a>    <span class="kw">let </span>facts = Facts {
-<a href=#1580 id=1580 data-nosnippet>1580</a>        exe: process.as_ref().map_or(<span class="string">""</span>, |p| <span class="kw-2">&amp;*</span>p.exe),
-<a href=#1581 id=1581 data-nosnippet>1581</a>        apps: process.as_ref().map_or(<span class="kw-2">&amp;</span>[], |p| p.apps.as_slice()),
-<a href=#1582 id=1582 data-nosnippet>1582</a>        sha256: sha256.as_deref(),
-<a href=#1583 id=1583 data-nosnippet>1583</a>        writable: process.as_ref().is_some_and(|p| p.writable),
-<a href=#1584 id=1584 data-nosnippet>1584</a>        cmdline: process.as_ref().map_or(<span class="string">""</span>, |p| p.cmdline.as_str()),
-<a href=#1585 id=1585 data-nosnippet>1585</a>        ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
-<a href=#1586 id=1586 data-nosnippet>1586</a>        lineage: process.as_ref().map_or(<span class="kw-2">&amp;</span>[], |p| p.lineage.as_slice()),
-<a href=#1587 id=1587 data-nosnippet>1587</a>        uid,
-<a href=#1588 id=1588 data-nosnippet>1588</a>        home: home.as_deref(),
-<a href=#1589 id=1589 data-nosnippet>1589</a>        hosts: <span class="kw-2">&amp;</span>hosts,
-<a href=#1590 id=1590 data-nosnippet>1590</a>        address: headers.destination,
-<a href=#1591 id=1591 data-nosnippet>1591</a>        port: headers.destination_port,
-<a href=#1592 id=1592 data-nosnippet>1592</a>        protocol: headers.protocol,
-<a href=#1593 id=1593 data-nosnippet>1593</a>        context,
-<a href=#1594 id=1594 data-nosnippet>1594</a>        now_ms: now,
-<a href=#1595 id=1595 data-nosnippet>1595</a>        container: container.as_deref().map(|c| <span class="kw-2">&amp;</span>c.container),
-<a href=#1596 id=1596 data-nosnippet>1596</a>        vm: vm.as_deref().map(|v| <span class="kw-2">&amp;</span>v.vm),
-<a href=#1597 id=1597 data-nosnippet>1597</a>        netns: named.as_ref().map(|(name, <span class="kw">_</span>)| <span class="kw-2">&amp;**</span>name),
-<a href=#1598 id=1598 data-nosnippet>1598</a>    };
-<a href=#1599 id=1599 data-nosnippet>1599</a>    <span class="kw">let </span>exe = process
-<a href=#1600 id=1600 data-nosnippet>1600</a>        .as_ref()
-<a href=#1601 id=1601 data-nosnippet>1601</a>        .map_or_else(|| Arc::clone(<span class="kw-2">&amp;</span>shared.unknown), |p| Arc::clone(<span class="kw-2">&amp;</span>p.exe));
-<a href=#1602 id=1602 data-nosnippet>1602</a>    <span class="kw">let </span>event = undecided_event(
-<a href=#1603 id=1603 data-nosnippet>1603</a>        <span class="kw-2">&amp;</span>facts,
-<a href=#1604 id=1604 data-nosnippet>1604</a>        exe,
-<a href=#1605 id=1605 data-nosnippet>1605</a>        pid,
-<a href=#1606 id=1606 data-nosnippet>1606</a>        owner.map(|o| o.cookie),
-<a href=#1607 id=1607 data-nosnippet>1607</a>        container
-<a href=#1608 id=1608 data-nosnippet>1608</a>            .as_ref()
-<a href=#1609 id=1609 data-nosnippet>1609</a>            .map(|c| Arc::clone(<span class="kw-2">&amp;</span>c.key))
-<a href=#1610 id=1610 data-nosnippet>1610</a>            .or_else(|| named.as_ref().map(|(<span class="kw">_</span>, key)| Arc::clone(key)))
-<a href=#1611 id=1611 data-nosnippet>1611</a>            .or_else(|| vm.as_ref().map(|v| Arc::clone(<span class="kw-2">&amp;</span>v.key))),
-<a href=#1612 id=1612 data-nosnippet>1612</a>    );
-<a href=#1613 id=1613 data-nosnippet>1613</a>    <span class="kw">let </span>rules = shared.rules.load();
-<a href=#1614 id=1614 data-nosnippet>1614</a>    <span class="kw">let </span>(action, source, rule) = <span class="kw">if let </span><span class="prelude-val">Some</span>(decision) = rules.decide(<span class="kw-2">&amp;</span>facts) {
-<a href=#1615 id=1615 data-nosnippet>1615</a>        (decision.action, Source::Rule, <span class="prelude-val">Some</span>(decision.rule))
-<a href=#1616 id=1616 data-nosnippet>1616</a>    } <span class="kw">else </span>{
-<a href=#1617 id=1617 data-nosnippet>1617</a>        <span class="kw">let </span>held = Held {
-<a href=#1618 id=1618 data-nosnippet>1618</a>            queue,
-<a href=#1619 id=1619 data-nosnippet>1619</a>            id: queued.id,
-<a href=#1620 id=1620 data-nosnippet>1620</a>        };
-<a href=#1621 id=1621 data-nosnippet>1621</a>        <span class="kw">match </span>undecided(shared, <span class="kw-2">&amp;</span>facts, <span class="kw-2">&amp;</span>event, held) {
-<a href=#1622 id=1622 data-nosnippet>1622</a>            <span class="prelude-val">Some</span>(decided) =&gt; decided,
-<a href=#1623 id=1623 data-nosnippet>1623</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
-<a href=#1624 id=1624 data-nosnippet>1624</a>        }
-<a href=#1625 id=1625 data-nosnippet>1625</a>    };
-<a href=#1626 id=1626 data-nosnippet>1626</a>    conclude(shared, <span class="kw-2">&amp;</span>facts, event, <span class="kw-2">&amp;</span>headers, (action, source, rule))
-<a href=#1627 id=1627 data-nosnippet>1627</a>}
-<a href=#1628 id=1628 data-nosnippet>1628</a>
-<a href=#1629 id=1629 data-nosnippet>1629</a><span class="doccomment">/// A decided connection: its verdict by the mode, the history's record, and the socket to close for a rejection.
-<a href=#1630 id=1630 data-nosnippet>1630</a></span><span class="kw">fn </span>conclude(
-<a href=#1631 id=1631 data-nosnippet>1631</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1632 id=1632 data-nosnippet>1632</a>    facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1633 id=1633 data-nosnippet>1633</a>    <span class="kw-2">mut </span>event: Event,
-<a href=#1634 id=1634 data-nosnippet>1634</a>    headers: <span class="kw-2">&amp;</span>packet::Headers,
-<a href=#1635 id=1635 data-nosnippet>1635</a>    (action, source, rule): (Action, Source, <span class="prelude-ty">Option</span>&lt;RuleId&gt;),
-<a href=#1636 id=1636 data-nosnippet>1636</a>) -&gt; (<span class="prelude-ty">Option</span>&lt;Verdict&gt;, <span class="prelude-ty">Option</span>&lt;SocketId&gt;) {
-<a href=#1637 id=1637 data-nosnippet>1637</a>    <span class="kw">let </span>(verdict, source) = <span class="kw">match </span>shared.policy.load().mode {
-<a href=#1638 id=1638 data-nosnippet>1638</a>        Mode::Monitor =&gt; (Verdict::Accept, Source::Monitor),
-<a href=#1639 id=1639 data-nosnippet>1639</a>        Mode::Enforce =&gt; (
-<a href=#1640 id=1640 data-nosnippet>1640</a>            <span class="kw">if </span>action == Action::Allow {
-<a href=#1641 id=1641 data-nosnippet>1641</a>                Verdict::Accept
-<a href=#1642 id=1642 data-nosnippet>1642</a>            } <span class="kw">else </span>{
-<a href=#1643 id=1643 data-nosnippet>1643</a>                Verdict::Drop
-<a href=#1644 id=1644 data-nosnippet>1644</a>            },
-<a href=#1645 id=1645 data-nosnippet>1645</a>            source,
-<a href=#1646 id=1646 data-nosnippet>1646</a>        ),
-<a href=#1647 id=1647 data-nosnippet>1647</a>    };
-<a href=#1648 id=1648 data-nosnippet>1648</a>    <span class="kw">if </span>action != Action::Allow {
-<a href=#1649 id=1649 data-nosnippet>1649</a>        remember(shared, facts, <span class="kw-2">&amp;</span>event, <span class="prelude-val">None</span>);
-<a href=#1650 id=1650 data-nosnippet>1650</a>    }
-<a href=#1651 id=1651 data-nosnippet>1651</a>    event.action = action;
-<a href=#1652 id=1652 data-nosnippet>1652</a>    event.source = source;
-<a href=#1653 id=1653 data-nosnippet>1653</a>    event.rule = rule;
-<a href=#1654 id=1654 data-nosnippet>1654</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(rule) = rule {
-<a href=#1655 id=1655 data-nosnippet>1655</a>        shared.blocklists.decided(rule);
-<a href=#1656 id=1656 data-nosnippet>1656</a>    }
-<a href=#1657 id=1657 data-nosnippet>1657</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(TrySendError::Full(<span class="kw">_</span>) | TrySendError::Disconnected(<span class="kw">_</span>)) =
-<a href=#1658 id=1658 data-nosnippet>1658</a>        shared.events.try_send(event)
-<a href=#1659 id=1659 data-nosnippet>1659</a>    {
-<a href=#1660 id=1660 data-nosnippet>1660</a>        shared.dropped_events.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
-<a href=#1661 id=1661 data-nosnippet>1661</a>    }
-<a href=#1662 id=1662 data-nosnippet>1662</a>    <span class="kw">let </span>reject = (verdict == Verdict::Drop &amp;&amp; action == Action::Reject).then_some(SocketId {
-<a href=#1663 id=1663 data-nosnippet>1663</a>        protocol: headers.protocol,
-<a href=#1664 id=1664 data-nosnippet>1664</a>        local: headers.source,
-<a href=#1665 id=1665 data-nosnippet>1665</a>        local_port: headers.source_port,
-<a href=#1666 id=1666 data-nosnippet>1666</a>        remote: headers.destination,
-<a href=#1667 id=1667 data-nosnippet>1667</a>        remote_port: headers.destination_port,
-<a href=#1668 id=1668 data-nosnippet>1668</a>    });
-<a href=#1669 id=1669 data-nosnippet>1669</a>    (<span class="prelude-val">Some</span>(verdict), reject)
-<a href=#1670 id=1670 data-nosnippet>1670</a>}
-<a href=#1671 id=1671 data-nosnippet>1671</a>
-<a href=#1672 id=1672 data-nosnippet>1672</a><span class="doccomment">/// Remembers a connection not allowed, with its process's lineage, for agents (see `agents`).
-<a href=#1673 id=1673 data-nosnippet>1673</a></span><span class="kw">fn </span>remember(shared: <span class="kw-2">&amp;</span>Shared, facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;, event: <span class="kw-2">&amp;</span>Event, prompt: <span class="prelude-ty">Option</span>&lt;u64&gt;) {
-<a href=#1674 id=1674 data-nosnippet>1674</a>    <span class="kw">if </span>facts.lineage.is_empty() {
-<a href=#1675 id=1675 data-nosnippet>1675</a>        <span class="kw">return</span>;
-<a href=#1676 id=1676 data-nosnippet>1676</a>    }
-<a href=#1677 id=1677 data-nosnippet>1677</a>    shared.blocked.record(<span class="kw">crate</span>::agents::Blocked {
-<a href=#1678 id=1678 data-nosnippet>1678</a>        time_ms: facts.now_ms,
-<a href=#1679 id=1679 data-nosnippet>1679</a>        lineage: facts.lineage.to_vec(),
-<a href=#1680 id=1680 data-nosnippet>1680</a>        exe: Arc::clone(<span class="kw-2">&amp;</span>event.exe),
-<a href=#1681 id=1681 data-nosnippet>1681</a>        host: facts.hosts.first().map(ToString::to_string),
-<a href=#1682 id=1682 data-nosnippet>1682</a>        address: facts.address,
-<a href=#1683 id=1683 data-nosnippet>1683</a>        port: facts.port,
-<a href=#1684 id=1684 data-nosnippet>1684</a>        protocol: facts.protocol,
-<a href=#1685 id=1685 data-nosnippet>1685</a>        uid: facts.uid,
-<a href=#1686 id=1686 data-nosnippet>1686</a>        context: facts.context,
-<a href=#1687 id=1687 data-nosnippet>1687</a>        prompt,
-<a href=#1688 id=1688 data-nosnippet>1688</a>    });
-<a href=#1689 id=1689 data-nosnippet>1689</a>}
-<a href=#1690 id=1690 data-nosnippet>1690</a>
-<a href=#1691 id=1691 data-nosnippet>1691</a><span class="doccomment">/// A connection no rule decides: held for a prompt (`None`), or decided by the policy (by `on_timeout` when asking
-<a href=#1692 id=1692 data-nosnippet>1692</a>/// but too many prompts are open).
-<a href=#1693 id=1693 data-nosnippet>1693</a></span><span class="kw">fn </span>undecided(
-<a href=#1694 id=1694 data-nosnippet>1694</a>    shared: <span class="kw-2">&amp;</span>Shared,
-<a href=#1695 id=1695 data-nosnippet>1695</a>    facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#1696 id=1696 data-nosnippet>1696</a>    event: <span class="kw-2">&amp;</span>Event,
-<a href=#1697 id=1697 data-nosnippet>1697</a>    held: Held,
-<a href=#1698 id=1698 data-nosnippet>1698</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(Action, Source, <span class="prelude-ty">Option</span>&lt;RuleId&gt;)&gt; {
-<a href=#1699 id=1699 data-nosnippet>1699</a>    <span class="kw">let </span>asking = asks(shared);
-<a href=#1700 id=1700 data-nosnippet>1700</a>    <span class="kw">if </span>asking &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(prompt) = hold(shared, facts, event, held) {
-<a href=#1701 id=1701 data-nosnippet>1701</a>        remember(shared, facts, event, <span class="prelude-val">Some</span>(prompt));
-<a href=#1702 id=1702 data-nosnippet>1702</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#1703 id=1703 data-nosnippet>1703</a>    }
-<a href=#1704 id=1704 data-nosnippet>1704</a>    <span class="kw">let </span>policy = shared.policy.load();
-<a href=#1705 id=1705 data-nosnippet>1705</a>    <span class="prelude-val">Some</span>(<span class="kw">if </span>asking {
-<a href=#1706 id=1706 data-nosnippet>1706</a>        (policy.on_timeout, Source::Timeout, <span class="prelude-val">None</span>)
-<a href=#1707 id=1707 data-nosnippet>1707</a>    } <span class="kw">else </span>{
-<a href=#1708 id=1708 data-nosnippet>1708</a>        <span class="kw">let </span>action = policy_action(policy.no_match, policy.no_client);
-<a href=#1709 id=1709 data-nosnippet>1709</a>        (action, Source::Policy, <span class="prelude-val">None</span>)
-<a href=#1710 id=1710 data-nosnippet>1710</a>    })
-<a href=#1711 id=1711 data-nosnippet>1711</a>}
-<a href=#1712 id=1712 data-nosnippet>1712</a>
-<a href=#1713 id=1713 data-nosnippet>1713</a><span class="doccomment">/// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open; the
-<a href=#1714 id=1714 data-nosnippet>1714</a>/// prompt's id, or `None` when the broker is full (see [`crate::prompts::MAX_PROMPTS`]).
-<a href=#1715 id=1715 data-nosnippet>1715</a></span><span class="kw">fn </span>hold(shared: <span class="kw-2">&amp;</span>Shared, facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;, event: <span class="kw-2">&amp;</span>Event, packet: Held) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
-<a href=#1716 id=1716 data-nosnippet>1716</a>    <span class="kw">let </span>destination = facts
-<a href=#1717 id=1717 data-nosnippet>1717</a>        .hosts
-<a href=#1718 id=1718 data-nosnippet>1718</a>        .first()
-<a href=#1719 id=1719 data-nosnippet>1719</a>        .map_or_else(|| facts.address.to_string(), ToString::to_string);
-<a href=#1720 id=1720 data-nosnippet>1720</a>    <span class="kw">let </span>key = PromptKey {
-<a href=#1721 id=1721 data-nosnippet>1721</a>        exe: Arc::clone(<span class="kw-2">&amp;</span>event.exe),
-<a href=#1722 id=1722 data-nosnippet>1722</a>        uid: facts.uid,
-<a href=#1723 id=1723 data-nosnippet>1723</a>        destination,
-<a href=#1724 id=1724 data-nosnippet>1724</a>        port: facts.port,
-<a href=#1725 id=1725 data-nosnippet>1725</a>        protocol: facts.protocol,
-<a href=#1726 id=1726 data-nosnippet>1726</a>        container: event.container.clone(),
-<a href=#1727 id=1727 data-nosnippet>1727</a>    };
-<a href=#1728 id=1728 data-nosnippet>1728</a>    <span class="kw">let </span>opened = shared.broker.hold(key, packet, facts.now_ms, || {
-<a href=#1729 id=1729 data-nosnippet>1729</a>        <span class="kw">let </span>suggestions = snitchhiker_core::suggest::in_context(
-<a href=#1730 id=1730 data-nosnippet>1730</a>            snitchhiker_core::suggest::suggestions(
-<a href=#1731 id=1731 data-nosnippet>1731</a>                facts.exe,
-<a href=#1732 id=1732 data-nosnippet>1732</a>                facts.home,
-<a href=#1733 id=1733 data-nosnippet>1733</a>                facts.hosts,
-<a href=#1734 id=1734 data-nosnippet>1734</a>                facts.address,
-<a href=#1735 id=1735 data-nosnippet>1735</a>                facts.port,
-<a href=#1736 id=1736 data-nosnippet>1736</a>                facts.protocol,
-<a href=#1737 id=1737 data-nosnippet>1737</a>            ),
-<a href=#1738 id=1738 data-nosnippet>1738</a>            facts.context,
-<a href=#1739 id=1739 data-nosnippet>1739</a>            facts.container,
-<a href=#1740 id=1740 data-nosnippet>1740</a>            facts.vm,
-<a href=#1741 id=1741 data-nosnippet>1741</a>        );
-<a href=#1742 id=1742 data-nosnippet>1742</a>        NewPrompt {
-<a href=#1743 id=1743 data-nosnippet>1743</a>            prompt: v1::Prompt {
-<a href=#1744 id=1744 data-nosnippet>1744</a>                exe: facts.exe.to_owned(),
-<a href=#1745 id=1745 data-nosnippet>1745</a>                cmdline: facts.cmdline.to_owned(),
-<a href=#1746 id=1746 data-nosnippet>1746</a>                uid: facts.uid,
-<a href=#1747 id=1747 data-nosnippet>1747</a>                user: <span class="kw">crate</span>::process::user_of(facts.uid).unwrap_or_default(),
-<a href=#1748 id=1748 data-nosnippet>1748</a>                pid: event.pid,
-<a href=#1749 id=1749 data-nosnippet>1749</a>                hosts: facts.hosts.iter().map(ToString::to_string).collect(),
-<a href=#1750 id=1750 data-nosnippet>1750</a>                address: convert::address(facts.address),
-<a href=#1751 id=1751 data-nosnippet>1751</a>                port: u32::from(facts.port),
-<a href=#1752 id=1752 data-nosnippet>1752</a>                protocol: u32::from(facts.protocol),
-<a href=#1753 id=1753 data-nosnippet>1753</a>                context: convert::context(facts.context).into(),
-<a href=#1754 id=1754 data-nosnippet>1754</a>                <span class="comment">// As found (with what it can do), else as the history keeps it.
-<a href=#1755 id=1755 data-nosnippet>1755</a>                </span>container: facts
-<a href=#1756 id=1756 data-nosnippet>1756</a>                    .container
-<a href=#1757 id=1757 data-nosnippet>1757</a>                    .map(|c| Box::new(convert::container(c)))
-<a href=#1758 id=1758 data-nosnippet>1758</a>                    .or_else(|| {
-<a href=#1759 id=1759 data-nosnippet>1759</a>                        event
-<a href=#1760 id=1760 data-nosnippet>1760</a>                            .container
-<a href=#1761 id=1761 data-nosnippet>1761</a>                            .as_deref()
-<a href=#1762 id=1762 data-nosnippet>1762</a>                            .map(|key| Box::new(convert::container_from_key(key)))
-<a href=#1763 id=1763 data-nosnippet>1763</a>                    }),
-<a href=#1764 id=1764 data-nosnippet>1764</a>                exe_writable: <span class="kw">crate</span>::process::writable_by_others(event.pid),
-<a href=#1765 id=1765 data-nosnippet>1765</a>                suggestions: suggestions
-<a href=#1766 id=1766 data-nosnippet>1766</a>                    .iter()
-<a href=#1767 id=1767 data-nosnippet>1767</a>                    .map(|s| v1::Suggestion {
-<a href=#1768 id=1768 data-nosnippet>1768</a>                        label: s.label.clone(),
-<a href=#1769 id=1769 data-nosnippet>1769</a>                        conditions: <span class="prelude-val">Some</span>(convert::conditions(<span class="kw-2">&amp;</span>s.conditions)),
-<a href=#1770 id=1770 data-nosnippet>1770</a>                        broad: s.broad,
-<a href=#1771 id=1771 data-nosnippet>1771</a>                    })
-<a href=#1772 id=1772 data-nosnippet>1772</a>                    .collect(),
-<a href=#1773 id=1773 data-nosnippet>1773</a>                ..v1::Prompt::default()
-<a href=#1774 id=1774 data-nosnippet>1774</a>            },
-<a href=#1775 id=1775 data-nosnippet>1775</a>            suggestions,
-<a href=#1776 id=1776 data-nosnippet>1776</a>            event: event.clone(),
-<a href=#1777 id=1777 data-nosnippet>1777</a>        }
-<a href=#1778 id=1778 data-nosnippet>1778</a>    });
-<a href=#1779 id=1779 data-nosnippet>1779</a>    <span class="kw">match </span>opened {
-<a href=#1780 id=1780 data-nosnippet>1780</a>        Hold::Opened(prompt) =&gt; {
-<a href=#1781 id=1781 data-nosnippet>1781</a>            shared.router.opened(<span class="kw-2">&amp;</span>shared.hub, <span class="kw-2">&amp;</span>prompt);
-<a href=#1782 id=1782 data-nosnippet>1782</a>            <span class="prelude-val">Some</span>(prompt.id)
-<a href=#1783 id=1783 data-nosnippet>1783</a>        }
-<a href=#1784 id=1784 data-nosnippet>1784</a>        Hold::Joined(id) =&gt; <span class="prelude-val">Some</span>(id),
-<a href=#1785 id=1785 data-nosnippet>1785</a>        Hold::Full =&gt; <span class="prelude-val">None</span>,
-<a href=#1786 id=1786 data-nosnippet>1786</a>    }
-<a href=#1787 id=1787 data-nosnippet>1787</a>}
-<a href=#1788 id=1788 data-nosnippet>1788</a>
-<a href=#1789 id=1789 data-nosnippet>1789</a><span class="doccomment">/// Pushes recorded events to the subscribers of the events topic: one message each to those that want messages, and
-<a href=#1790 id=1790 data-nosnippet>1790</a>/// the batch as one columnar block to those that want blocks.
-<a href=#1791 id=1791 data-nosnippet>1791</a></span><span class="kw">fn </span>publish_events(shared: <span class="kw-2">&amp;</span>Shared, batch: <span class="kw-2">&amp;</span>[Event], recorded: <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::store::Recorded]) {
-<a href=#1792 id=1792 data-nosnippet>1792</a>    <span class="kw">let </span>(messages, blocks) = shared.hub.wanted(v1::Topic::Events);
-<a href=#1793 id=1793 data-nosnippet>1793</a>    <span class="kw">let </span>plain: Vec&lt;Outgoing&gt; = <span class="kw">if </span>messages {
-<a href=#1794 id=1794 data-nosnippet>1794</a>        batch
-<a href=#1795 id=1795 data-nosnippet>1795</a>            .iter()
-<a href=#1796 id=1796 data-nosnippet>1796</a>            .zip(recorded)
-<a href=#1797 id=1797 data-nosnippet>1797</a>            .map(|(event, r)| {
-<a href=#1798 id=1798 data-nosnippet>1798</a>                Outgoing::Notice(v1::notice::Body::Event(<span class="kw">crate</span>::api::event(
-<a href=#1799 id=1799 data-nosnippet>1799</a>                    <span class="kw-2">&amp;</span>event.stored(r.seq),
-<a href=#1800 id=1800 data-nosnippet>1800</a>                )))
-<a href=#1801 id=1801 data-nosnippet>1801</a>            })
-<a href=#1802 id=1802 data-nosnippet>1802</a>            .collect()
-<a href=#1803 id=1803 data-nosnippet>1803</a>    } <span class="kw">else </span>{
-<a href=#1804 id=1804 data-nosnippet>1804</a>        Vec::new()
-<a href=#1805 id=1805 data-nosnippet>1805</a>    };
-<a href=#1806 id=1806 data-nosnippet>1806</a>    <span class="kw">let </span>block = <span class="kw">if </span>blocks {
-<a href=#1807 id=1807 data-nosnippet>1807</a>        <span class="kw">let </span>rows: Vec&lt;EventRow&gt; = batch
-<a href=#1808 id=1808 data-nosnippet>1808</a>            .iter()
-<a href=#1809 id=1809 data-nosnippet>1809</a>            .zip(recorded)
-<a href=#1810 id=1810 data-nosnippet>1810</a>            .map(|(e, r)| event_row(e, r))
-<a href=#1811 id=1811 data-nosnippet>1811</a>            .collect();
-<a href=#1812 id=1812 data-nosnippet>1812</a>        <span class="kw">let </span><span class="kw-2">mut </span>strings: Vec&lt;(u32, Arc&lt;str&gt;)&gt; = Vec::new();
-<a href=#1813 id=1813 data-nosnippet>1813</a>        <span class="kw">for </span>(event, r) <span class="kw">in </span>batch.iter().zip(recorded) {
-<a href=#1814 id=1814 data-nosnippet>1814</a>            strings.push((r.exe, Arc::clone(<span class="kw-2">&amp;</span>event.exe)));
-<a href=#1815 id=1815 data-nosnippet>1815</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(host) = <span class="kw-2">&amp;</span>event.host {
-<a href=#1816 id=1816 data-nosnippet>1816</a>                strings.push((r.host, Arc::clone(host)));
-<a href=#1817 id=1817 data-nosnippet>1817</a>            }
-<a href=#1818 id=1818 data-nosnippet>1818</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(container) = <span class="kw-2">&amp;</span>event.container {
-<a href=#1819 id=1819 data-nosnippet>1819</a>                strings.push((r.container, Arc::clone(container)));
-<a href=#1820 id=1820 data-nosnippet>1820</a>            }
-<a href=#1821 id=1821 data-nosnippet>1821</a>        }
-<a href=#1822 id=1822 data-nosnippet>1822</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
-<a href=#1823 id=1823 data-nosnippet>1823</a>        <span class="kw">match </span>columns::encode_events(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;mut </span>columns) {
-<a href=#1824 id=1824 data-nosnippet>1824</a>            <span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Some</span>(Outgoing::Block {
-<a href=#1825 id=1825 data-nosnippet>1825</a>                columns: bytes::Bytes::from(columns),
-<a href=#1826 id=1826 data-nosnippet>1826</a>                strings: Arc::from(strings),
-<a href=#1827 id=1827 data-nosnippet>1827</a>            }),
-<a href=#1828 id=1828 data-nosnippet>1828</a>            <span class="prelude-val">Err</span>(error) =&gt; {
-<a href=#1829 id=1829 data-nosnippet>1829</a>                <span class="macro">error!</span>(%error, <span class="string">"encoding an event block"</span>);
-<a href=#1830 id=1830 data-nosnippet>1830</a>                <span class="prelude-val">None
-<a href=#1831 id=1831 data-nosnippet>1831</a>            </span>}
-<a href=#1832 id=1832 data-nosnippet>1832</a>        }
-<a href=#1833 id=1833 data-nosnippet>1833</a>    } <span class="kw">else </span>{
-<a href=#1834 id=1834 data-nosnippet>1834</a>        <span class="prelude-val">None
-<a href=#1835 id=1835 data-nosnippet>1835</a>    </span>};
-<a href=#1836 id=1836 data-nosnippet>1836</a>    <span class="kw">if </span>messages || block.is_some() {
-<a href=#1837 id=1837 data-nosnippet>1837</a>        shared
-<a href=#1838 id=1838 data-nosnippet>1838</a>            .hub
-<a href=#1839 id=1839 data-nosnippet>1839</a>            .publish_all(v1::Topic::Events, <span class="kw-2">&amp;</span>plain, block.as_ref());
-<a href=#1840 id=1840 data-nosnippet>1840</a>    }
-<a href=#1841 id=1841 data-nosnippet>1841</a>}
-<a href=#1842 id=1842 data-nosnippet>1842</a>
-<a href=#1843 id=1843 data-nosnippet>1843</a><span class="doccomment">/// A recorded event as a block's row: the protocol's numbers, the strings' ids.
-<a href=#1844 id=1844 data-nosnippet>1844</a></span><span class="kw">fn </span>event_row(event: <span class="kw-2">&amp;</span>Event, recorded: <span class="kw-2">&amp;</span><span class="kw">crate</span>::store::Recorded) -&gt; EventRow {
-<a href=#1845 id=1845 data-nosnippet>1845</a>    <span class="kw">let </span>address = <span class="kw">match </span>event.address {
-<a href=#1846 id=1846 data-nosnippet>1846</a>        std::net::IpAddr::V4(a) =&gt; a.to_ipv6_mapped().octets(),
-<a href=#1847 id=1847 data-nosnippet>1847</a>        std::net::IpAddr::V6(a) =&gt; a.octets(),
-<a href=#1848 id=1848 data-nosnippet>1848</a>    };
-<a href=#1849 id=1849 data-nosnippet>1849</a>    EventRow {
-<a href=#1850 id=1850 data-nosnippet>1850</a>        seq: recorded.seq,
-<a href=#1851 id=1851 data-nosnippet>1851</a>        time_ms: event.time_ms,
-<a href=#1852 id=1852 data-nosnippet>1852</a>        exe: recorded.exe,
-<a href=#1853 id=1853 data-nosnippet>1853</a>        host: recorded.host,
-<a href=#1854 id=1854 data-nosnippet>1854</a>        uid: event.uid,
-<a href=#1855 id=1855 data-nosnippet>1855</a>        pid: event.pid,
-<a href=#1856 id=1856 data-nosnippet>1856</a>        address,
-<a href=#1857 id=1857 data-nosnippet>1857</a>        port: event.port,
-<a href=#1858 id=1858 data-nosnippet>1858</a>        protocol: event.protocol,
-<a href=#1859 id=1859 data-nosnippet>1859</a>        context: event.context.saturating_add(<span class="number">1</span>),
-<a href=#1860 id=1860 data-nosnippet>1860</a>        action: u8::try_from(i32::from(convert::action(event.action))).unwrap_or(<span class="number">0</span>),
-<a href=#1861 id=1861 data-nosnippet>1861</a>        source: event.source <span class="kw">as </span>u8,
-<a href=#1862 id=1862 data-nosnippet>1862</a>        rule: event.rule.unwrap_or(<span class="number">0</span>),
-<a href=#1863 id=1863 data-nosnippet>1863</a>        bytes_out: <span class="number">0</span>,
-<a href=#1864 id=1864 data-nosnippet>1864</a>        bytes_in: <span class="number">0</span>,
-<a href=#1865 id=1865 data-nosnippet>1865</a>        container: recorded.container,
-<a href=#1866 id=1866 data-nosnippet>1866</a>    }
-<a href=#1867 id=1867 data-nosnippet>1867</a>}
-<a href=#1868 id=1868 data-nosnippet>1868</a>
-<a href=#1869 id=1869 data-nosnippet>1869</a><span class="doccomment">/// Raises an alert when the last daemon didn't stop cleanly (its marker is still there: it crashed, was killed, or the
-<a href=#1870 id=1870 data-nosnippet>1870</a>/// machine lost power), then puts this one's marker in place.
-<a href=#1871 id=1871 data-nosnippet>1871</a></span><span class="kw">fn </span>check_marker(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span>Store) {
-<a href=#1872 id=1872 data-nosnippet>1872</a>    <span class="kw">let </span>marker = config_marker(<span class="kw-2">&amp;</span>shared.config);
-<a href=#1873 id=1873 data-nosnippet>1873</a>    <span class="kw">if </span>marker.exists() {
-<a href=#1874 id=1874 data-nosnippet>1874</a>        <span class="kw">crate</span>::alerts::raise(
-<a href=#1875 id=1875 data-nosnippet>1875</a>            shared,
-<a href=#1876 id=1876 data-nosnippet>1876</a>            store,
-<a href=#1877 id=1877 data-nosnippet>1877</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
-<a href=#1878 id=1878 data-nosnippet>1878</a>                kind: <span class="string">"crashed"</span>,
-<a href=#1879 id=1879 data-nosnippet>1879</a>                title: <span class="string">"The daemon stopped unexpectedly"</span>.to_owned(),
-<a href=#1880 id=1880 data-nosnippet>1880</a>                body: <span class="string">"It didn't stop cleanly last time: it crashed, was killed, or the machine lost power."
-<a href=#1881 id=1881 data-nosnippet>1881</a>                    </span>.to_owned(),
-<a href=#1882 id=1882 data-nosnippet>1882</a>                rule: <span class="prelude-val">None</span>,
-<a href=#1883 id=1883 data-nosnippet>1883</a>            },
-<a href=#1884 id=1884 data-nosnippet>1884</a>        );
-<a href=#1885 id=1885 data-nosnippet>1885</a>    }
-<a href=#1886 id=1886 data-nosnippet>1886</a>    <span class="kw">let _ </span>= std::fs::write(<span class="kw-2">&amp;</span>marker, <span class="string">b""</span>);
-<a href=#1887 id=1887 data-nosnippet>1887</a>}
-<a href=#1888 id=1888 data-nosnippet>1888</a>
-<a href=#1889 id=1889 data-nosnippet>1889</a><span class="doccomment">/// Where a running daemon keeps its marker: next to its database, so a crash is noticed after a reboot too.
-<a href=#1890 id=1890 data-nosnippet>1890</a></span><span class="kw">fn </span>config_marker(config: <span class="kw-2">&amp;</span>Config) -&gt; std::path::PathBuf {
-<a href=#1891 id=1891 data-nosnippet>1891</a>    config.database.with_extension(<span class="string">"running"</span>)
-<a href=#1892 id=1892 data-nosnippet>1892</a>}
-<a href=#1893 id=1893 data-nosnippet>1893</a>
-<a href=#1894 id=1894 data-nosnippet>1894</a><span class="doccomment">/// How often the tables are checked.
-<a href=#1895 id=1895 data-nosnippet>1895</a>/// How often the counters of what was lost are checked.
-<a href=#1896 id=1896 data-nosnippet>1896</a></span><span class="kw">const </span>LOSS_CHECK_EVERY: Duration = Duration::from_secs(<span class="number">60</span>);
-<a href=#1897 id=1897 data-nosnippet>1897</a>
-<a href=#1898 id=1898 data-nosnippet>1898</a><span class="doccomment">/// Packets the kernel dropped on queues `first..first + count` (`/proc/net/netfilter/nfnetlink_queue`: the queue
-<a href=#1899 id=1899 data-nosnippet>1899</a>/// overflowed, or the daemon's socket couldn't take them).
-<a href=#1900 id=1900 data-nosnippet>1900</a></span><span class="kw">fn </span>queue_drops(first: u16, count: u16) -&gt; u64 {
-<a href=#1901 id=1901 data-nosnippet>1901</a>    std::fs::read_to_string(<span class="string">"/proc/net/netfilter/nfnetlink_queue"</span>).map_or(<span class="number">0</span>, |text| {
-<a href=#1902 id=1902 data-nosnippet>1902</a>        text.lines()
-<a href=#1903 id=1903 data-nosnippet>1903</a>            .filter_map(|line| {
-<a href=#1904 id=1904 data-nosnippet>1904</a>                <span class="kw">let </span>fields: Vec&lt;u64&gt; = line
-<a href=#1905 id=1905 data-nosnippet>1905</a>                    .split_whitespace()
-<a href=#1906 id=1906 data-nosnippet>1906</a>                    .filter_map(|f| f.parse().ok())
-<a href=#1907 id=1907 data-nosnippet>1907</a>                    .collect();
-<a href=#1908 id=1908 data-nosnippet>1908</a>                <span class="kw">let </span>queue = u16::try_from(<span class="kw-2">*</span>fields.first()<span class="question-mark">?</span>).ok()<span class="question-mark">?</span>;
-<a href=#1909 id=1909 data-nosnippet>1909</a>                (queue &gt;= first &amp;&amp; queue &lt; first.saturating_add(count)).then(|| {
-<a href=#1910 id=1910 data-nosnippet>1910</a>                    fields.get(<span class="number">5</span>).copied().unwrap_or(<span class="number">0</span>) + fields.get(<span class="number">6</span>).copied().unwrap_or(<span class="number">0</span>)
-<a href=#1911 id=1911 data-nosnippet>1911</a>                })
-<a href=#1912 id=1912 data-nosnippet>1912</a>            })
-<a href=#1913 id=1913 data-nosnippet>1913</a>            .sum()
-<a href=#1914 id=1914 data-nosnippet>1914</a>    })
-<a href=#1915 id=1915 data-nosnippet>1915</a>}
-<a href=#1916 id=1916 data-nosnippet>1916</a>
-<a href=#1917 id=1917 data-nosnippet>1917</a><span class="doccomment">/// Alerts about what the node lost since the last check: events the history couldn't keep, packets the kernel
-<a href=#1918 id=1918 data-nosnippet>1918</a>/// dropped.
-<a href=#1919 id=1919 data-nosnippet>1919</a></span><span class="kw">fn </span>check_losses(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span>Store, seen: <span class="kw-2">&amp;mut </span>(u64, u64)) {
-<a href=#1920 id=1920 data-nosnippet>1920</a>    <span class="kw">let </span>dropped = shared.dropped_events.load(Ordering::Relaxed);
-<a href=#1921 id=1921 data-nosnippet>1921</a>    <span class="kw">if </span>dropped &gt; seen.<span class="number">0 </span>{
-<a href=#1922 id=1922 data-nosnippet>1922</a>        <span class="kw">crate</span>::alerts::raise(
-<a href=#1923 id=1923 data-nosnippet>1923</a>            shared,
-<a href=#1924 id=1924 data-nosnippet>1924</a>            store,
-<a href=#1925 id=1925 data-nosnippet>1925</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
-<a href=#1926 id=1926 data-nosnippet>1926</a>                kind: <span class="string">"dropped_events"</span>,
-<a href=#1927 id=1927 data-nosnippet>1927</a>                title: <span class="string">"Connections weren't recorded"</span>.to_owned(),
-<a href=#1928 id=1928 data-nosnippet>1928</a>                body: <span class="macro">format!</span>(
-<a href=#1929 id=1929 data-nosnippet>1929</a>                    <span class="string">"{} connections were decided but not kept in the history: the database couldn't keep up."</span>,
-<a href=#1930 id=1930 data-nosnippet>1930</a>                    dropped - seen.<span class="number">0
-<a href=#1931 id=1931 data-nosnippet>1931</a>                </span>),
-<a href=#1932 id=1932 data-nosnippet>1932</a>                rule: <span class="prelude-val">None</span>,
-<a href=#1933 id=1933 data-nosnippet>1933</a>            },
-<a href=#1934 id=1934 data-nosnippet>1934</a>        );
-<a href=#1935 id=1935 data-nosnippet>1935</a>    }
-<a href=#1936 id=1936 data-nosnippet>1936</a>    <span class="kw">let </span>queued = queue_drops(shared.config.queue, shared.config.queues);
-<a href=#1937 id=1937 data-nosnippet>1937</a>    <span class="kw">if </span>queued &gt; seen.<span class="number">1 </span>{
+<a href=#1536 id=1536 data-nosnippet>1536</a>    <span class="kw">let </span>key = FlowKey {
+<a href=#1537 id=1537 data-nosnippet>1537</a>        netns,
+<a href=#1538 id=1538 data-nosnippet>1538</a>        protocol: headers.protocol,
+<a href=#1539 id=1539 data-nosnippet>1539</a>        source_port: headers.source_port,
+<a href=#1540 id=1540 data-nosnippet>1540</a>        destination: headers.destination,
+<a href=#1541 id=1541 data-nosnippet>1541</a>        destination_port: headers.destination_port,
+<a href=#1542 id=1542 data-nosnippet>1542</a>    };
+<a href=#1543 id=1543 data-nosnippet>1543</a>    <span class="kw">let </span>(owner, vm) = <span class="kw">match </span>owner_of(shared, senders, queued, (<span class="kw-2">&amp;</span>key, headers.source)) {
+<a href=#1544 id=1544 data-nosnippet>1544</a>        Owner::Process(owner) =&gt; (<span class="prelude-val">Some</span>(owner), <span class="prelude-val">None</span>),
+<a href=#1545 id=1545 data-nosnippet>1545</a>        Owner::Tap(tap) =&gt; (<span class="prelude-val">None</span>, shared.contexts.vm_on_tap(<span class="kw-2">&amp;</span>tap)),
+<a href=#1546 id=1546 data-nosnippet>1546</a>        Owner::Unknown =&gt; (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#1547 id=1547 data-nosnippet>1547</a>    };
+<a href=#1548 id=1548 data-nosnippet>1548</a>    <span class="kw">if </span>never_decided(shared, owner.map(|o| o.pid), queued, headers.protocol) {
+<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
+<a href=#1550 id=1550 data-nosnippet>1550</a>    }
+<a href=#1551 id=1551 data-nosnippet>1551</a>    <span class="kw">let </span>process = owner.and_then(|owner| processes.get(owner.pid, owner.start_boottime));
+<a href=#1552 id=1552 data-nosnippet>1552</a>    <span class="kw">let </span>now = now_ms();
+<a href=#1553 id=1553 data-nosnippet>1553</a>    <span class="comment">// The user as the kernel recorded it when the socket was opened (the queue's uid is the socket's owner, for
+<a href=#1554 id=1554 data-nosnippet>1554</a>    // packets the attribution programs didn't see).
+<a href=#1555 id=1555 data-nosnippet>1555</a>    </span><span class="kw">let </span>uid = owner.map(|o| o.uid).or(queued.uid).unwrap_or(u32::MAX);
+<a href=#1556 id=1556 data-nosnippet>1556</a>    <span class="kw">let </span>home = process.as_ref().and_then(|<span class="kw">_</span>| processes.home(uid));
+<a href=#1557 id=1557 data-nosnippet>1557</a>    <span class="kw">let </span>pid = owner.map_or(<span class="number">0</span>, |o| o.pid);
+<a href=#1558 id=1558 data-nosnippet>1558</a>    <span class="kw">let </span>hosts = shared
+<a href=#1559 id=1559 data-nosnippet>1559</a>        .names
+<a href=#1560 id=1560 data-nosnippet>1560</a>        .read()
+<a href=#1561 id=1561 data-nosnippet>1561</a>        .unwrap_or_else(PoisonError::into_inner)
+<a href=#1562 id=1562 data-nosnippet>1562</a>        .lookup(pid, headers.destination, now);
+<a href=#1563 id=1563 data-nosnippet>1563</a>    <span class="kw">let </span>empty: <span class="kw-2">&amp;</span>[String] = <span class="kw-2">&amp;</span>[];
+<a href=#1564 id=1564 data-nosnippet>1564</a>    <span class="kw">let </span>(context, container, helper) = <span class="kw">if </span>vm.is_some() {
+<a href=#1565 id=1565 data-nosnippet>1565</a>        (ContextKind::Vm, <span class="prelude-val">None</span>, <span class="bool-val">false</span>)
+<a href=#1566 id=1566 data-nosnippet>1566</a>    } <span class="kw">else </span>{
+<a href=#1567 id=1567 data-nosnippet>1567</a>        context_of(shared, owner, process.as_deref())
+<a href=#1568 id=1568 data-nosnippet>1568</a>    };
+<a href=#1569 id=1569 data-nosnippet>1569</a>    <span class="comment">// A helper's connection for a namespace decided inside was decided there already, with its program: deciding it
+<a href=#1570 id=1570 data-nosnippet>1570</a>    // again here, knowing less, could only contradict that. Until then, the daemon starts deciding inside.
+<a href=#1571 id=1571 data-nosnippet>1571</a>    </span><span class="kw">if </span>helper &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>((pid, inode)) = container.as_ref().and_then(|c| c.served) {
+<a href=#1572 id=1572 data-nosnippet>1572</a>        <span class="kw">if </span>shared.namespaces.is_managed(inode) {
+<a href=#1573 id=1573 data-nosnippet>1573</a>            <span class="kw">return </span>(<span class="prelude-val">Some</span>(Verdict::Accept), <span class="prelude-val">None</span>);
+<a href=#1574 id=1574 data-nosnippet>1574</a>        }
+<a href=#1575 id=1575 data-nosnippet>1575</a>        shared.namespaces.request(pid, inode);
+<a href=#1576 id=1576 data-nosnippet>1576</a>    }
+<a href=#1577 id=1577 data-nosnippet>1577</a>    <span class="comment">// A network helper isn't the program: the one in the container is, unknown from out here.
+<a href=#1578 id=1578 data-nosnippet>1578</a>    </span><span class="kw">let </span>process = <span class="kw">if </span>helper { <span class="prelude-val">None </span>} <span class="kw">else </span>{ process };
+<a href=#1579 id=1579 data-nosnippet>1579</a>    <span class="comment">// A named namespace's connections (queued inside it) carry its name.
+<a href=#1580 id=1580 data-nosnippet>1580</a>    </span><span class="kw">let </span>named = (netns != shared.netns)
+<a href=#1581 id=1581 data-nosnippet>1581</a>        .then(|| shared.namespaces.named(u64::from(netns)))
+<a href=#1582 id=1582 data-nosnippet>1582</a>        .flatten();
+<a href=#1583 id=1583 data-nosnippet>1583</a>    <span class="comment">// Hashed only while a rule pins a binary.
+<a href=#1584 id=1584 data-nosnippet>1584</a>    </span><span class="kw">let </span>sha256 = process
+<a href=#1585 id=1585 data-nosnippet>1585</a>        .as_ref()
+<a href=#1586 id=1586 data-nosnippet>1586</a>        .filter(|<span class="kw">_</span>| shared.rules.load().needs_sha256())
+<a href=#1587 id=1587 data-nosnippet>1587</a>        .and_then(|p| <span class="kw">crate</span>::process::sha256_of(p.pid));
+<a href=#1588 id=1588 data-nosnippet>1588</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(found) = container.as_deref() {
+<a href=#1589 id=1589 data-nosnippet>1589</a>        note_net_admin(shared, found);
+<a href=#1590 id=1590 data-nosnippet>1590</a>    }
+<a href=#1591 id=1591 data-nosnippet>1591</a>    <span class="kw">let </span>facts = Facts {
+<a href=#1592 id=1592 data-nosnippet>1592</a>        exe: process.as_ref().map_or(<span class="string">""</span>, |p| <span class="kw-2">&amp;*</span>p.exe),
+<a href=#1593 id=1593 data-nosnippet>1593</a>        apps: process.as_ref().map_or(<span class="kw-2">&amp;</span>[], |p| p.apps.as_slice()),
+<a href=#1594 id=1594 data-nosnippet>1594</a>        sha256: sha256.as_deref(),
+<a href=#1595 id=1595 data-nosnippet>1595</a>        writable: process.as_ref().is_some_and(|p| p.writable),
+<a href=#1596 id=1596 data-nosnippet>1596</a>        cmdline: process.as_ref().map_or(<span class="string">""</span>, |p| p.cmdline.as_str()),
+<a href=#1597 id=1597 data-nosnippet>1597</a>        ancestors: process.as_ref().map_or(empty, |p| p.ancestors.as_slice()),
+<a href=#1598 id=1598 data-nosnippet>1598</a>        lineage: process.as_ref().map_or(<span class="kw-2">&amp;</span>[], |p| p.lineage.as_slice()),
+<a href=#1599 id=1599 data-nosnippet>1599</a>        uid,
+<a href=#1600 id=1600 data-nosnippet>1600</a>        home: home.as_deref(),
+<a href=#1601 id=1601 data-nosnippet>1601</a>        hosts: <span class="kw-2">&amp;</span>hosts,
+<a href=#1602 id=1602 data-nosnippet>1602</a>        address: headers.destination,
+<a href=#1603 id=1603 data-nosnippet>1603</a>        port: headers.destination_port,
+<a href=#1604 id=1604 data-nosnippet>1604</a>        protocol: headers.protocol,
+<a href=#1605 id=1605 data-nosnippet>1605</a>        context,
+<a href=#1606 id=1606 data-nosnippet>1606</a>        now_ms: now,
+<a href=#1607 id=1607 data-nosnippet>1607</a>        container: container.as_deref().map(|c| <span class="kw-2">&amp;</span>c.container),
+<a href=#1608 id=1608 data-nosnippet>1608</a>        vm: vm.as_deref().map(|v| <span class="kw-2">&amp;</span>v.vm),
+<a href=#1609 id=1609 data-nosnippet>1609</a>        netns: named.as_ref().map(|(name, <span class="kw">_</span>)| <span class="kw-2">&amp;**</span>name),
+<a href=#1610 id=1610 data-nosnippet>1610</a>    };
+<a href=#1611 id=1611 data-nosnippet>1611</a>    <span class="kw">let </span>exe = process
+<a href=#1612 id=1612 data-nosnippet>1612</a>        .as_ref()
+<a href=#1613 id=1613 data-nosnippet>1613</a>        .map_or_else(|| Arc::clone(<span class="kw-2">&amp;</span>shared.unknown), |p| Arc::clone(<span class="kw-2">&amp;</span>p.exe));
+<a href=#1614 id=1614 data-nosnippet>1614</a>    <span class="kw">let </span>event = undecided_event(
+<a href=#1615 id=1615 data-nosnippet>1615</a>        <span class="kw-2">&amp;</span>facts,
+<a href=#1616 id=1616 data-nosnippet>1616</a>        exe,
+<a href=#1617 id=1617 data-nosnippet>1617</a>        pid,
+<a href=#1618 id=1618 data-nosnippet>1618</a>        owner.map(|o| o.cookie),
+<a href=#1619 id=1619 data-nosnippet>1619</a>        container
+<a href=#1620 id=1620 data-nosnippet>1620</a>            .as_ref()
+<a href=#1621 id=1621 data-nosnippet>1621</a>            .map(|c| Arc::clone(<span class="kw-2">&amp;</span>c.key))
+<a href=#1622 id=1622 data-nosnippet>1622</a>            .or_else(|| named.as_ref().map(|(<span class="kw">_</span>, key)| Arc::clone(key)))
+<a href=#1623 id=1623 data-nosnippet>1623</a>            .or_else(|| vm.as_ref().map(|v| Arc::clone(<span class="kw-2">&amp;</span>v.key))),
+<a href=#1624 id=1624 data-nosnippet>1624</a>        interface_of(senders, queued),
+<a href=#1625 id=1625 data-nosnippet>1625</a>    );
+<a href=#1626 id=1626 data-nosnippet>1626</a>    <span class="kw">let </span>(action, source, rule) = <span class="kw">if let </span><span class="prelude-val">Some</span>(decision) = shared.rules.load().decide(<span class="kw-2">&amp;</span>facts) {
+<a href=#1627 id=1627 data-nosnippet>1627</a>        (decision.action, Source::Rule, <span class="prelude-val">Some</span>(decision.rule))
+<a href=#1628 id=1628 data-nosnippet>1628</a>    } <span class="kw">else </span>{
+<a href=#1629 id=1629 data-nosnippet>1629</a>        <span class="kw">let </span>held = Held {
+<a href=#1630 id=1630 data-nosnippet>1630</a>            queue,
+<a href=#1631 id=1631 data-nosnippet>1631</a>            id: queued.id,
+<a href=#1632 id=1632 data-nosnippet>1632</a>        };
+<a href=#1633 id=1633 data-nosnippet>1633</a>        <span class="kw">match </span>undecided(shared, <span class="kw-2">&amp;</span>facts, <span class="kw-2">&amp;</span>event, held) {
+<a href=#1634 id=1634 data-nosnippet>1634</a>            <span class="prelude-val">Some</span>(decided) =&gt; decided,
+<a href=#1635 id=1635 data-nosnippet>1635</a>            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="prelude-val">None</span>),
+<a href=#1636 id=1636 data-nosnippet>1636</a>        }
+<a href=#1637 id=1637 data-nosnippet>1637</a>    };
+<a href=#1638 id=1638 data-nosnippet>1638</a>    conclude(shared, <span class="kw-2">&amp;</span>facts, event, <span class="kw-2">&amp;</span>headers, (action, source, rule))
+<a href=#1639 id=1639 data-nosnippet>1639</a>}
+<a href=#1640 id=1640 data-nosnippet>1640</a>
+<a href=#1641 id=1641 data-nosnippet>1641</a><span class="doccomment">/// A decided connection: its verdict by the mode, the history's record, and the socket to close for a rejection.
+<a href=#1642 id=1642 data-nosnippet>1642</a></span><span class="kw">fn </span>conclude(
+<a href=#1643 id=1643 data-nosnippet>1643</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1644 id=1644 data-nosnippet>1644</a>    facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1645 id=1645 data-nosnippet>1645</a>    <span class="kw-2">mut </span>event: Event,
+<a href=#1646 id=1646 data-nosnippet>1646</a>    headers: <span class="kw-2">&amp;</span>packet::Headers,
+<a href=#1647 id=1647 data-nosnippet>1647</a>    (action, source, rule): (Action, Source, <span class="prelude-ty">Option</span>&lt;RuleId&gt;),
+<a href=#1648 id=1648 data-nosnippet>1648</a>) -&gt; (<span class="prelude-ty">Option</span>&lt;Verdict&gt;, <span class="prelude-ty">Option</span>&lt;SocketId&gt;) {
+<a href=#1649 id=1649 data-nosnippet>1649</a>    <span class="kw">let </span>(verdict, source) = <span class="kw">match </span>shared.policy.load().mode {
+<a href=#1650 id=1650 data-nosnippet>1650</a>        Mode::Monitor =&gt; (Verdict::Accept, Source::Monitor),
+<a href=#1651 id=1651 data-nosnippet>1651</a>        Mode::Enforce =&gt; (
+<a href=#1652 id=1652 data-nosnippet>1652</a>            <span class="kw">if </span>action == Action::Allow {
+<a href=#1653 id=1653 data-nosnippet>1653</a>                Verdict::Accept
+<a href=#1654 id=1654 data-nosnippet>1654</a>            } <span class="kw">else </span>{
+<a href=#1655 id=1655 data-nosnippet>1655</a>                Verdict::Drop
+<a href=#1656 id=1656 data-nosnippet>1656</a>            },
+<a href=#1657 id=1657 data-nosnippet>1657</a>            source,
+<a href=#1658 id=1658 data-nosnippet>1658</a>        ),
+<a href=#1659 id=1659 data-nosnippet>1659</a>    };
+<a href=#1660 id=1660 data-nosnippet>1660</a>    <span class="kw">if </span>action != Action::Allow {
+<a href=#1661 id=1661 data-nosnippet>1661</a>        remember(shared, facts, <span class="kw-2">&amp;</span>event, <span class="prelude-val">None</span>);
+<a href=#1662 id=1662 data-nosnippet>1662</a>    }
+<a href=#1663 id=1663 data-nosnippet>1663</a>    event.action = action;
+<a href=#1664 id=1664 data-nosnippet>1664</a>    event.source = source;
+<a href=#1665 id=1665 data-nosnippet>1665</a>    event.rule = rule;
+<a href=#1666 id=1666 data-nosnippet>1666</a>    <span class="kw">if let </span><span class="prelude-val">Some</span>(rule) = rule {
+<a href=#1667 id=1667 data-nosnippet>1667</a>        shared.blocklists.decided(rule);
+<a href=#1668 id=1668 data-nosnippet>1668</a>    }
+<a href=#1669 id=1669 data-nosnippet>1669</a>    <span class="kw">if let </span><span class="prelude-val">Err</span>(TrySendError::Full(<span class="kw">_</span>) | TrySendError::Disconnected(<span class="kw">_</span>)) =
+<a href=#1670 id=1670 data-nosnippet>1670</a>        shared.events.try_send(event)
+<a href=#1671 id=1671 data-nosnippet>1671</a>    {
+<a href=#1672 id=1672 data-nosnippet>1672</a>        shared.dropped_events.fetch_add(<span class="number">1</span>, Ordering::Relaxed);
+<a href=#1673 id=1673 data-nosnippet>1673</a>    }
+<a href=#1674 id=1674 data-nosnippet>1674</a>    <span class="kw">let </span>reject = (verdict == Verdict::Drop &amp;&amp; action == Action::Reject).then_some(SocketId {
+<a href=#1675 id=1675 data-nosnippet>1675</a>        protocol: headers.protocol,
+<a href=#1676 id=1676 data-nosnippet>1676</a>        local: headers.source,
+<a href=#1677 id=1677 data-nosnippet>1677</a>        local_port: headers.source_port,
+<a href=#1678 id=1678 data-nosnippet>1678</a>        remote: headers.destination,
+<a href=#1679 id=1679 data-nosnippet>1679</a>        remote_port: headers.destination_port,
+<a href=#1680 id=1680 data-nosnippet>1680</a>    });
+<a href=#1681 id=1681 data-nosnippet>1681</a>    (<span class="prelude-val">Some</span>(verdict), reject)
+<a href=#1682 id=1682 data-nosnippet>1682</a>}
+<a href=#1683 id=1683 data-nosnippet>1683</a>
+<a href=#1684 id=1684 data-nosnippet>1684</a><span class="doccomment">/// Remembers a connection not allowed, with its process's lineage, for agents (see `agents`).
+<a href=#1685 id=1685 data-nosnippet>1685</a></span><span class="kw">fn </span>remember(shared: <span class="kw-2">&amp;</span>Shared, facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;, event: <span class="kw-2">&amp;</span>Event, prompt: <span class="prelude-ty">Option</span>&lt;u64&gt;) {
+<a href=#1686 id=1686 data-nosnippet>1686</a>    <span class="kw">if </span>facts.lineage.is_empty() {
+<a href=#1687 id=1687 data-nosnippet>1687</a>        <span class="kw">return</span>;
+<a href=#1688 id=1688 data-nosnippet>1688</a>    }
+<a href=#1689 id=1689 data-nosnippet>1689</a>    shared.blocked.record(<span class="kw">crate</span>::agents::Blocked {
+<a href=#1690 id=1690 data-nosnippet>1690</a>        time_ms: facts.now_ms,
+<a href=#1691 id=1691 data-nosnippet>1691</a>        lineage: facts.lineage.to_vec(),
+<a href=#1692 id=1692 data-nosnippet>1692</a>        exe: Arc::clone(<span class="kw-2">&amp;</span>event.exe),
+<a href=#1693 id=1693 data-nosnippet>1693</a>        host: facts.hosts.first().map(ToString::to_string),
+<a href=#1694 id=1694 data-nosnippet>1694</a>        address: facts.address,
+<a href=#1695 id=1695 data-nosnippet>1695</a>        port: facts.port,
+<a href=#1696 id=1696 data-nosnippet>1696</a>        protocol: facts.protocol,
+<a href=#1697 id=1697 data-nosnippet>1697</a>        uid: facts.uid,
+<a href=#1698 id=1698 data-nosnippet>1698</a>        context: facts.context,
+<a href=#1699 id=1699 data-nosnippet>1699</a>        prompt,
+<a href=#1700 id=1700 data-nosnippet>1700</a>    });
+<a href=#1701 id=1701 data-nosnippet>1701</a>}
+<a href=#1702 id=1702 data-nosnippet>1702</a>
+<a href=#1703 id=1703 data-nosnippet>1703</a><span class="doccomment">/// A connection no rule decides: held for a prompt (`None`), or decided by the policy (by `on_timeout` when asking
+<a href=#1704 id=1704 data-nosnippet>1704</a>/// but too many prompts are open).
+<a href=#1705 id=1705 data-nosnippet>1705</a></span><span class="kw">fn </span>undecided(
+<a href=#1706 id=1706 data-nosnippet>1706</a>    shared: <span class="kw-2">&amp;</span>Shared,
+<a href=#1707 id=1707 data-nosnippet>1707</a>    facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#1708 id=1708 data-nosnippet>1708</a>    event: <span class="kw-2">&amp;</span>Event,
+<a href=#1709 id=1709 data-nosnippet>1709</a>    held: Held,
+<a href=#1710 id=1710 data-nosnippet>1710</a>) -&gt; <span class="prelude-ty">Option</span>&lt;(Action, Source, <span class="prelude-ty">Option</span>&lt;RuleId&gt;)&gt; {
+<a href=#1711 id=1711 data-nosnippet>1711</a>    <span class="kw">let </span>asking = asks(shared);
+<a href=#1712 id=1712 data-nosnippet>1712</a>    <span class="kw">if </span>asking &amp;&amp; <span class="kw">let </span><span class="prelude-val">Some</span>(prompt) = hold(shared, facts, event, held) {
+<a href=#1713 id=1713 data-nosnippet>1713</a>        remember(shared, facts, event, <span class="prelude-val">Some</span>(prompt));
+<a href=#1714 id=1714 data-nosnippet>1714</a>        <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#1715 id=1715 data-nosnippet>1715</a>    }
+<a href=#1716 id=1716 data-nosnippet>1716</a>    <span class="kw">let </span>policy = shared.policy.load();
+<a href=#1717 id=1717 data-nosnippet>1717</a>    <span class="prelude-val">Some</span>(<span class="kw">if </span>asking {
+<a href=#1718 id=1718 data-nosnippet>1718</a>        (policy.on_timeout, Source::Timeout, <span class="prelude-val">None</span>)
+<a href=#1719 id=1719 data-nosnippet>1719</a>    } <span class="kw">else </span>{
+<a href=#1720 id=1720 data-nosnippet>1720</a>        <span class="kw">let </span>action = policy_action(policy.no_match, policy.no_client);
+<a href=#1721 id=1721 data-nosnippet>1721</a>        (action, Source::Policy, <span class="prelude-val">None</span>)
+<a href=#1722 id=1722 data-nosnippet>1722</a>    })
+<a href=#1723 id=1723 data-nosnippet>1723</a>}
+<a href=#1724 id=1724 data-nosnippet>1724</a>
+<a href=#1725 id=1725 data-nosnippet>1725</a><span class="doccomment">/// Holds a packet for the prompt of its program and destination, opening (and announcing) one if none is open; the
+<a href=#1726 id=1726 data-nosnippet>1726</a>/// prompt's id, or `None` when the broker is full (see [`crate::prompts::MAX_PROMPTS`]).
+<a href=#1727 id=1727 data-nosnippet>1727</a></span><span class="kw">fn </span>hold(shared: <span class="kw-2">&amp;</span>Shared, facts: <span class="kw-2">&amp;</span>Facts&lt;<span class="lifetime">'_</span>&gt;, event: <span class="kw-2">&amp;</span>Event, packet: Held) -&gt; <span class="prelude-ty">Option</span>&lt;u64&gt; {
+<a href=#1728 id=1728 data-nosnippet>1728</a>    <span class="kw">let </span>destination = facts
+<a href=#1729 id=1729 data-nosnippet>1729</a>        .hosts
+<a href=#1730 id=1730 data-nosnippet>1730</a>        .first()
+<a href=#1731 id=1731 data-nosnippet>1731</a>        .map_or_else(|| facts.address.to_string(), ToString::to_string);
+<a href=#1732 id=1732 data-nosnippet>1732</a>    <span class="kw">let </span>key = PromptKey {
+<a href=#1733 id=1733 data-nosnippet>1733</a>        exe: Arc::clone(<span class="kw-2">&amp;</span>event.exe),
+<a href=#1734 id=1734 data-nosnippet>1734</a>        uid: facts.uid,
+<a href=#1735 id=1735 data-nosnippet>1735</a>        destination,
+<a href=#1736 id=1736 data-nosnippet>1736</a>        port: facts.port,
+<a href=#1737 id=1737 data-nosnippet>1737</a>        protocol: facts.protocol,
+<a href=#1738 id=1738 data-nosnippet>1738</a>        container: event.container.clone(),
+<a href=#1739 id=1739 data-nosnippet>1739</a>    };
+<a href=#1740 id=1740 data-nosnippet>1740</a>    <span class="kw">let </span>opened = shared.broker.hold(key, packet, facts.now_ms, || {
+<a href=#1741 id=1741 data-nosnippet>1741</a>        <span class="kw">let </span>suggestions = snitchhiker_core::suggest::in_context(
+<a href=#1742 id=1742 data-nosnippet>1742</a>            snitchhiker_core::suggest::suggestions(
+<a href=#1743 id=1743 data-nosnippet>1743</a>                facts.exe,
+<a href=#1744 id=1744 data-nosnippet>1744</a>                facts.home,
+<a href=#1745 id=1745 data-nosnippet>1745</a>                facts.hosts,
+<a href=#1746 id=1746 data-nosnippet>1746</a>                facts.address,
+<a href=#1747 id=1747 data-nosnippet>1747</a>                facts.port,
+<a href=#1748 id=1748 data-nosnippet>1748</a>                facts.protocol,
+<a href=#1749 id=1749 data-nosnippet>1749</a>            ),
+<a href=#1750 id=1750 data-nosnippet>1750</a>            facts.context,
+<a href=#1751 id=1751 data-nosnippet>1751</a>            facts.container,
+<a href=#1752 id=1752 data-nosnippet>1752</a>            facts.vm,
+<a href=#1753 id=1753 data-nosnippet>1753</a>        );
+<a href=#1754 id=1754 data-nosnippet>1754</a>        NewPrompt {
+<a href=#1755 id=1755 data-nosnippet>1755</a>            prompt: v1::Prompt {
+<a href=#1756 id=1756 data-nosnippet>1756</a>                exe: facts.exe.to_owned(),
+<a href=#1757 id=1757 data-nosnippet>1757</a>                cmdline: facts.cmdline.to_owned(),
+<a href=#1758 id=1758 data-nosnippet>1758</a>                uid: facts.uid,
+<a href=#1759 id=1759 data-nosnippet>1759</a>                user: <span class="kw">crate</span>::process::user_of(facts.uid).unwrap_or_default(),
+<a href=#1760 id=1760 data-nosnippet>1760</a>                pid: event.pid,
+<a href=#1761 id=1761 data-nosnippet>1761</a>                hosts: facts.hosts.iter().map(ToString::to_string).collect(),
+<a href=#1762 id=1762 data-nosnippet>1762</a>                address: convert::address(facts.address),
+<a href=#1763 id=1763 data-nosnippet>1763</a>                port: u32::from(facts.port),
+<a href=#1764 id=1764 data-nosnippet>1764</a>                protocol: u32::from(facts.protocol),
+<a href=#1765 id=1765 data-nosnippet>1765</a>                context: convert::context(facts.context).into(),
+<a href=#1766 id=1766 data-nosnippet>1766</a>                <span class="comment">// As found (with what it can do), else as the history keeps it.
+<a href=#1767 id=1767 data-nosnippet>1767</a>                </span>container: facts
+<a href=#1768 id=1768 data-nosnippet>1768</a>                    .container
+<a href=#1769 id=1769 data-nosnippet>1769</a>                    .map(|c| Box::new(convert::container(c)))
+<a href=#1770 id=1770 data-nosnippet>1770</a>                    .or_else(|| {
+<a href=#1771 id=1771 data-nosnippet>1771</a>                        event
+<a href=#1772 id=1772 data-nosnippet>1772</a>                            .container
+<a href=#1773 id=1773 data-nosnippet>1773</a>                            .as_deref()
+<a href=#1774 id=1774 data-nosnippet>1774</a>                            .map(|key| Box::new(convert::container_from_key(key)))
+<a href=#1775 id=1775 data-nosnippet>1775</a>                    }),
+<a href=#1776 id=1776 data-nosnippet>1776</a>                exe_writable: <span class="kw">crate</span>::process::writable_by_others(event.pid),
+<a href=#1777 id=1777 data-nosnippet>1777</a>                suggestions: suggestions
+<a href=#1778 id=1778 data-nosnippet>1778</a>                    .iter()
+<a href=#1779 id=1779 data-nosnippet>1779</a>                    .map(|s| v1::Suggestion {
+<a href=#1780 id=1780 data-nosnippet>1780</a>                        label: s.label.clone(),
+<a href=#1781 id=1781 data-nosnippet>1781</a>                        conditions: <span class="prelude-val">Some</span>(convert::conditions(<span class="kw-2">&amp;</span>s.conditions)),
+<a href=#1782 id=1782 data-nosnippet>1782</a>                        broad: s.broad,
+<a href=#1783 id=1783 data-nosnippet>1783</a>                    })
+<a href=#1784 id=1784 data-nosnippet>1784</a>                    .collect(),
+<a href=#1785 id=1785 data-nosnippet>1785</a>                ..v1::Prompt::default()
+<a href=#1786 id=1786 data-nosnippet>1786</a>            },
+<a href=#1787 id=1787 data-nosnippet>1787</a>            suggestions,
+<a href=#1788 id=1788 data-nosnippet>1788</a>            event: event.clone(),
+<a href=#1789 id=1789 data-nosnippet>1789</a>        }
+<a href=#1790 id=1790 data-nosnippet>1790</a>    });
+<a href=#1791 id=1791 data-nosnippet>1791</a>    <span class="kw">match </span>opened {
+<a href=#1792 id=1792 data-nosnippet>1792</a>        Hold::Opened(prompt) =&gt; {
+<a href=#1793 id=1793 data-nosnippet>1793</a>            shared.router.opened(<span class="kw-2">&amp;</span>shared.hub, <span class="kw-2">&amp;</span>prompt);
+<a href=#1794 id=1794 data-nosnippet>1794</a>            <span class="prelude-val">Some</span>(prompt.id)
+<a href=#1795 id=1795 data-nosnippet>1795</a>        }
+<a href=#1796 id=1796 data-nosnippet>1796</a>        Hold::Joined(id) =&gt; <span class="prelude-val">Some</span>(id),
+<a href=#1797 id=1797 data-nosnippet>1797</a>        Hold::Full =&gt; <span class="prelude-val">None</span>,
+<a href=#1798 id=1798 data-nosnippet>1798</a>    }
+<a href=#1799 id=1799 data-nosnippet>1799</a>}
+<a href=#1800 id=1800 data-nosnippet>1800</a>
+<a href=#1801 id=1801 data-nosnippet>1801</a><span class="doccomment">/// Pushes recorded events to the subscribers of the events topic: one message each to those that want messages, and
+<a href=#1802 id=1802 data-nosnippet>1802</a>/// the batch as one columnar block to those that want blocks.
+<a href=#1803 id=1803 data-nosnippet>1803</a></span><span class="kw">fn </span>publish_events(shared: <span class="kw-2">&amp;</span>Shared, batch: <span class="kw-2">&amp;</span>[Event], recorded: <span class="kw-2">&amp;</span>[<span class="kw">crate</span>::store::Recorded]) {
+<a href=#1804 id=1804 data-nosnippet>1804</a>    <span class="kw">let </span>(messages, blocks) = shared.hub.wanted(v1::Topic::Events);
+<a href=#1805 id=1805 data-nosnippet>1805</a>    <span class="kw">let </span>plain: Vec&lt;Outgoing&gt; = <span class="kw">if </span>messages {
+<a href=#1806 id=1806 data-nosnippet>1806</a>        batch
+<a href=#1807 id=1807 data-nosnippet>1807</a>            .iter()
+<a href=#1808 id=1808 data-nosnippet>1808</a>            .zip(recorded)
+<a href=#1809 id=1809 data-nosnippet>1809</a>            .map(|(event, r)| {
+<a href=#1810 id=1810 data-nosnippet>1810</a>                Outgoing::Notice(v1::notice::Body::Event(<span class="kw">crate</span>::api::event(
+<a href=#1811 id=1811 data-nosnippet>1811</a>                    <span class="kw-2">&amp;</span>event.stored(r.seq),
+<a href=#1812 id=1812 data-nosnippet>1812</a>                )))
+<a href=#1813 id=1813 data-nosnippet>1813</a>            })
+<a href=#1814 id=1814 data-nosnippet>1814</a>            .collect()
+<a href=#1815 id=1815 data-nosnippet>1815</a>    } <span class="kw">else </span>{
+<a href=#1816 id=1816 data-nosnippet>1816</a>        Vec::new()
+<a href=#1817 id=1817 data-nosnippet>1817</a>    };
+<a href=#1818 id=1818 data-nosnippet>1818</a>    <span class="kw">let </span>block = <span class="kw">if </span>blocks {
+<a href=#1819 id=1819 data-nosnippet>1819</a>        <span class="kw">let </span>rows: Vec&lt;EventRow&gt; = batch
+<a href=#1820 id=1820 data-nosnippet>1820</a>            .iter()
+<a href=#1821 id=1821 data-nosnippet>1821</a>            .zip(recorded)
+<a href=#1822 id=1822 data-nosnippet>1822</a>            .map(|(e, r)| event_row(e, r))
+<a href=#1823 id=1823 data-nosnippet>1823</a>            .collect();
+<a href=#1824 id=1824 data-nosnippet>1824</a>        <span class="kw">let </span><span class="kw-2">mut </span>strings: Vec&lt;(u32, Arc&lt;str&gt;)&gt; = Vec::new();
+<a href=#1825 id=1825 data-nosnippet>1825</a>        <span class="kw">for </span>(event, r) <span class="kw">in </span>batch.iter().zip(recorded) {
+<a href=#1826 id=1826 data-nosnippet>1826</a>            strings.push((r.exe, Arc::clone(<span class="kw-2">&amp;</span>event.exe)));
+<a href=#1827 id=1827 data-nosnippet>1827</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(host) = <span class="kw-2">&amp;</span>event.host {
+<a href=#1828 id=1828 data-nosnippet>1828</a>                strings.push((r.host, Arc::clone(host)));
+<a href=#1829 id=1829 data-nosnippet>1829</a>            }
+<a href=#1830 id=1830 data-nosnippet>1830</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(container) = <span class="kw-2">&amp;</span>event.container {
+<a href=#1831 id=1831 data-nosnippet>1831</a>                strings.push((r.container, Arc::clone(container)));
+<a href=#1832 id=1832 data-nosnippet>1832</a>            }
+<a href=#1833 id=1833 data-nosnippet>1833</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(interface) = <span class="kw-2">&amp;</span>event.interface {
+<a href=#1834 id=1834 data-nosnippet>1834</a>                strings.push((r.interface, Arc::clone(interface)));
+<a href=#1835 id=1835 data-nosnippet>1835</a>            }
+<a href=#1836 id=1836 data-nosnippet>1836</a>        }
+<a href=#1837 id=1837 data-nosnippet>1837</a>        <span class="kw">let </span><span class="kw-2">mut </span>columns = Vec::new();
+<a href=#1838 id=1838 data-nosnippet>1838</a>        <span class="kw">match </span>columns::encode_events(<span class="kw-2">&amp;</span>rows, <span class="kw-2">&amp;mut </span>columns) {
+<a href=#1839 id=1839 data-nosnippet>1839</a>            <span class="prelude-val">Ok</span>(()) =&gt; <span class="prelude-val">Some</span>(Outgoing::Block {
+<a href=#1840 id=1840 data-nosnippet>1840</a>                columns: bytes::Bytes::from(columns),
+<a href=#1841 id=1841 data-nosnippet>1841</a>                strings: Arc::from(strings),
+<a href=#1842 id=1842 data-nosnippet>1842</a>            }),
+<a href=#1843 id=1843 data-nosnippet>1843</a>            <span class="prelude-val">Err</span>(error) =&gt; {
+<a href=#1844 id=1844 data-nosnippet>1844</a>                <span class="macro">error!</span>(%error, <span class="string">"encoding an event block"</span>);
+<a href=#1845 id=1845 data-nosnippet>1845</a>                <span class="prelude-val">None
+<a href=#1846 id=1846 data-nosnippet>1846</a>            </span>}
+<a href=#1847 id=1847 data-nosnippet>1847</a>        }
+<a href=#1848 id=1848 data-nosnippet>1848</a>    } <span class="kw">else </span>{
+<a href=#1849 id=1849 data-nosnippet>1849</a>        <span class="prelude-val">None
+<a href=#1850 id=1850 data-nosnippet>1850</a>    </span>};
+<a href=#1851 id=1851 data-nosnippet>1851</a>    <span class="kw">if </span>messages || block.is_some() {
+<a href=#1852 id=1852 data-nosnippet>1852</a>        shared
+<a href=#1853 id=1853 data-nosnippet>1853</a>            .hub
+<a href=#1854 id=1854 data-nosnippet>1854</a>            .publish_all(v1::Topic::Events, <span class="kw-2">&amp;</span>plain, block.as_ref());
+<a href=#1855 id=1855 data-nosnippet>1855</a>    }
+<a href=#1856 id=1856 data-nosnippet>1856</a>}
+<a href=#1857 id=1857 data-nosnippet>1857</a>
+<a href=#1858 id=1858 data-nosnippet>1858</a><span class="doccomment">/// A recorded event as a block's row: the protocol's numbers, the strings' ids.
+<a href=#1859 id=1859 data-nosnippet>1859</a></span><span class="kw">fn </span>event_row(event: <span class="kw-2">&amp;</span>Event, recorded: <span class="kw-2">&amp;</span><span class="kw">crate</span>::store::Recorded) -&gt; EventRow {
+<a href=#1860 id=1860 data-nosnippet>1860</a>    <span class="kw">let </span>address = <span class="kw">match </span>event.address {
+<a href=#1861 id=1861 data-nosnippet>1861</a>        std::net::IpAddr::V4(a) =&gt; a.to_ipv6_mapped().octets(),
+<a href=#1862 id=1862 data-nosnippet>1862</a>        std::net::IpAddr::V6(a) =&gt; a.octets(),
+<a href=#1863 id=1863 data-nosnippet>1863</a>    };
+<a href=#1864 id=1864 data-nosnippet>1864</a>    EventRow {
+<a href=#1865 id=1865 data-nosnippet>1865</a>        seq: recorded.seq,
+<a href=#1866 id=1866 data-nosnippet>1866</a>        time_ms: event.time_ms,
+<a href=#1867 id=1867 data-nosnippet>1867</a>        exe: recorded.exe,
+<a href=#1868 id=1868 data-nosnippet>1868</a>        host: recorded.host,
+<a href=#1869 id=1869 data-nosnippet>1869</a>        uid: event.uid,
+<a href=#1870 id=1870 data-nosnippet>1870</a>        pid: event.pid,
+<a href=#1871 id=1871 data-nosnippet>1871</a>        address,
+<a href=#1872 id=1872 data-nosnippet>1872</a>        port: event.port,
+<a href=#1873 id=1873 data-nosnippet>1873</a>        protocol: event.protocol,
+<a href=#1874 id=1874 data-nosnippet>1874</a>        context: event.context.saturating_add(<span class="number">1</span>),
+<a href=#1875 id=1875 data-nosnippet>1875</a>        action: u8::try_from(i32::from(convert::action(event.action))).unwrap_or(<span class="number">0</span>),
+<a href=#1876 id=1876 data-nosnippet>1876</a>        source: event.source <span class="kw">as </span>u8,
+<a href=#1877 id=1877 data-nosnippet>1877</a>        rule: event.rule.unwrap_or(<span class="number">0</span>),
+<a href=#1878 id=1878 data-nosnippet>1878</a>        bytes_out: <span class="number">0</span>,
+<a href=#1879 id=1879 data-nosnippet>1879</a>        bytes_in: <span class="number">0</span>,
+<a href=#1880 id=1880 data-nosnippet>1880</a>        container: recorded.container,
+<a href=#1881 id=1881 data-nosnippet>1881</a>        interface: recorded.interface,
+<a href=#1882 id=1882 data-nosnippet>1882</a>    }
+<a href=#1883 id=1883 data-nosnippet>1883</a>}
+<a href=#1884 id=1884 data-nosnippet>1884</a>
+<a href=#1885 id=1885 data-nosnippet>1885</a><span class="doccomment">/// Raises an alert when the last daemon didn't stop cleanly (its marker is still there: it crashed, was killed, or the
+<a href=#1886 id=1886 data-nosnippet>1886</a>/// machine lost power), then puts this one's marker in place.
+<a href=#1887 id=1887 data-nosnippet>1887</a></span><span class="kw">fn </span>check_marker(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span>Store) {
+<a href=#1888 id=1888 data-nosnippet>1888</a>    <span class="kw">let </span>marker = config_marker(<span class="kw-2">&amp;</span>shared.config);
+<a href=#1889 id=1889 data-nosnippet>1889</a>    <span class="kw">if </span>marker.exists() {
+<a href=#1890 id=1890 data-nosnippet>1890</a>        <span class="kw">crate</span>::alerts::raise(
+<a href=#1891 id=1891 data-nosnippet>1891</a>            shared,
+<a href=#1892 id=1892 data-nosnippet>1892</a>            store,
+<a href=#1893 id=1893 data-nosnippet>1893</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
+<a href=#1894 id=1894 data-nosnippet>1894</a>                kind: <span class="string">"crashed"</span>,
+<a href=#1895 id=1895 data-nosnippet>1895</a>                title: <span class="string">"The daemon stopped unexpectedly"</span>.to_owned(),
+<a href=#1896 id=1896 data-nosnippet>1896</a>                body: <span class="string">"It didn't stop cleanly last time: it crashed, was killed, or the machine lost power."
+<a href=#1897 id=1897 data-nosnippet>1897</a>                    </span>.to_owned(),
+<a href=#1898 id=1898 data-nosnippet>1898</a>                rule: <span class="prelude-val">None</span>,
+<a href=#1899 id=1899 data-nosnippet>1899</a>            },
+<a href=#1900 id=1900 data-nosnippet>1900</a>        );
+<a href=#1901 id=1901 data-nosnippet>1901</a>    }
+<a href=#1902 id=1902 data-nosnippet>1902</a>    <span class="kw">let _ </span>= std::fs::write(<span class="kw-2">&amp;</span>marker, <span class="string">b""</span>);
+<a href=#1903 id=1903 data-nosnippet>1903</a>}
+<a href=#1904 id=1904 data-nosnippet>1904</a>
+<a href=#1905 id=1905 data-nosnippet>1905</a><span class="doccomment">/// Where a running daemon keeps its marker: next to its database, so a crash is noticed after a reboot too.
+<a href=#1906 id=1906 data-nosnippet>1906</a></span><span class="kw">fn </span>config_marker(config: <span class="kw-2">&amp;</span>Config) -&gt; std::path::PathBuf {
+<a href=#1907 id=1907 data-nosnippet>1907</a>    config.database.with_extension(<span class="string">"running"</span>)
+<a href=#1908 id=1908 data-nosnippet>1908</a>}
+<a href=#1909 id=1909 data-nosnippet>1909</a>
+<a href=#1910 id=1910 data-nosnippet>1910</a><span class="doccomment">/// How often the tables are checked.
+<a href=#1911 id=1911 data-nosnippet>1911</a>/// How often the counters of what was lost are checked.
+<a href=#1912 id=1912 data-nosnippet>1912</a></span><span class="kw">const </span>LOSS_CHECK_EVERY: Duration = Duration::from_secs(<span class="number">60</span>);
+<a href=#1913 id=1913 data-nosnippet>1913</a>
+<a href=#1914 id=1914 data-nosnippet>1914</a><span class="doccomment">/// Packets the kernel dropped on queues `first..first + count` (`/proc/net/netfilter/nfnetlink_queue`: the queue
+<a href=#1915 id=1915 data-nosnippet>1915</a>/// overflowed, or the daemon's socket couldn't take them).
+<a href=#1916 id=1916 data-nosnippet>1916</a></span><span class="kw">fn </span>queue_drops(first: u16, count: u16) -&gt; u64 {
+<a href=#1917 id=1917 data-nosnippet>1917</a>    std::fs::read_to_string(<span class="string">"/proc/net/netfilter/nfnetlink_queue"</span>).map_or(<span class="number">0</span>, |text| {
+<a href=#1918 id=1918 data-nosnippet>1918</a>        text.lines()
+<a href=#1919 id=1919 data-nosnippet>1919</a>            .filter_map(|line| {
+<a href=#1920 id=1920 data-nosnippet>1920</a>                <span class="kw">let </span>fields: Vec&lt;u64&gt; = line
+<a href=#1921 id=1921 data-nosnippet>1921</a>                    .split_whitespace()
+<a href=#1922 id=1922 data-nosnippet>1922</a>                    .filter_map(|f| f.parse().ok())
+<a href=#1923 id=1923 data-nosnippet>1923</a>                    .collect();
+<a href=#1924 id=1924 data-nosnippet>1924</a>                <span class="kw">let </span>queue = u16::try_from(<span class="kw-2">*</span>fields.first()<span class="question-mark">?</span>).ok()<span class="question-mark">?</span>;
+<a href=#1925 id=1925 data-nosnippet>1925</a>                (queue &gt;= first &amp;&amp; queue &lt; first.saturating_add(count)).then(|| {
+<a href=#1926 id=1926 data-nosnippet>1926</a>                    fields.get(<span class="number">5</span>).copied().unwrap_or(<span class="number">0</span>) + fields.get(<span class="number">6</span>).copied().unwrap_or(<span class="number">0</span>)
+<a href=#1927 id=1927 data-nosnippet>1927</a>                })
+<a href=#1928 id=1928 data-nosnippet>1928</a>            })
+<a href=#1929 id=1929 data-nosnippet>1929</a>            .sum()
+<a href=#1930 id=1930 data-nosnippet>1930</a>    })
+<a href=#1931 id=1931 data-nosnippet>1931</a>}
+<a href=#1932 id=1932 data-nosnippet>1932</a>
+<a href=#1933 id=1933 data-nosnippet>1933</a><span class="doccomment">/// Alerts about what the node lost since the last check: events the history couldn't keep, packets the kernel
+<a href=#1934 id=1934 data-nosnippet>1934</a>/// dropped.
+<a href=#1935 id=1935 data-nosnippet>1935</a></span><span class="kw">fn </span>check_losses(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span>Store, seen: <span class="kw-2">&amp;mut </span>(u64, u64)) {
+<a href=#1936 id=1936 data-nosnippet>1936</a>    <span class="kw">let </span>dropped = shared.dropped_events.load(Ordering::Relaxed);
+<a href=#1937 id=1937 data-nosnippet>1937</a>    <span class="kw">if </span>dropped &gt; seen.<span class="number">0 </span>{
 <a href=#1938 id=1938 data-nosnippet>1938</a>        <span class="kw">crate</span>::alerts::raise(
 <a href=#1939 id=1939 data-nosnippet>1939</a>            shared,
 <a href=#1940 id=1940 data-nosnippet>1940</a>            store,
 <a href=#1941 id=1941 data-nosnippet>1941</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
-<a href=#1942 id=1942 data-nosnippet>1942</a>                kind: <span class="string">"queue_overflow"</span>,
-<a href=#1943 id=1943 data-nosnippet>1943</a>                title: <span class="string">"The kernel dropped packets waiting for a decision"</span>.to_owned(),
+<a href=#1942 id=1942 data-nosnippet>1942</a>                kind: <span class="string">"dropped_events"</span>,
+<a href=#1943 id=1943 data-nosnippet>1943</a>                title: <span class="string">"Connections weren't recorded"</span>.to_owned(),
 <a href=#1944 id=1944 data-nosnippet>1944</a>                body: <span class="macro">format!</span>(
-<a href=#1945 id=1945 data-nosnippet>1945</a>                    <span class="string">"{} packets were dropped on the daemon's queues: they overflowed. New connections were refused \
-<a href=#1946 id=1946 data-nosnippet>1946</a>                     while that lasted."</span>,
-<a href=#1947 id=1947 data-nosnippet>1947</a>                    queued - seen.<span class="number">1
-<a href=#1948 id=1948 data-nosnippet>1948</a>                </span>),
-<a href=#1949 id=1949 data-nosnippet>1949</a>                rule: <span class="prelude-val">None</span>,
-<a href=#1950 id=1950 data-nosnippet>1950</a>            },
-<a href=#1951 id=1951 data-nosnippet>1951</a>        );
-<a href=#1952 id=1952 data-nosnippet>1952</a>    }
-<a href=#1953 id=1953 data-nosnippet>1953</a>    <span class="kw-2">*</span>seen = (dropped, queued.max(seen.<span class="number">1</span>));
-<a href=#1954 id=1954 data-nosnippet>1954</a>}
-<a href=#1955 id=1955 data-nosnippet>1955</a>
-<a href=#1956 id=1956 data-nosnippet>1956</a><span class="kw">fn </span>write_loop(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span><span class="kw">crate</span>::locked::Locked, events: <span class="kw-2">&amp;</span>Receiver&lt;Event&gt;) {
-<a href=#1957 id=1957 data-nosnippet>1957</a>    <span class="kw">let </span><span class="kw-2">mut </span>batch = Vec::with_capacity(BATCH);
-<a href=#1958 id=1958 data-nosnippet>1958</a>    <span class="kw">let </span><span class="kw-2">mut </span>engine = <span class="kw">crate</span>::alerts::Engine::default();
-<a href=#1959 id=1959 data-nosnippet>1959</a>    <span class="kw">let </span><span class="kw-2">mut </span>rules_seen = u64::MAX;
-<a href=#1960 id=1960 data-nosnippet>1960</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_loss_check = Instant::now();
-<a href=#1961 id=1961 data-nosnippet>1961</a>    <span class="kw">let </span><span class="kw-2">mut </span>losses = (<span class="number">0</span>, queue_drops(shared.config.queue, shared.config.queues));
-<a href=#1962 id=1962 data-nosnippet>1962</a>    <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::with_capacity(BATCH);
-<a href=#1963 id=1963 data-nosnippet>1963</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_prune = Instant::now();
-<a href=#1964 id=1964 data-nosnippet>1964</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_bytes = Instant::now();
-<a href=#1965 id=1965 data-nosnippet>1965</a>    <span class="kw">let </span><span class="kw-2">mut </span>counted: HashMap&lt;u64, (u64, u64)&gt; = HashMap::new();
-<a href=#1966 id=1966 data-nosnippet>1966</a>    <span class="kw">let </span><span class="kw-2">mut </span>changed: Vec&lt;(u64, u64, u64)&gt; = Vec::new();
-<a href=#1967 id=1967 data-nosnippet>1967</a>    <span class="kw">loop </span>{
-<a href=#1968 id=1968 data-nosnippet>1968</a>        batch.clear();
-<a href=#1969 id=1969 data-nosnippet>1969</a>        <span class="kw">match </span>events.recv_timeout(BYTES_EVERY) {
-<a href=#1970 id=1970 data-nosnippet>1970</a>            <span class="prelude-val">Ok</span>(event) =&gt; batch.push(event),
-<a href=#1971 id=1971 data-nosnippet>1971</a>            <span class="prelude-val">Err</span>(RecvTimeoutError::Timeout) =&gt; {}
-<a href=#1972 id=1972 data-nosnippet>1972</a>            <span class="prelude-val">Err</span>(RecvTimeoutError::Disconnected) =&gt; <span class="kw">return</span>,
-<a href=#1973 id=1973 data-nosnippet>1973</a>        }
-<a href=#1974 id=1974 data-nosnippet>1974</a>        <span class="kw">let </span>deadline = Instant::now() + BATCH_WAIT;
-<a href=#1975 id=1975 data-nosnippet>1975</a>        <span class="kw">while </span>batch.len() &lt; BATCH {
-<a href=#1976 id=1976 data-nosnippet>1976</a>            <span class="kw">let </span>left = deadline.saturating_duration_since(Instant::now());
-<a href=#1977 id=1977 data-nosnippet>1977</a>            <span class="kw">match </span>events.recv_timeout(left) {
-<a href=#1978 id=1978 data-nosnippet>1978</a>                <span class="prelude-val">Ok</span>(event) =&gt; batch.push(event),
-<a href=#1979 id=1979 data-nosnippet>1979</a>                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-<a href=#1980 id=1980 data-nosnippet>1980</a>            }
-<a href=#1981 id=1981 data-nosnippet>1981</a>        }
-<a href=#1982 id=1982 data-nosnippet>1982</a>        <span class="kw">let </span><span class="kw-2">mut </span>store = store.lock();
-<a href=#1983 id=1983 data-nosnippet>1983</a>        <span class="kw">let </span>generation = shared.alert_rules_changed.load(Ordering::Relaxed);
-<a href=#1984 id=1984 data-nosnippet>1984</a>        <span class="kw">if </span>generation != rules_seen {
-<a href=#1985 id=1985 data-nosnippet>1985</a>            rules_seen = generation;
-<a href=#1986 id=1986 data-nosnippet>1986</a>            <span class="kw">match </span>store.alert_rules() {
-<a href=#1987 id=1987 data-nosnippet>1987</a>                <span class="prelude-val">Ok</span>(rules) =&gt; engine.load(rules),
-<a href=#1988 id=1988 data-nosnippet>1988</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">error!</span>(%error, <span class="string">"loading the alert rules"</span>),
-<a href=#1989 id=1989 data-nosnippet>1989</a>            }
-<a href=#1990 id=1990 data-nosnippet>1990</a>        }
-<a href=#1991 id=1991 data-nosnippet>1991</a>        <span class="kw">if </span>!batch.is_empty() {
-<a href=#1992 id=1992 data-nosnippet>1992</a>            <span class="kw">match </span>store.record(<span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;mut </span>recorded) {
-<a href=#1993 id=1993 data-nosnippet>1993</a>                <span class="prelude-val">Ok</span>(()) =&gt; {
-<a href=#1994 id=1994 data-nosnippet>1994</a>                    publish_events(shared, <span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;</span>recorded);
-<a href=#1995 id=1995 data-nosnippet>1995</a>                    <span class="kw">for </span>alert <span class="kw">in </span>engine.check(<span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;</span>recorded) {
-<a href=#1996 id=1996 data-nosnippet>1996</a>                        <span class="kw">crate</span>::alerts::raise(shared, <span class="kw-2">&amp;</span>store, <span class="kw-2">&amp;</span>alert);
-<a href=#1997 id=1997 data-nosnippet>1997</a>                    }
-<a href=#1998 id=1998 data-nosnippet>1998</a>                    alert_net_admin(shared, <span class="kw-2">&amp;</span>store);
-<a href=#1999 id=1999 data-nosnippet>1999</a>                }
-<a href=#2000 id=2000 data-nosnippet>2000</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">error!</span>(%error, events = batch.len(), <span class="string">"recording events"</span>),
-<a href=#2001 id=2001 data-nosnippet>2001</a>            }
-<a href=#2002 id=2002 data-nosnippet>2002</a>        }
-<a href=#2003 id=2003 data-nosnippet>2003</a>        <span class="kw">if </span>last_loss_check.elapsed() &gt;= LOSS_CHECK_EVERY {
-<a href=#2004 id=2004 data-nosnippet>2004</a>            last_loss_check = Instant::now();
-<a href=#2005 id=2005 data-nosnippet>2005</a>            check_losses(shared, <span class="kw-2">&amp;</span>store, <span class="kw-2">&amp;mut </span>losses);
+<a href=#1945 id=1945 data-nosnippet>1945</a>                    <span class="string">"{} connections were decided but not kept in the history: the database couldn't keep up."</span>,
+<a href=#1946 id=1946 data-nosnippet>1946</a>                    dropped - seen.<span class="number">0
+<a href=#1947 id=1947 data-nosnippet>1947</a>                </span>),
+<a href=#1948 id=1948 data-nosnippet>1948</a>                rule: <span class="prelude-val">None</span>,
+<a href=#1949 id=1949 data-nosnippet>1949</a>            },
+<a href=#1950 id=1950 data-nosnippet>1950</a>        );
+<a href=#1951 id=1951 data-nosnippet>1951</a>    }
+<a href=#1952 id=1952 data-nosnippet>1952</a>    <span class="kw">let </span>queued = queue_drops(shared.config.queue, shared.config.queues);
+<a href=#1953 id=1953 data-nosnippet>1953</a>    <span class="kw">if </span>queued &gt; seen.<span class="number">1 </span>{
+<a href=#1954 id=1954 data-nosnippet>1954</a>        <span class="kw">crate</span>::alerts::raise(
+<a href=#1955 id=1955 data-nosnippet>1955</a>            shared,
+<a href=#1956 id=1956 data-nosnippet>1956</a>            store,
+<a href=#1957 id=1957 data-nosnippet>1957</a>            <span class="kw-2">&amp;</span><span class="kw">crate</span>::alerts::NewAlert {
+<a href=#1958 id=1958 data-nosnippet>1958</a>                kind: <span class="string">"queue_overflow"</span>,
+<a href=#1959 id=1959 data-nosnippet>1959</a>                title: <span class="string">"The kernel dropped packets waiting for a decision"</span>.to_owned(),
+<a href=#1960 id=1960 data-nosnippet>1960</a>                body: <span class="macro">format!</span>(
+<a href=#1961 id=1961 data-nosnippet>1961</a>                    <span class="string">"{} packets were dropped on the daemon's queues: they overflowed. New connections were refused \
+<a href=#1962 id=1962 data-nosnippet>1962</a>                     while that lasted."</span>,
+<a href=#1963 id=1963 data-nosnippet>1963</a>                    queued - seen.<span class="number">1
+<a href=#1964 id=1964 data-nosnippet>1964</a>                </span>),
+<a href=#1965 id=1965 data-nosnippet>1965</a>                rule: <span class="prelude-val">None</span>,
+<a href=#1966 id=1966 data-nosnippet>1966</a>            },
+<a href=#1967 id=1967 data-nosnippet>1967</a>        );
+<a href=#1968 id=1968 data-nosnippet>1968</a>    }
+<a href=#1969 id=1969 data-nosnippet>1969</a>    <span class="kw-2">*</span>seen = (dropped, queued.max(seen.<span class="number">1</span>));
+<a href=#1970 id=1970 data-nosnippet>1970</a>}
+<a href=#1971 id=1971 data-nosnippet>1971</a>
+<a href=#1972 id=1972 data-nosnippet>1972</a><span class="kw">fn </span>write_loop(shared: <span class="kw-2">&amp;</span>Shared, store: <span class="kw-2">&amp;</span><span class="kw">crate</span>::locked::Locked, events: <span class="kw-2">&amp;</span>Receiver&lt;Event&gt;) {
+<a href=#1973 id=1973 data-nosnippet>1973</a>    <span class="kw">let </span><span class="kw-2">mut </span>batch = Vec::with_capacity(BATCH);
+<a href=#1974 id=1974 data-nosnippet>1974</a>    <span class="kw">let </span><span class="kw-2">mut </span>engine = <span class="kw">crate</span>::alerts::Engine::default();
+<a href=#1975 id=1975 data-nosnippet>1975</a>    <span class="kw">let </span><span class="kw-2">mut </span>rules_seen = u64::MAX;
+<a href=#1976 id=1976 data-nosnippet>1976</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_loss_check = Instant::now();
+<a href=#1977 id=1977 data-nosnippet>1977</a>    <span class="kw">let </span><span class="kw-2">mut </span>losses = (<span class="number">0</span>, queue_drops(shared.config.queue, shared.config.queues));
+<a href=#1978 id=1978 data-nosnippet>1978</a>    <span class="kw">let </span><span class="kw-2">mut </span>recorded = Vec::with_capacity(BATCH);
+<a href=#1979 id=1979 data-nosnippet>1979</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_prune = Instant::now();
+<a href=#1980 id=1980 data-nosnippet>1980</a>    <span class="kw">let </span><span class="kw-2">mut </span>last_bytes = Instant::now();
+<a href=#1981 id=1981 data-nosnippet>1981</a>    <span class="kw">let </span><span class="kw-2">mut </span>counted: HashMap&lt;u64, (u64, u64)&gt; = HashMap::new();
+<a href=#1982 id=1982 data-nosnippet>1982</a>    <span class="kw">let </span><span class="kw-2">mut </span>changed: Vec&lt;(u64, u64, u64)&gt; = Vec::new();
+<a href=#1983 id=1983 data-nosnippet>1983</a>    <span class="kw">loop </span>{
+<a href=#1984 id=1984 data-nosnippet>1984</a>        batch.clear();
+<a href=#1985 id=1985 data-nosnippet>1985</a>        <span class="kw">match </span>events.recv_timeout(BYTES_EVERY) {
+<a href=#1986 id=1986 data-nosnippet>1986</a>            <span class="prelude-val">Ok</span>(event) =&gt; batch.push(event),
+<a href=#1987 id=1987 data-nosnippet>1987</a>            <span class="prelude-val">Err</span>(RecvTimeoutError::Timeout) =&gt; {}
+<a href=#1988 id=1988 data-nosnippet>1988</a>            <span class="prelude-val">Err</span>(RecvTimeoutError::Disconnected) =&gt; <span class="kw">return</span>,
+<a href=#1989 id=1989 data-nosnippet>1989</a>        }
+<a href=#1990 id=1990 data-nosnippet>1990</a>        <span class="kw">let </span>deadline = Instant::now() + BATCH_WAIT;
+<a href=#1991 id=1991 data-nosnippet>1991</a>        <span class="kw">while </span>batch.len() &lt; BATCH {
+<a href=#1992 id=1992 data-nosnippet>1992</a>            <span class="kw">let </span>left = deadline.saturating_duration_since(Instant::now());
+<a href=#1993 id=1993 data-nosnippet>1993</a>            <span class="kw">match </span>events.recv_timeout(left) {
+<a href=#1994 id=1994 data-nosnippet>1994</a>                <span class="prelude-val">Ok</span>(event) =&gt; batch.push(event),
+<a href=#1995 id=1995 data-nosnippet>1995</a>                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+<a href=#1996 id=1996 data-nosnippet>1996</a>            }
+<a href=#1997 id=1997 data-nosnippet>1997</a>        }
+<a href=#1998 id=1998 data-nosnippet>1998</a>        <span class="kw">let </span><span class="kw-2">mut </span>store = store.lock();
+<a href=#1999 id=1999 data-nosnippet>1999</a>        <span class="kw">let </span>generation = shared.alert_rules_changed.load(Ordering::Relaxed);
+<a href=#2000 id=2000 data-nosnippet>2000</a>        <span class="kw">if </span>generation != rules_seen {
+<a href=#2001 id=2001 data-nosnippet>2001</a>            rules_seen = generation;
+<a href=#2002 id=2002 data-nosnippet>2002</a>            <span class="kw">match </span>store.alert_rules() {
+<a href=#2003 id=2003 data-nosnippet>2003</a>                <span class="prelude-val">Ok</span>(rules) =&gt; engine.load(rules),
+<a href=#2004 id=2004 data-nosnippet>2004</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">error!</span>(%error, <span class="string">"loading the alert rules"</span>),
+<a href=#2005 id=2005 data-nosnippet>2005</a>            }
 <a href=#2006 id=2006 data-nosnippet>2006</a>        }
-<a href=#2007 id=2007 data-nosnippet>2007</a>        <span class="kw">if </span>last_bytes.elapsed() &gt;= BYTES_EVERY {
-<a href=#2008 id=2008 data-nosnippet>2008</a>            last_bytes = Instant::now();
-<a href=#2009 id=2009 data-nosnippet>2009</a>            changed.clear();
-<a href=#2010 id=2010 data-nosnippet>2010</a>            <span class="kw">let </span><span class="kw-2">mut </span>live: HashMap&lt;u64, (u64, u64)&gt; = HashMap::with_capacity(counted.len());
-<a href=#2011 id=2011 data-nosnippet>2011</a>            <span class="kw">for </span>(cookie, sent, read) <span class="kw">in </span>shared.attribution.socket_bytes() {
-<a href=#2012 id=2012 data-nosnippet>2012</a>                <span class="kw">if </span>counted.get(<span class="kw-2">&amp;</span>cookie) != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>(sent, read)) {
-<a href=#2013 id=2013 data-nosnippet>2013</a>                    changed.push((cookie, sent, read));
-<a href=#2014 id=2014 data-nosnippet>2014</a>                }
-<a href=#2015 id=2015 data-nosnippet>2015</a>                live.insert(cookie, (sent, read));
-<a href=#2016 id=2016 data-nosnippet>2016</a>            }
-<a href=#2017 id=2017 data-nosnippet>2017</a>            counted = live;
-<a href=#2018 id=2018 data-nosnippet>2018</a>            <span class="kw">if </span>!changed.is_empty()
-<a href=#2019 id=2019 data-nosnippet>2019</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = store.record_bytes(<span class="kw-2">&amp;</span>changed)
-<a href=#2020 id=2020 data-nosnippet>2020</a>            {
-<a href=#2021 id=2021 data-nosnippet>2021</a>                <span class="macro">error!</span>(%error, <span class="string">"recording byte counts"</span>);
-<a href=#2022 id=2022 data-nosnippet>2022</a>            }
-<a href=#2023 id=2023 data-nosnippet>2023</a>        }
-<a href=#2024 id=2024 data-nosnippet>2024</a>        <span class="kw">if </span>last_prune.elapsed() &gt;= PRUNE_EVERY {
-<a href=#2025 id=2025 data-nosnippet>2025</a>            last_prune = Instant::now();
-<a href=#2026 id=2026 data-nosnippet>2026</a>            <span class="kw">let </span>retention_ms = u64::from(shared.policy.load().retention_days) * <span class="number">86_400_000</span>;
-<a href=#2027 id=2027 data-nosnippet>2027</a>            <span class="kw">let </span>cutoff = now_ms().saturating_sub(retention_ms);
-<a href=#2028 id=2028 data-nosnippet>2028</a>            <span class="kw">while let </span><span class="prelude-val">Ok</span>(pruned) = store.prune(cutoff, PRUNE_CHUNK) {
-<a href=#2029 id=2029 data-nosnippet>2029</a>                <span class="kw">if </span>pruned &lt; PRUNE_CHUNK <span class="kw">as </span>usize {
-<a href=#2030 id=2030 data-nosnippet>2030</a>                    <span class="kw">break</span>;
-<a href=#2031 id=2031 data-nosnippet>2031</a>                }
+<a href=#2007 id=2007 data-nosnippet>2007</a>        <span class="kw">if </span>!batch.is_empty() {
+<a href=#2008 id=2008 data-nosnippet>2008</a>            <span class="kw">match </span>store.record(<span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;mut </span>recorded) {
+<a href=#2009 id=2009 data-nosnippet>2009</a>                <span class="prelude-val">Ok</span>(()) =&gt; {
+<a href=#2010 id=2010 data-nosnippet>2010</a>                    publish_events(shared, <span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;</span>recorded);
+<a href=#2011 id=2011 data-nosnippet>2011</a>                    <span class="kw">for </span>alert <span class="kw">in </span>engine.check(<span class="kw-2">&amp;</span>batch, <span class="kw-2">&amp;</span>recorded) {
+<a href=#2012 id=2012 data-nosnippet>2012</a>                        <span class="kw">crate</span>::alerts::raise(shared, <span class="kw-2">&amp;</span>store, <span class="kw-2">&amp;</span>alert);
+<a href=#2013 id=2013 data-nosnippet>2013</a>                    }
+<a href=#2014 id=2014 data-nosnippet>2014</a>                    alert_net_admin(shared, <span class="kw-2">&amp;</span>store);
+<a href=#2015 id=2015 data-nosnippet>2015</a>                }
+<a href=#2016 id=2016 data-nosnippet>2016</a>                <span class="prelude-val">Err</span>(error) =&gt; <span class="macro">error!</span>(%error, events = batch.len(), <span class="string">"recording events"</span>),
+<a href=#2017 id=2017 data-nosnippet>2017</a>            }
+<a href=#2018 id=2018 data-nosnippet>2018</a>        }
+<a href=#2019 id=2019 data-nosnippet>2019</a>        <span class="kw">if </span>last_loss_check.elapsed() &gt;= LOSS_CHECK_EVERY {
+<a href=#2020 id=2020 data-nosnippet>2020</a>            last_loss_check = Instant::now();
+<a href=#2021 id=2021 data-nosnippet>2021</a>            check_losses(shared, <span class="kw-2">&amp;</span>store, <span class="kw-2">&amp;mut </span>losses);
+<a href=#2022 id=2022 data-nosnippet>2022</a>        }
+<a href=#2023 id=2023 data-nosnippet>2023</a>        <span class="kw">if </span>last_bytes.elapsed() &gt;= BYTES_EVERY {
+<a href=#2024 id=2024 data-nosnippet>2024</a>            last_bytes = Instant::now();
+<a href=#2025 id=2025 data-nosnippet>2025</a>            changed.clear();
+<a href=#2026 id=2026 data-nosnippet>2026</a>            <span class="kw">let </span><span class="kw-2">mut </span>live: HashMap&lt;u64, (u64, u64)&gt; = HashMap::with_capacity(counted.len());
+<a href=#2027 id=2027 data-nosnippet>2027</a>            <span class="kw">for </span>(cookie, sent, read) <span class="kw">in </span>shared.attribution.socket_bytes() {
+<a href=#2028 id=2028 data-nosnippet>2028</a>                <span class="kw">if </span>counted.get(<span class="kw-2">&amp;</span>cookie) != <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>(sent, read)) {
+<a href=#2029 id=2029 data-nosnippet>2029</a>                    changed.push((cookie, sent, read));
+<a href=#2030 id=2030 data-nosnippet>2030</a>                }
+<a href=#2031 id=2031 data-nosnippet>2031</a>                live.insert(cookie, (sent, read));
 <a href=#2032 id=2032 data-nosnippet>2032</a>            }
-<a href=#2033 id=2033 data-nosnippet>2033</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_alerts(cutoff) {
-<a href=#2034 id=2034 data-nosnippet>2034</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning alerts"</span>);
-<a href=#2035 id=2035 data-nosnippet>2035</a>            }
-<a href=#2036 id=2036 data-nosnippet>2036</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_proposals(cutoff) {
-<a href=#2037 id=2037 data-nosnippet>2037</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning proposals"</span>);
+<a href=#2033 id=2033 data-nosnippet>2033</a>            counted = live;
+<a href=#2034 id=2034 data-nosnippet>2034</a>            <span class="kw">if </span>!changed.is_empty()
+<a href=#2035 id=2035 data-nosnippet>2035</a>                &amp;&amp; <span class="kw">let </span><span class="prelude-val">Err</span>(error) = store.record_bytes(<span class="kw-2">&amp;</span>changed)
+<a href=#2036 id=2036 data-nosnippet>2036</a>            {
+<a href=#2037 id=2037 data-nosnippet>2037</a>                <span class="macro">error!</span>(%error, <span class="string">"recording byte counts"</span>);
 <a href=#2038 id=2038 data-nosnippet>2038</a>            }
-<a href=#2039 id=2039 data-nosnippet>2039</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_rollups(cutoff) {
-<a href=#2040 id=2040 data-nosnippet>2040</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning rollups"</span>);
-<a href=#2041 id=2041 data-nosnippet>2041</a>            }
-<a href=#2042 id=2042 data-nosnippet>2042</a>        }
-<a href=#2043 id=2043 data-nosnippet>2043</a>    }
-<a href=#2044 id=2044 data-nosnippet>2044</a>}
+<a href=#2039 id=2039 data-nosnippet>2039</a>        }
+<a href=#2040 id=2040 data-nosnippet>2040</a>        <span class="kw">if </span>last_prune.elapsed() &gt;= PRUNE_EVERY {
+<a href=#2041 id=2041 data-nosnippet>2041</a>            last_prune = Instant::now();
+<a href=#2042 id=2042 data-nosnippet>2042</a>            <span class="kw">let </span>retention_ms = u64::from(shared.policy.load().retention_days) * <span class="number">86_400_000</span>;
+<a href=#2043 id=2043 data-nosnippet>2043</a>            <span class="kw">let </span>cutoff = now_ms().saturating_sub(retention_ms);
+<a href=#2044 id=2044 data-nosnippet>2044</a>            <span class="kw">while let </span><span class="prelude-val">Ok</span>(pruned) = store.prune(cutoff, PRUNE_CHUNK) {
+<a href=#2045 id=2045 data-nosnippet>2045</a>                <span class="kw">if </span>pruned &lt; PRUNE_CHUNK <span class="kw">as </span>usize {
+<a href=#2046 id=2046 data-nosnippet>2046</a>                    <span class="kw">break</span>;
+<a href=#2047 id=2047 data-nosnippet>2047</a>                }
+<a href=#2048 id=2048 data-nosnippet>2048</a>            }
+<a href=#2049 id=2049 data-nosnippet>2049</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_alerts(cutoff) {
+<a href=#2050 id=2050 data-nosnippet>2050</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning alerts"</span>);
+<a href=#2051 id=2051 data-nosnippet>2051</a>            }
+<a href=#2052 id=2052 data-nosnippet>2052</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_proposals(cutoff) {
+<a href=#2053 id=2053 data-nosnippet>2053</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning proposals"</span>);
+<a href=#2054 id=2054 data-nosnippet>2054</a>            }
+<a href=#2055 id=2055 data-nosnippet>2055</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(error) = store.prune_rollups(cutoff) {
+<a href=#2056 id=2056 data-nosnippet>2056</a>                <span class="macro">error!</span>(%error, <span class="string">"pruning rollups"</span>);
+<a href=#2057 id=2057 data-nosnippet>2057</a>            }
+<a href=#2058 id=2058 data-nosnippet>2058</a>        }
+<a href=#2059 id=2059 data-nosnippet>2059</a>    }
+<a href=#2060 id=2060 data-nosnippet>2060</a>}
 </code></pre></div></section></main></body></html>
