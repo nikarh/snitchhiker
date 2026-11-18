@@ -820,7 +820,7 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     let domain = format!(
         "<domain type='kvm'><name>{GUEST}</name><memory unit='MiB'>192</memory><vcpu>1</vcpu>\
          <os><type arch='x86_64'>hvm</type><kernel>{images}/e2e-vmlinuz</kernel>\
-         <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 panic=-1</cmdline></os>\
+         <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 panic=-1 mitigations=off</cmdline></os>\
          <devices><interface type='network'><source network='default'/><model type='virtio'/></interface>\
          <serial type='file'><source path='/tmp/e2e-guest.console'/></serial></devices></domain>"
     );
@@ -840,9 +840,21 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     let _ = run("virsh", &["destroy", GUEST]);
     let _ = std::fs::remove_file("/tmp/e2e-guest.console");
     run("virsh", &["create", "/tmp/e2e-guest.xml"])?;
+    // A nested guest boots in seconds, or, on a starved shared runner, in minutes: first its own word that its network
+    // is up (on its console), then its connections, each loop ending as soon as it is so.
+    let up = || {
+        std::fs::read_to_string("/tmp/e2e-guest.console")
+            .is_ok_and(|c| c.contains("e2e-guest: network up"))
+    };
+    for _ in 0..480 {
+        if up() {
+            break;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    let booted = up();
     let mut seen = Vec::new();
-    // A nested guest on a shared runner can take a minute or more to boot: the loop ends as soon as both are seen.
-    for _ in 0..180 {
+    for _ in 0..if booted { 60 } else { 0 } {
         thread::sleep(Duration::from_secs(1));
         seen = decisions(&daemon, "203.0.113.9")?;
         if seen.iter().any(|l| l.contains(":8096")) && seen.iter().any(|l| l.contains(":8097")) {
@@ -854,8 +866,13 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     let console: Vec<&str> = console.lines().rev().take(20).collect();
     let _ = run("virsh", &["destroy", GUEST]);
     let found = format!(
-        "guest {}\n{}\nits console's last lines:\n{}",
+        "guest {}, {}\n{}\nits console's last lines:\n{}",
         state.trim(),
+        if booted {
+            "its network up"
+        } else {
+            "still booting after 8 minutes (the machine is too slow for a nested guest)"
+        },
         seen.join("\n"),
         console.into_iter().rev().collect::<Vec<_>>().join("\n")
     );
