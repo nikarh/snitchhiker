@@ -65,6 +65,8 @@ An answer is an action (`allow`, `deny`, `reject`), a duration and the rule to m
 | hour, 12 hours | expires then |
 | forever | stays (the default on the command line) |
 
+Rules from the shorter durations are temporary: the app's Rules page lists them under **Temporary**, with when each ends ([Rules that expire](/guides/rules/#rules-that-expire)).
+
 The rule is made from the chosen suggestion, or from conditions the client gives of its own, in the normal tier.
 
 It goes in the program's folder, `Apps/<program>`, which is scoped to the program: the folder says which program, and its rules say only where it may connect. The folder is made by the first rule for the program and reused by the next ones; programs of the same name at different paths get folders of their own (`python3`, `python3 2`). A rule for any program stays at the top level. A client can name another folder instead. Every listening client is told the prompt was resolved, by whom, and which rule it made, and closes its copy of the question.

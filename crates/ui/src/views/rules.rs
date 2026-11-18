@@ -33,6 +33,56 @@ const COLUMNS: [(&str, &str, f32); 6] = [
     ("actions", "", 130.),
 ];
 
+/// Temporary rules (they end at a time, or when the node restarts) or permanent ones, as OpenSnitch lists them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Lifetime {
+    Temporary,
+    Permanent,
+}
+
+/// Whether a rule is temporary: it ends at a time, or when the node restarts.
+#[must_use]
+pub fn temporary(rule: &v1::Rule) -> bool {
+    rule.until_restart || rule.expires_ms.is_some()
+}
+
+/// Now, in Unix milliseconds.
+#[must_use]
+pub fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// A time a rule ends at, as people read it: `14:32` today, `2026-11-20 09:00` another day.
+#[must_use]
+pub fn end_time(ms: u64, now: u64) -> String {
+    use chrono::{Local, TimeZone as _};
+    let local = |ms: u64| {
+        i64::try_from(ms)
+            .ok()
+            .and_then(|ms| Local.timestamp_millis_opt(ms).single())
+    };
+    match (local(ms), local(now)) {
+        (Some(at), Some(today)) if at.date_naive() == today.date_naive() => {
+            at.format("%H:%M").to_string()
+        }
+        (Some(at), _) => at.format("%Y-%m-%d %H:%M").to_string(),
+        (None, _) => String::new(),
+    }
+}
+
+/// When a rule stops applying, for the Expires column and its CSV: empty for a permanent one.
+#[must_use]
+pub fn expiry_text(rule: &v1::Rule, now: u64) -> String {
+    match rule.expires_ms {
+        Some(at) if at <= now => format!("expired {}", end_time(at, now)),
+        Some(at) => format!("until {}", end_time(at, now)),
+        None if rule.until_restart => "until restart".to_owned(),
+        None => String::new(),
+    }
+}
+
 /// Rules picked for a bulk change, by id, so that a new search or new rules keep the selection.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Selection {
@@ -137,6 +187,8 @@ pub struct RulesTable {
     filter: Option<RuleFilter>,
     /// The folder chosen in the tree: its rules and those below it (`None`: all).
     folder: Option<u64>,
+    /// Only the temporary rules, or only the permanent ones (`None`: both).
+    lifetime: Option<Lifetime>,
     /// Indices into the model's rules of those shown, in order.
     visible: Vec<usize>,
     pub selection: Selection,
@@ -152,6 +204,7 @@ impl RulesTable {
             requests,
             filter: None,
             folder: None,
+            lifetime: None,
             visible: Vec::new(),
             selection: Selection::default(),
             sort: None,
@@ -170,6 +223,11 @@ impl RulesTable {
                 inside
                     .as_ref()
                     .is_none_or(|inside| rule.folder.is_some_and(|f| inside.contains(&f)))
+            })
+            .filter(|(_, rule)| match self.lifetime {
+                Some(Lifetime::Temporary) => temporary(rule),
+                Some(Lifetime::Permanent) => !temporary(rule),
+                None => true,
             })
             .filter(|(_, rule)| {
                 self.filter.as_ref().is_none_or(|filter| {
@@ -352,18 +410,19 @@ impl RulesTable {
         } else {
             format!("{} rules", ids.len())
         };
-        div()
+        h_flex()
             .id(SharedString::from(format!("drag-{id}")))
+            .gap_1()
             .cursor_grab()
             .overflow_hidden()
-            .text_ellipsis()
             .on_drag(DraggedRules { ids, label }, |dragged, _, _, cx| {
                 cx.new(|_| DragPreview(dragged.label.clone()))
             })
-            .child(clipped(
+            .child(div().overflow_hidden().text_ellipsis().child(clipped(
                 SharedString::from(format!("rule-name-{id}")),
                 format!("{}{}", folder_path(list, rule.folder), rule.name),
-            ))
+            )))
+            .children(expiry_tag(rule).map(|tag| div().flex_none().child(tag)))
             .into_any_element()
     }
 }
@@ -582,6 +641,18 @@ impl TableDelegate for RulesTable {
     }
 }
 
+/// A temporary rule's tag, beside its name: when it ends, or that it has expired (it no longer applies, and stays
+/// listed until it is deleted or given another expiry). `None` for a permanent rule.
+fn expiry_tag(rule: &v1::Rule) -> Option<gpui::AnyElement> {
+    let now = now_ms();
+    let text = expiry_text(rule, now);
+    match rule.expires_ms {
+        Some(at) if at <= now => Some(Tag::danger().small().child(text).into_any_element()),
+        _ if temporary(rule) => Some(Tag::secondary().small().child(text).into_any_element()),
+        _ => None,
+    }
+}
+
 /// The page: the folder tree, the search, the bulk actions and the table.
 pub struct RulesPage {
     model: Entity<Model>,
@@ -590,6 +661,8 @@ pub struct RulesPage {
     search: Entity<InputState>,
     error: Option<String>,
     error_span: Option<std::ops::Range<usize>>,
+    /// When the table is next drawn again by itself: the soonest a shown rule expires.
+    wake: Option<u64>,
 }
 
 impl RulesPage {
@@ -644,7 +717,88 @@ impl RulesPage {
             search,
             error: None,
             error_span: None,
+            wake: None,
         }
+    }
+
+    /// Draws the table again when the soonest rule to expire does, so it shows as expired then.
+    fn wake_at_next_expiry(&mut self, cx: &mut Context<Self>) {
+        let now = now_ms();
+        let next = self
+            .model
+            .read(cx)
+            .rules
+            .rules
+            .iter()
+            .filter_map(|r| r.expires_ms)
+            .filter(|at| *at > now)
+            .min();
+        if next.is_none() || next == self.wake {
+            return;
+        }
+        self.wake = next;
+        let delay = std::time::Duration::from_millis(next.unwrap_or(now).saturating_sub(now) + 50);
+        cx.spawn(async move |page, cx| {
+            cx.background_executor().timer(delay).await;
+            let _ = page.update(cx, |page, cx| {
+                page.wake = None;
+                page.table.update(cx, |_, cx| cx.notify());
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn choose_lifetime(&mut self, lifetime: Option<Lifetime>, cx: &mut Context<Self>) {
+        self.table.update(cx, |table, cx| {
+            table.delegate_mut().folder = None;
+            table.delegate_mut().lifetime = lifetime;
+            table.delegate_mut().recompute(cx);
+            cx.notify();
+        });
+        cx.notify();
+    }
+
+    /// An entry of the tree that lists the temporary rules, or the permanent ones, of every folder.
+    fn lifetime_row(
+        lifetime: Lifetime,
+        count: usize,
+        chosen: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = cx.theme().clone();
+        let (key, label, tooltip) = match lifetime {
+            Lifetime::Temporary => (
+                "temporary",
+                "Temporary",
+                "Rules that end at a time or when the node restarts",
+            ),
+            Lifetime::Permanent => ("permanent", "Permanent", "Rules that never expire"),
+        };
+        h_flex()
+            .id(SharedString::from(format!("lifetime-{key}")))
+            .gap_1()
+            .pl(px(8.))
+            .pr_1()
+            .py_0p5()
+            .rounded_sm()
+            .cursor_pointer()
+            .when(chosen, |row| row.bg(theme.accent))
+            .hover(|row| row.bg(theme.muted))
+            .tooltip(move |window, cx| {
+                gpui_component::tooltip::Tooltip::new(tooltip).build(window, cx)
+            })
+            .on_click(cx.listener(move |page, _, _, cx| {
+                page.choose_lifetime(Some(lifetime), cx);
+            }))
+            .child(div().flex_1().child(label))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(count.to_string()),
+            )
+            .into_any_element()
     }
 
     /// Searches as the query is typed: rules are all here, so each keystroke filters them at once.
@@ -681,24 +835,43 @@ impl RulesPage {
     fn choose_folder(&mut self, folder: Option<u64>, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
             table.delegate_mut().folder = folder;
+            table.delegate_mut().lifetime = None;
             table.delegate_mut().recompute(cx);
             cx.notify();
         });
         cx.notify();
     }
 
-    fn tree(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn tree(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        self.wake_at_next_expiry(cx);
         let theme = cx.theme().clone();
         let list = self.model.read(cx).rules.clone();
         let chosen = self.table.read(cx).delegate().folder;
-        let mut column = v_flex().gap_px().child(self.folder_row(
-            None,
-            "All rules".into(),
-            0,
-            chosen.is_none(),
-            None,
-            cx,
-        ));
+        let lifetime = self.table.read(cx).delegate().lifetime;
+        let temporaries = list.rules.iter().filter(|r| temporary(r)).count();
+        let mut column = v_flex()
+            .gap_px()
+            .child(self.folder_row(
+                None,
+                "All rules".into(),
+                0,
+                chosen.is_none() && lifetime.is_none(),
+                None,
+                cx,
+            ))
+            .child(Self::lifetime_row(
+                Lifetime::Temporary,
+                temporaries,
+                lifetime == Some(Lifetime::Temporary),
+                cx,
+            ))
+            .child(Self::lifetime_row(
+                Lifetime::Permanent,
+                list.rules.len() - temporaries,
+                lifetime == Some(Lifetime::Permanent),
+                cx,
+            ))
+            .child(div().h_2());
         for (folder, depth) in ordered(&list) {
             column = column.child(self.folder_row(
                 Some(folder.id),
@@ -978,10 +1151,19 @@ fn rules_csv(list: &v1::RuleList) -> String {
             ),
             tier_name(rule.tier()).to_owned(),
             conditions(rule.conditions.as_ref()),
+            expiry_text(rule, now_ms()),
         ]
     });
     crate::csv::table(
-        &["folder", "name", "enabled", "action", "tier", "conditions"],
+        &[
+            "folder",
+            "name",
+            "enabled",
+            "action",
+            "tier",
+            "conditions",
+            "expires",
+        ],
         rows,
     )
 }
@@ -1174,6 +1356,29 @@ impl Render for RulesPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn temporary_rules_say_when_they_end() {
+        let now = now_ms();
+        let rule = |expires_ms, until_restart| v1::Rule {
+            expires_ms,
+            until_restart,
+            ..v1::Rule::default()
+        };
+        assert!(!temporary(&rule(None, false)));
+        assert_eq!(expiry_text(&rule(None, false), now), "");
+        assert!(temporary(&rule(None, true)));
+        assert_eq!(expiry_text(&rule(None, true), now), "until restart");
+        let later = rule(Some(now + 60_000), false);
+        assert!(temporary(&later));
+        assert!(expiry_text(&later, now).starts_with("until "));
+        assert!(expiry_text(&rule(Some(now - 1), false), now).starts_with("expired "));
+        // Another day: with its date.
+        assert_eq!(
+            end_time(now + 3 * 86_400_000, now).len(),
+            "2026-11-20 09:00".len()
+        );
+    }
 
     #[test]
     fn rules_read_with_their_folders_and_conditions() {

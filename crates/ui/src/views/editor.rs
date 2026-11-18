@@ -57,6 +57,39 @@ const FIELDS: [(&str, &str, &str); 10] = [
     ("list", "Blocklist", "ads (a blocklist's name)"),
 ];
 
+/// When the rule stops applying, as the editor offers it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expires {
+    /// As it is: the time the rule already ends at.
+    Keep(u64),
+    Never,
+    UntilRestart,
+    /// This long from when it is saved.
+    In(u64),
+}
+
+const HOUR_MS: u64 = 3_600_000;
+
+impl Expires {
+    fn of(rule: &v1::Rule) -> Self {
+        match rule.expires_ms {
+            Some(at) => Self::Keep(at),
+            None if rule.until_restart => Self::UntilRestart,
+            None => Self::Never,
+        }
+    }
+
+    /// Sets it on `rule`, at `now`.
+    fn apply(self, rule: &mut v1::Rule, now: u64) {
+        (rule.expires_ms, rule.until_restart) = match self {
+            Self::Keep(at) => (Some(at), false),
+            Self::Never => (None, false),
+            Self::UntilRestart => (None, true),
+            Self::In(ms) => (Some(now.saturating_add(ms)), false),
+        };
+    }
+}
+
 pub struct RuleEditor {
     model: Entity<Model>,
     requests: mpsc::Sender<Request>,
@@ -65,6 +98,9 @@ pub struct RuleEditor {
     name: Entity<InputState>,
     fields: Vec<Entity<InputState>>,
     folder: Entity<SelectState<Vec<FolderItem>>>,
+    /// When it ends, and when it ended as opened (offered to keep).
+    expires: Expires,
+    opened: Expires,
     preview: Option<String>,
 }
 
@@ -142,6 +178,7 @@ impl RuleEditor {
             .position(|item| item.id == rule.folder)
             .map(IndexPath::new);
         let folder = cx.new(|cx| SelectState::new(items, selected, window, cx));
+        let expires = Expires::of(&rule);
         Self {
             model,
             requests,
@@ -149,6 +186,8 @@ impl RuleEditor {
             name,
             fields,
             folder,
+            expires,
+            opened: expires,
             preview: None,
         }
     }
@@ -173,12 +212,53 @@ impl RuleEditor {
                 _ => {}
             }
         }
-        v1::Rule {
+        let mut rule = v1::Rule {
             name: self.name.read(cx).value().to_string(),
             folder: self.folder.read(cx).selected_value().copied().flatten(),
             conditions: Some(conditions),
             ..self.rule.clone()
+        };
+        self.expires.apply(&mut rule, crate::views::rules::now_ms());
+        rule
+    }
+
+    /// The choices of when the rule ends: the time it ends at now (when it has one), never, at a restart, or in a while.
+    fn expiry_row(&self, label: gpui::Div, cx: &mut Context<Self>) -> gpui::Div {
+        let now = crate::views::rules::now_ms();
+        let mut choices: Vec<(String, Expires)> = Vec::new();
+        if let Expires::Keep(at) = self.opened {
+            let end = crate::views::rules::end_time(at, now);
+            choices.push((
+                if at <= now {
+                    format!("Expired {end}")
+                } else {
+                    format!("Until {end}")
+                },
+                self.opened,
+            ));
         }
+        choices.extend([
+            ("Never".to_owned(), Expires::Never),
+            ("Until restart".to_owned(), Expires::UntilRestart),
+            ("1 hour".to_owned(), Expires::In(HOUR_MS)),
+            ("12 hours".to_owned(), Expires::In(12 * HOUR_MS)),
+        ]);
+        let mut row = h_flex().gap_1().child(label);
+        for (index, (text, expires)) in choices.into_iter().enumerate() {
+            let button = Button::new(SharedString::from(format!("expires-{index}")))
+                .small()
+                .label(text)
+                .on_click(cx.listener(move |editor, _, _, cx| {
+                    editor.expires = expires;
+                    cx.notify();
+                }));
+            row = row.child(if self.expires == expires {
+                button.primary()
+            } else {
+                button.ghost()
+            });
+        }
+        row
     }
 
     /// How many of the loaded events the edited rule matches (its folders' scopes included).
@@ -363,6 +443,7 @@ impl Render for RuleEditor {
                         },
                     )),
             )
+            .child(self.expiry_row(label("Expires"), cx))
             .child(
                 h_flex()
                     .gap_2()
@@ -428,4 +509,26 @@ pub fn open(
                     )),
             )
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_choices_set_the_rule() {
+        let mut rule = v1::Rule::default();
+        Expires::In(HOUR_MS).apply(&mut rule, 1_000);
+        assert_eq!(
+            (rule.expires_ms, rule.until_restart),
+            (Some(1_000 + HOUR_MS), false)
+        );
+        assert_eq!(Expires::of(&rule), Expires::Keep(1_000 + HOUR_MS));
+        Expires::UntilRestart.apply(&mut rule, 1_000);
+        assert_eq!((rule.expires_ms, rule.until_restart), (None, true));
+        assert_eq!(Expires::of(&rule), Expires::UntilRestart);
+        Expires::Never.apply(&mut rule, 1_000);
+        assert_eq!((rule.expires_ms, rule.until_restart), (None, false));
+        assert_eq!(Expires::of(&rule), Expires::Never);
+    }
 }

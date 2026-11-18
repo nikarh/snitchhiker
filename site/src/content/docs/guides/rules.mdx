@@ -119,13 +119,13 @@ A rule applies only while it and every folder above it are enabled. Switching a 
 
 The desktop app's Rules page shows the folder tree beside the rules of the folder chosen (and the folders below it). The search box takes the [query language](/reference/query-language/#keys-for-rules) and filters as you type: `curl`, `host:example.com action:deny`, `enabled:no`, `folder:Apps/*`.
 
-Rules are picked with their check boxes (Shift picks a range) and changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted. One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. Deleting more than 20 rules at once is a [dangerous action](/reference/configuration/#step_up). From the command line: `snitchhiker rules edit 12,13,14 disable`.
+Rules are picked with their check boxes (Shift picks a range) and changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted. One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. From the command line: `snitchhiker rules edit 12,13,14 disable`.
 
 ## Editing a rule
 
 ![The rule editor, with its check against the history loaded](../../../assets/screenshots/rule-editor-light.png)
 
-A rule's *Edit* (or a double-click on it) opens the editor: name, action, tier, folder and conditions. *Check against history* runs the rule as written over the connections the app has loaded and says how many it matches, before anything is saved.
+A rule's *Edit* (or a double-click on it) opens the editor: name, action, tier, when it [expires](#rules-that-expire), folder and conditions. *Check against history* runs the rule as written over the connections the app has loaded and says how many it matches, before anything is saved.
 
 ## Checking the rules
 
@@ -156,7 +156,9 @@ When no rule matches, the [`no_match` policy](/reference/configuration/#no_match
 
 ## Rules that expire
 
-Rules made by answering a prompt can last until the daemon restarts, for an hour, for 12 hours or forever. An expired rule stops matching at once; until-restart rules are never written to disk.
+As in OpenSnitch, a rule is permanent or temporary. A temporary rule lasts until the daemon restarts, or until a time: answering a prompt for an hour or 12 hours makes one, and so does choosing when it expires in the rule editor (*Expires*: never, until restart, 1 hour, 12 hours, or keeping the time it has) or for many rules at once (*Expires…*).
+
+In the desktop app, the Rules page lists **Temporary** and **Permanent** rules apart, beside *All rules* and the folders, and a temporary rule carries a tag beside its name saying when it ends (*until 18:17*, *until restart*). An expired rule stops matching at once and is marked *expired*; it stays listed until it is deleted or given another expiry, and [*Check rules*](#checking-the-rules) lists it too. Until-restart rules are never written to disk.
 
 ## The System folder
 

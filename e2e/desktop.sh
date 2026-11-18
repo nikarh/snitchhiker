@@ -53,7 +53,7 @@ sleep 1
 page rules
 click 1174 158
 sleep 1
-click 512 181
+click 512 156
 click 957 665
 sleep 1
 { snitchhiker rules; snitchhiker history --limit 1; } > /tmp/desktop-result.txt' >/dev/null 2>&1
@@ -173,7 +173,7 @@ snitchhiker rules add allow --exe /usr/bin/curl --name "curl" >/dev/null
 snitchhiker rules add allow --exe /usr/bin/wget --name "wget" >/dev/null
 sleep 1
 page rules
-drag 700 157 300 147
+drag 700 157 300 211
 sleep 1
 snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
@@ -260,7 +260,7 @@ for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchh
 page rules
 click 1229 89
 sleep 1
-click 712 148
+click 712 123
 type_text "café rule"
 click 712 278
 type_text "/usr/bin/curl"
