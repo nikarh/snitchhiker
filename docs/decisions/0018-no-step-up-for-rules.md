@@ -26,7 +26,8 @@ used regular expressions for both the program and the host.
 - Step-up stays for what switches protection off wholesale or hands control to someone else: loosening the policy or
   keeping less history, letting in through the system firewall what it kept out, changing agents' envelopes, pairing a
   device, unpairing or muting another, a remote device's dangerous actions. (Trusted clients and the daemon's
-  configuration are root's alone.)
+  configuration are root's alone.) Decision 0019 took the policy, the history's retention and the system firewall out
+  of this list for local clients, by the same reasoning.
 
 ## Consequences
 

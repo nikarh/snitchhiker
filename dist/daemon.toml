@@ -1,6 +1,6 @@
 # Snitchhiker daemon settings. Only root edits this file; after a change: systemctl restart snitchhikerd. Clients can
 # change the policy settings (mode, no_match, no_client, prompt_timeout_secs, on_timeout, retention_days) while the
-# daemon runs, over this file's values (`snitchhiker policy`); loosening them needs step-up.
+# daemon runs, over this file's values (`snitchhiker policy`); a change that loosens them is audited.
 
 # enforce: rules and no_match decide. monitor: everything passes, and what would have happened is recorded
 # (`snitchhiker events`), to learn what a machine does before enforcing. Packages start in monitor mode.
@@ -37,8 +37,9 @@ no_match = "ask"
 # `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
 #trusted_clients = []
 
-# What confirms a dangerous action a client asks for (a looser policy or system firewall; pairing a device): polkit
-# (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`). Rules never need it.
+# What confirms a dangerous action a client asks for (pairing a device, unpairing or muting another, agents'
+# envelopes): polkit (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`). Rules and
+# the node's own settings (policy, retention, system firewall) never need it from a local client.
 #step_up = "polkit"
 
 # The local users who administer the node through the desktop app: members of these groups (those who may become root,

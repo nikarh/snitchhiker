@@ -133,8 +133,8 @@ const SCENARIOS: &[Scenario] = &[
         subscriptions::waiting_prompts_are_sent_on_subscribing,
     ),
     (
-        "step-up/loosening-the-policy-needs-authorization",
-        stepup::loosening_the_policy_needs_authorization,
+        "step-up/local-settings-need-no-authorization",
+        stepup::local_settings_need_no_authorization,
     ),
     (
         "step-up/rule-changes-need-no-authorization",

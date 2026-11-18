@@ -762,7 +762,7 @@ impl<E: From<StoreError>> From<StoreError> for Attempt<E> {
 }
 
 /// Runs `apply` in one transaction as a batch of `app`'s changes; when it loosens what is in force, rolls it back,
-/// asks `caller` to authorize what it loosens (audited, even when unchecked), and makes it again.
+/// audits what it loosens (a remote device's waiting for a local approval), and makes it again.
 fn guarded<T, E: From<StoreError>>(
     daemon: &Daemon,
     caller: Option<&Caller>,
@@ -793,7 +793,7 @@ fn guarded<T, E: From<StoreError>>(
         (Ok(value), _) => Ok(value),
         (Err(Attempt::Failed(e)), _) => Err(Guard::Failed(e)),
         (Err(Attempt::Loosens(what)), Some(caller)) => {
-            step_up(daemon, caller, app, &what).map_err(Guard::Refused)?;
+            loosen_settings(daemon, caller, app, &what).map_err(Guard::Refused)?;
             attempt(false).map_err(|e| match e {
                 Attempt::Failed(e) => Guard::Failed(e),
                 Attempt::Loosens(what) => Guard::Refused(internal(what)),
@@ -1224,7 +1224,7 @@ fn set_system_firewall(
         Err(e) => return internal(e),
     };
     if crate::system::loosened(&before, &firewall)
-        && let Err(refused) = step_up(
+        && let Err(refused) = loosen_settings(
             daemon,
             caller,
             app,
@@ -1755,6 +1755,79 @@ pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
     }
 }
 
+/// Records an attempt in the audit trail; an attempt that can't be recorded doesn't happen.
+fn audit(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    action: &str,
+    outcome: v1::AuditOutcome,
+) -> Result<(), v1::response::Result> {
+    let entry = AuditEntry {
+        id: 0,
+        time_ms: now_ms(),
+        app: app.to_owned(),
+        uid: caller.uid,
+        pid: caller.pid,
+        action: action.to_owned(),
+        outcome: u8::try_from(i32::from(outcome)).unwrap_or(0),
+    };
+    if let Err(error) = daemon.store().audit(&entry) {
+        return Err(internal(format!("auditing: {error}")));
+    }
+    info!(
+        app,
+        uid = caller.uid,
+        pid = caller.pid,
+        action,
+        ?outcome,
+        "dangerous action"
+    );
+    Ok(())
+}
+
+/// A change that loosens the node's own settings (the policy, the history's retention, the system firewall): a local
+/// client's session is enough and the change is audited (decision 0019: a session that can be driven could add a rule
+/// instead); a remote device's waits for a local approval, as its other dangerous actions do.
+fn loosen_settings(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    action: &str,
+) -> Result<(), v1::response::Result> {
+    if caller.device.is_some() {
+        return step_up(daemon, caller, app, action);
+    }
+    audit(daemon, caller, app, action, v1::AuditOutcome::Unchecked)?;
+    alert_allowed(daemon, caller, app, action, v1::AuditOutcome::Unchecked);
+    Ok(())
+}
+
+/// The alert that `app` was allowed a dangerous action: whoever watches the node (a phone) is told.
+fn alert_allowed(
+    daemon: &Daemon,
+    caller: &Caller,
+    app: &str,
+    action: &str,
+    outcome: v1::AuditOutcome,
+) {
+    daemon.raise(&crate::alerts::NewAlert {
+        kind: "dangerous_action",
+        title: format!("{app} was allowed to {action}"),
+        body: format!(
+            "uid {}, pid {}: {}",
+            caller.uid,
+            caller.pid,
+            if outcome == v1::AuditOutcome::Authorized {
+                "authorized with polkit"
+            } else {
+                "unchecked (root, a local client's own settings, or step-up off)"
+            }
+        ),
+        rule: None,
+    });
+}
+
 /// A dangerous action asked for by `caller`: goes ahead when root asks, when step-up is off, or when polkit authorizes
 /// the client's process; otherwise the error to answer with. Every attempt is audited.
 fn step_up(
@@ -1790,44 +1863,9 @@ fn step_up(
             }
         }
     };
-    let entry = AuditEntry {
-        id: 0,
-        time_ms: now_ms(),
-        app: app.to_owned(),
-        uid: caller.uid,
-        pid: caller.pid,
-        action: action.to_owned(),
-        outcome: u8::try_from(i32::from(outcome)).unwrap_or(0),
-    };
-    let recorded = daemon.store().audit(&entry);
-    if let Err(error) = recorded {
-        // An action that can't be audited doesn't happen.
-        return Err(internal(format!("auditing: {error}")));
-    }
-    info!(
-        app,
-        uid = caller.uid,
-        pid = caller.pid,
-        action,
-        ?outcome,
-        "dangerous action"
-    );
+    audit(daemon, caller, app, action, outcome)?;
     if outcome != v1::AuditOutcome::Refused {
-        daemon.raise(&crate::alerts::NewAlert {
-            kind: "dangerous_action",
-            title: format!("{app} was allowed to {action}"),
-            body: format!(
-                "uid {}, pid {}: {}",
-                caller.uid,
-                caller.pid,
-                if outcome == v1::AuditOutcome::Authorized {
-                    "authorized with polkit"
-                } else {
-                    "unchecked (root, or step-up off)"
-                }
-            ),
-            rule: None,
-        });
+        alert_allowed(daemon, caller, app, action, outcome);
     }
     if outcome == v1::AuditOutcome::Refused {
         return Err(error(

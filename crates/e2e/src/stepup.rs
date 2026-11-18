@@ -1,6 +1,6 @@
-//! Step-up: a client's request to loosen the policy (connections no rule decides allowed) needs polkit's authorization
-//! of the client's process; tightening it doesn't, and neither does root. What rules say needs none (decision 0018).
-//! Every dangerous attempt is audited.
+//! Step-up: what hands control to someone else (an agents' envelope, pairing) needs polkit's authorization of the
+//! client's process; root needs none. A local client's change to the node's own settings needs none (decision 0019),
+//! nor does what rules say (decision 0018). Every loosening and every dangerous attempt is audited.
 
 use std::path::Path;
 use std::thread;
@@ -138,59 +138,63 @@ fn as_client(flag: &str, kind: &str) -> Result<String, String> {
     Ok(text)
 }
 
-/// Loosening the policy takes polkit's authorization (none answering is a refusal); tightening it doesn't, nor does
-/// root; and a rule allowing every program anywhere is a rule like any other.
-pub fn loosening_the_policy_needs_authorization() -> Result<(), String> {
+/// A local client changes the node's own settings without step-up (decision 0019), with polkit refusing and with no
+/// answer: unmatched connections let through, monitor mode, less history, the system firewall off. Each loosening is
+/// audited as unchecked. Handing control to agents (an envelope) still takes polkit's authorization.
+pub fn local_settings_need_no_authorization() -> Result<(), String> {
     install_clients()?;
     let mut daemon = crate::daemon::Running::start(
         "step-up",
-        &format!("mode = \"monitor\"\ntrusted_clients = [\"{CLIENT}\"]\n"),
+        &format!("mode = \"enforce\"\ntrusted_clients = [\"{CLIENT}\"]\n"),
     )?;
-    // No answer from polkit (no rule, and no agent to ask the user through): refused.
     polkit_answers(None)?;
-    let unanswered = as_client("--set-policy", "loosen")?;
-    let tightened = as_client("--set-policy", "tighten")?;
-    let broad = as_client("--add-rule", "broad")?;
+    let firewall_on = step("firewall-on", None)?;
+    let loosened = as_client("--set-policy", "loosen")?;
+    let monitor = step("monitor", None)?;
     polkit_answers(Some("NO"))?;
-    let refused = as_client("--set-policy", "loosen")?;
+    let retention = step("retention", None)?;
+    let firewall_off = step("firewall-off", None)?;
+    let envelope_refused = step("envelope", None)?;
     polkit_answers(Some("YES"))?;
-    let authorized = as_client("--set-policy", "loosen")?;
+    let envelope_authorized = step("envelope", None)?;
     polkit_answers(None)?;
-    let root = daemon.cli(&["policy", "set", "on_timeout=allow"]);
+    let policy = daemon.cli(&["policy"])?;
     let audit = daemon.cli(&["audit"])?;
     daemon.stop()?;
     let found = format!(
-        "unanswered: {unanswered}tightened: {tightened}broad: {broad}refused: {refused}authorized: {authorized}\
-         root: {root:?}\n{audit}"
+        "firewall on: {firewall_on}\nloosened: {loosened}monitor: {monitor}\nretention: {retention}\n\
+         firewall off: {firewall_off}\nenvelope refused: {envelope_refused}\nenvelope authorized: \
+         {envelope_authorized}\n{policy}\n{audit}"
     );
     check(
-        unanswered.contains("not authorized") && refused.contains("not authorized"),
-        "the policy was loosened without authorization",
+        firewall_on == "ok"
+            && loosened.trim() == "set"
+            && monitor == "ok"
+            && retention == "ok"
+            && firewall_off == "ok",
+        "a local client's change to the node's own settings needed authorization",
         &found,
     )?;
     check(
-        tightened.trim() == "set",
-        "tightening the policy needed authorization",
+        envelope_refused.contains("not authorized") && envelope_authorized == "ok",
+        "an agents' envelope changed without polkit's authorization",
         &found,
     )?;
-    check(
-        broad.trim() == "added",
-        "a rule allowing every program anywhere needed authorization",
-        &found,
-    )?;
-    check(
-        authorized.trim() == "set",
-        "an authorized loosening didn't happen",
-        &found,
-    )?;
-    check(root.is_ok(), "root couldn't loosen the policy", &found)?;
     let outcomes: Vec<&str> = audit
         .lines()
         .filter_map(|line| line.split_whitespace().nth(2))
         .collect();
     check(
-        outcomes == ["unchecked", "authorized", "refused", "refused"],
-        "the audit doesn't record each attempt and its outcome, newest first",
+        outcomes
+            == [
+                "authorized",
+                "refused",
+                "unchecked",
+                "unchecked",
+                "unchecked",
+                "unchecked",
+            ],
+        "the audit doesn't record each loosening as unchecked and the envelope's attempts, newest first",
         &found,
     )
 }
@@ -262,6 +266,34 @@ pub fn request(socket: &str, step: &str, id: Option<&str>) -> std::process::Exit
         }),
         "undo" => Method::Undo(v1::Undo { change: id }),
         "list" => Method::ListRules(v1::ListRules {}),
+        // The node's own settings, loosened: monitor mode, less history, the system firewall off (after on).
+        "monitor" => Method::SetPolicy(v1::SetPolicy {
+            mode: Some(v1::Mode::Monitor.into()),
+            ..v1::SetPolicy::default()
+        }),
+        "retention" => Method::SetPolicy(v1::SetPolicy {
+            retention_days: Some(1),
+            ..v1::SetPolicy::default()
+        }),
+        "firewall-on" | "firewall-off" => Method::SetSystemFirewall(v1::SetSystemFirewall {
+            firewall: Some(v1::SystemFirewall {
+                enabled: step == "firewall-on",
+                input: v1::ChainPolicy::Drop.into(),
+                forward: v1::ChainPolicy::Accept.into(),
+                ..v1::SystemFirewall::default()
+            }),
+            revert_after_secs: 0,
+        }),
+        // Handing control to agents: proposals inside the envelope approved without asking.
+        "envelope" => Method::PutEnvelope(v1::PutEnvelope {
+            envelope: Some(v1::Envelope {
+                name: "e2e".to_owned(),
+                enabled: true,
+                project: "glob:/tmp/**".to_owned(),
+                hosts: vec!["example.com".to_owned()],
+                ..v1::Envelope::default()
+            }),
+        }),
         _ => Method::AddRule(v1::AddRule {
             rule: Some(rule(&format!("e2e curl {id}"), curl(), Some(id))),
         }),

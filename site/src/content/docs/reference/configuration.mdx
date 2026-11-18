@@ -17,7 +17,7 @@ The daemon reads `/etc/snitchhiker/daemon.toml` at start (another file with `sni
 
 Six settings are the node's **policy**: [`mode`](#mode), [`no_match`](#no_match), [`no_client`](#no_client), [`prompt_timeout_secs`](#prompt_timeout_secs), [`on_timeout`](#on_timeout) and [`retention_days`](#retention_days). Clients can change them while the daemon runs (the desktop app's Settings page, `snitchhiker policy set no_match=ask`). A setting changed that way takes effect at once and takes precedence over the file's until it is reset to it (`snitchhiker policy reset no_match`, or *Use daemon.toml's* in the app). Changes are recorded in the [history](/guides/rules/#history-and-undo) with who made them, and undone like rule changes.
 
-A change that lets blocked connections through (to `monitor`, `no_match = "allow"`, or `allow` for `no_client` or `on_timeout`) is a [dangerous action](#step_up). `snitchhiker policy` shows the policy in effect and which settings a client changed.
+A change that lets blocked connections through (to `monitor`, `no_match = "allow"`, or `allow` for `no_client` or `on_timeout`) is recorded in the audit trail (`snitchhiker audit`); a local client needs no password for it, a remote device waits for a local approval. `snitchhiker policy` shows the policy in effect and which settings a client changed.
 
 Every key is optional; an empty or missing file means the defaults. Unknown keys are errors, so a typo doesn't go unnoticed. The packaged file sets `mode = "monitor"` and documents the rest. (The remote settings that used to be here, `remote`, `relays`, `remote_port`, `lan_discovery`, `push_gateway` and `offline_after_secs`, are in [`remote.toml`](#remotetoml) now: in `daemon.toml` they are ignored, with a warning in the log.)
 
@@ -120,7 +120,7 @@ The local users who administer the node through the desktop app: members of thes
 
 ### `step_up`
 
-What confirms a dangerous action a client asks for, such as loosening the policy ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
+What confirms a dangerous action a client asks for: pairing a device, unpairing or muting another, changing agents' envelopes ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). The node's own settings (the policy, the history's retention, the system firewall) take none from a local client. Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
 
 ## Remote devices
 

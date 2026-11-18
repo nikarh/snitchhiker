@@ -277,7 +277,8 @@ Even a genuine UI session should not be enough for actions that disable protecti
 | Propose | `agent.sock` only: dry-run checks, the caller's own blocked connections, submitting and withdrawing rule proposals | nothing: any local process can connect. The tier is powerless by design; every proposal needs a human in the Decide tier |
 | Read | events, stats, rules, connections | an authenticated client session (local UI, or a paired device with the `viewer` or `admin` role) |
 | Decide | answer a prompt, create, edit or delete rules and folders (any rule: decision 0018) | session + `admin` role |
-| Dangerous | disable interception or the firewall; change the default, timeout or fail policy; configure agent auto-approval envelopes; pair or unpair devices; change trusted clients; export the device key | session + **step-up**: polkit (password or fingerprint through the system polkit agent, `auth_admin_keep`), *or* confirmation on another paired admin device (the phone), configurable per node |
+| Settings | the mode, the default, timeout and history retention; the system firewall (decision 0019: no step-up from a local client, audited) | session + `admin` role; a remote device's change waits for a local approval |
+| Dangerous | configure agent auto-approval envelopes; pair, unpair or mute devices; a remote device's settings changes; change trusted clients; export the device key | session + **step-up**: polkit (password or fingerprint through the system polkit agent, `auth_admin_keep`), *or* confirmation on another paired admin device (the phone), configurable per node |
 
 - polkit is reached with `zbus_polkit` on zbus 6. It is pure Rust, so it needs no system library. The subject is
   passed as a pidfd so it cannot be raced.
@@ -295,7 +296,8 @@ Even a genuine UI session should not be enough for actions that disable protecti
   - The UI checks the compositor socket's peer (`SO_PEERCRED` + exe): a known compositor, whose executable is the
     root-owned, root-only-writable file at its path; it warns otherwise.
   - Prompt buttons arm only while the window is active, after a short delay from both the prompt and the activation.
-  - Dangerous actions need step-up anyway.
+  - Handing control to another party (pairing, envelopes) needs step-up. The node's own settings don't (decision
+    0019): the app warns instead when its session lets other processes inject input or control its window.
   - This is defence in depth, not a guarantee. Same-uid code controls the session's display.
 - **Input devices.** A user in the `input` group, or with `/dev/uinput` access, can inject events. The UI warns if the
   user is in `input`.

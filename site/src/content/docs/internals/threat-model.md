@@ -59,7 +59,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 | Posing as the daemon to a client | Clients check the socket's directories and that its peer is root | `local-auth/client-refuses-a-fake-node` |
 | Taking over a client's session | The session ends with the client's process (pidfd) | `local-auth/connection-ends-with-its-process` |
 | Another local user changing your rules | Only members of `admin_groups` administer the node; other users' apps are viewers | `step-up/other-local-users-are-viewers` |
-| Switching the firewall off with a session | Changes judged by the state they leave: a looser policy or system firewall, less history, unpairing or muting another device all need polkit. Rules don't (see below) | `step-up/*` |
+| Handing control to someone else with a session | Pairing a device, unpairing or muting another, and changing agents' envelopes need polkit; a remote device's change to the policy or system firewall waits for a local approval. The node's own settings and rules need none from a local client (see below) | `step-up/*`, `remote/a-devices-dangerous-request-waits-for-approval` |
 | An agent approving itself | The agent role proposes and reads its own blocked connections; a person approves, with broad proposals marked | `agents/*` |
 | Making root read a file | Local blocklists only from `/etc/snitchhiker/lists`, never through a link out of it | `daemon/blocklists-block-what-is-on-them` |
 | Tampering with the table | The kernel's announcement of a deleted table (the host's and each managed namespace's): put back at once, alerted | `tamper/*`, `containers/a-rootless-podman-container-is-decided-inside-its-namespace` |
@@ -91,7 +91,7 @@ Each row says what an attacker wants, what stops it, and the test that shows it 
 
 ## What remains
 
-- **Your display session.** A genuine compositor lets clients type into the focused window (the virtual keyboard protocol); X11 lets any client read and drive any window. The app warns about X11 and unknown compositors; dangerous actions still need step-up.
+- **Your display session.** X11 lets any client read and drive any window; many Wayland compositors (wlroots ones such as sway) offer every client virtual keyboards and pointers, and some let any client focus or close other windows; a writable `/dev/uinput` makes a fake keyboard under any compositor. A program of yours that can do any of these can drive the app: switch the node to monitor mode, add a rule for itself. The app checks for each and warns, with how to close it; the node's own settings don't ask for a password, since a session that can be driven could add a rule instead (decision 0019).
 - **Rules.** Adding, changing or removing rules needs no step-up, broad ones included: a process that can drive the app could add a rule for a program it wrote in a directory it may write as easily as a rule for everything, so a password for some rules would protect nothing. Each change is in the history and can be undone.
 - **The `input` group** can type and click anywhere; the app warns when you are in it.
 - **Push payloads through FCM** carry the node's name and, when it went offline, the reason it gave, which Google can read; UnifiedPush delivers them encrypted.

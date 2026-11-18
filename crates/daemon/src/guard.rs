@@ -1,5 +1,6 @@
 //! What a change to the policy or system firewall loosens, judged on the state it leaves rather than on the request:
-//! any path to the same state is the same dangerous action.
+//! any path to the same state is audited alike. A local client needs no step-up for it (decision 0019); a remote
+//! device waits for a local approval.
 //!
 //! A change loosens when, after it:
 //!
