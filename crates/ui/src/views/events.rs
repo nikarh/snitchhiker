@@ -25,7 +25,7 @@ use crate::model::{Model, address};
 use crate::views::explain;
 use crate::views::text::clipped;
 
-const COLUMNS: [(&str, &str, f32); 11] = [
+const COLUMNS: [(&str, &str, f32); 12] = [
     ("time", "Time", 176.),
     ("action", "Action", 76.),
     ("why", "", 44.),
@@ -34,6 +34,7 @@ const COLUMNS: [(&str, &str, f32); 11] = [
     ("pid", "PID", 72.),
     ("destination", "Destination", 210.),
     ("port", "Port", 84.),
+    ("interface", "Interface", 96.),
     ("user", "User", 60.),
     ("out", "Sent", 80.),
     ("in", "Received", 84.),
@@ -47,11 +48,12 @@ pub struct EventsTable {
 }
 
 /// Columns that can be hidden: (key, label).
-pub const OPTIONAL: [(&str, &str); 7] = [
+pub const OPTIONAL: [(&str, &str); 8] = [
     ("rule", "Decided by"),
     ("pid", "PID"),
     ("destination", "Destination"),
     ("port", "Port"),
+    ("interface", "Interface"),
     ("user", "User"),
     ("out", "Sent"),
     ("in", "Received"),
@@ -241,6 +243,7 @@ fn events_csv(model: &Model) -> String {
                 address(row).to_string(),
                 row.port.to_string(),
                 protocol(row.protocol).to_string(),
+                cell(row, "interface", model).to_string(),
                 row.uid.to_string(),
                 row.bytes_out.to_string(),
                 row.bytes_in.to_string(),
@@ -257,6 +260,7 @@ fn events_csv(model: &Model) -> String {
             "address",
             "port",
             "protocol",
+            "interface",
             "uid",
             "sent",
             "received",
@@ -421,6 +425,13 @@ fn cell(row: &EventRow, column: &str, model: &Model) -> SharedString {
             _ => address(row).to_string().into(),
         },
         "port" => format!("{}/{}", row.port, protocol(row.protocol)).into(),
+        "interface" => model
+            .events
+            .string(row.interface)
+            .filter(|_| row.interface != 0)
+            .unwrap_or("")
+            .to_owned()
+            .into(),
         "user" => row.uid.to_string().into(),
         "out" => bytes(row.bytes_out).into(),
         "in" => bytes(row.bytes_in).into(),

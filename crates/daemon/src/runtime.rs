@@ -1348,6 +1348,7 @@ fn undecided_event(
     pid: u32,
     cookie: Option<u64>,
     container: Option<Arc<str>>,
+    interface: Option<Arc<str>>,
 ) -> Event {
     Event {
         time_ms: facts.now_ms,
@@ -1364,6 +1365,7 @@ fn undecided_event(
         rule: None,
         cookie,
         container,
+        interface,
     }
 }
 
@@ -1415,6 +1417,16 @@ fn context_of(
         .then(|| shared.contexts.container(owner.pid, owner.cgroup))
         .flatten();
     (process.context, container, false)
+}
+
+/// The interface a connection leaves through; a forwarded one's, the one it came in through (its bridge).
+fn interface_of(senders: &mut crate::forward::Senders, queued: &Packet<'_>) -> Option<Arc<str>> {
+    if queued.hook == NF_INET_FORWARD {
+        queued.in_interface
+    } else {
+        queued.out_interface
+    }
+    .and_then(|index| senders.interface(index))
 }
 
 /// The netfilter hook of forwarded packets.
@@ -1609,9 +1621,9 @@ pub(crate) fn decide(
             .map(|c| Arc::clone(&c.key))
             .or_else(|| named.as_ref().map(|(_, key)| Arc::clone(key)))
             .or_else(|| vm.as_ref().map(|v| Arc::clone(&v.key))),
+        interface_of(senders, queued),
     );
-    let rules = shared.rules.load();
-    let (action, source, rule) = if let Some(decision) = rules.decide(&facts) {
+    let (action, source, rule) = if let Some(decision) = shared.rules.load().decide(&facts) {
         (decision.action, Source::Rule, Some(decision.rule))
     } else {
         let held = Held {
@@ -1818,6 +1830,9 @@ fn publish_events(shared: &Shared, batch: &[Event], recorded: &[crate::store::Re
             if let Some(container) = &event.container {
                 strings.push((r.container, Arc::clone(container)));
             }
+            if let Some(interface) = &event.interface {
+                strings.push((r.interface, Arc::clone(interface)));
+            }
         }
         let mut columns = Vec::new();
         match columns::encode_events(&rows, &mut columns) {
@@ -1863,6 +1878,7 @@ fn event_row(event: &Event, recorded: &crate::store::Recorded) -> EventRow {
         bytes_out: 0,
         bytes_in: 0,
         container: recorded.container,
+        interface: recorded.interface,
     }
 }
 

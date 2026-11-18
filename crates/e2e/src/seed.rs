@@ -250,6 +250,8 @@ pub fn seed(path: &str, count: u64, days: u64) -> Result<(), String> {
                 rule: None,
                 cookie: None,
                 container: Some(Arc::from(key)),
+                // Forwarded from the container's bridge.
+                interface: Some(Arc::from("docker0")),
             });
             continue;
         }
@@ -268,6 +270,7 @@ pub fn seed(path: &str, count: u64, days: u64) -> Result<(), String> {
             rule: None,
             cookie: None,
             container: None,
+            interface: Some(Arc::from("wlan0")),
         });
         if batch.len() == 5000 {
             store

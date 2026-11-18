@@ -35,6 +35,8 @@ pub struct Senders {
     links: HashMap<u32, Link>,
     /// Namespace inode by this namespace's id for it.
     namespaces: HashMap<i32, u32>,
+    /// Interface names by index, for the history.
+    names: HashMap<u32, std::sync::Arc<str>>,
 }
 
 impl Senders {
@@ -71,6 +73,18 @@ impl Senders {
             }
             _ => None,
         }
+    }
+
+    /// The name of interface `index` of this namespace, for the history. Looked up once: interface numbers aren't
+    /// reused while the machine runs, and the kernel renames only an interface that is down, so carries nothing.
+    pub fn interface(&mut self, index: u32) -> Option<std::sync::Arc<str>> {
+        if let Some(name) = self.names.get(&index) {
+            return Some(std::sync::Arc::clone(name));
+        }
+        let link = self.route()?.link(index).ok()??;
+        let name: std::sync::Arc<str> = std::sync::Arc::from(link.name.as_str());
+        self.names.insert(index, std::sync::Arc::clone(&name));
+        Some(name)
     }
 
     fn route(&mut self) -> Option<&mut Route> {

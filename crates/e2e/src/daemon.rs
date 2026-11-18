@@ -1418,6 +1418,7 @@ fn busy_history(dir: &str) -> Result<(), String> {
             rule: Some(program + 1),
             cookie: None,
             container: None,
+            interface: None,
         });
         if batch.len() == batch.capacity() {
             store.record(&batch, &mut recorded).map_err(error)?;

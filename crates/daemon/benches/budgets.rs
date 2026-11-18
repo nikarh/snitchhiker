@@ -191,6 +191,7 @@ fn event(i: u64, count: u64, exes: &[Arc<str>], hosts: &[Arc<str>]) -> Event {
         rule: Some(program as u64 + 1),
         cookie: None,
         container: (program % 50 == 7).then(|| Arc::from("docker\tabc\tweb\tnode:22\tshop/web\t")),
+        interface: Some(Arc::from(if program % 10 == 3 { "wg0" } else { "wlan0" })),
     }
 }
 

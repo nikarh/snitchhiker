@@ -63,10 +63,12 @@ pub enum Column {
     BytesIn = 15,
     /// u32: the string id of the container's identity, 0 for none.
     Container = 16,
+    /// u32: the string id of the interface's name, 0 for none.
+    Interface = 17,
 }
 
 impl Column {
-    const ALL: [Self; 16] = [
+    const ALL: [Self; 17] = [
         Self::Seq,
         Self::Time,
         Self::Exe,
@@ -83,6 +85,7 @@ impl Column {
         Self::BytesOut,
         Self::BytesIn,
         Self::Container,
+        Self::Interface,
     ];
 
     #[must_use]
@@ -94,7 +97,8 @@ impl Column {
             | Self::Host
             | Self::Uid
             | Self::Pid
-            | Self::Container => 4,
+            | Self::Container
+            | Self::Interface => 4,
             Self::Address => 16,
             Self::Port => 2,
             Self::Protocol | Self::Context | Self::Action | Self::Source => 1,
@@ -104,7 +108,7 @@ impl Column {
 
     /// Every column of format 1, in the order the encoder writes them.
     #[must_use]
-    pub const fn all() -> [Self; 16] {
+    pub const fn all() -> [Self; 17] {
         Self::ALL
     }
 
@@ -129,6 +133,10 @@ impl Column {
             Self::BytesIn => "u64: bytes received",
             Self::Container => {
                 "u32: the string id of the container's identity; 0 for none (optional: older nodes don't write it)"
+            }
+            Self::Interface => {
+                "u32: the string id of the interface's name (the one a connection leaves through, or a forwarded one \
+                 came in through); 0 for none (optional: older nodes don't write it)"
             }
         }
     }
@@ -161,6 +169,8 @@ pub struct EventRow {
     pub bytes_in: u64,
     /// The string id of the container's identity; 0: none.
     pub container: u32,
+    /// The string id of the interface's name; 0: none.
+    pub interface: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -266,6 +276,7 @@ fn write_value(
         Column::BytesOut => out.extend_from_slice(&row.bytes_out.to_le_bytes()),
         Column::BytesIn => out.extend_from_slice(&row.bytes_in.to_le_bytes()),
         Column::Container => out.extend_from_slice(&row.container.to_le_bytes()),
+        Column::Interface => out.extend_from_slice(&row.interface.to_le_bytes()),
     }
     Ok(())
 }
@@ -293,6 +304,8 @@ pub struct EventBlock<'a> {
     bytes_in: &'a [U64],
     /// Absent in blocks of nodes from before containers were recorded.
     container: Option<&'a [U32]>,
+    /// Absent in blocks of nodes from before interfaces were recorded.
+    interface: Option<&'a [U32]>,
 }
 
 impl<'a> EventBlock<'a> {
@@ -358,6 +371,11 @@ impl<'a> EventBlock<'a> {
                 Err(BlockError::Missing(_)) => None,
                 Err(error) => return Err(error),
             },
+            interface: match u32s(Column::Interface) {
+                Ok(column) => Some(column),
+                Err(BlockError::Missing(_)) => None,
+                Err(error) => return Err(error),
+            },
         })
     }
 
@@ -397,6 +415,9 @@ impl<'a> EventBlock<'a> {
             container: self
                 .container
                 .map_or(0, |column| column.get(index).map_or(0, |c| c.get())),
+            interface: self
+                .interface
+                .map_or(0, |column| column.get(index).map_or(0, |c| c.get())),
         })
     }
 
@@ -433,6 +454,7 @@ mod tests {
             bytes_out: 517,
             bytes_in: u64::MAX,
             container: u32::try_from(seq % 3).unwrap(),
+            interface: u32::try_from(seq % 5).unwrap(),
         }
     }
 
@@ -446,8 +468,8 @@ mod tests {
         assert_eq!(parsed.rows().collect::<Vec<_>>(), rows);
         assert!(parsed.exe_ids().all(|id| id == 3));
         assert_eq!(parsed.row(64), None);
-        // 74 bytes a row (seven u32, the address, a u16, four u8, three u64), and the header and directory.
-        assert_eq!(block.len(), HEADER + 16 * DIRECTORY_ENTRY + 64 * 74);
+        // 78 bytes a row (eight u32, the address, a u16, four u8, three u64), and the header and directory.
+        assert_eq!(block.len(), HEADER + 17 * DIRECTORY_ENTRY + 64 * 78);
     }
 
     #[test]
@@ -463,6 +485,21 @@ mod tests {
         block[entry..entry + 2].copy_from_slice(&999_u16.to_le_bytes());
         let parsed = EventBlock::parse(&block).unwrap();
         assert_eq!(parsed.row(0).map(|r| r.container), Some(0));
+    }
+
+    #[test]
+    fn blocks_without_the_interface_column_are_read() {
+        // A block of a node from before interfaces were recorded.
+        let mut block = Vec::new();
+        encode_events(&[row(1)], &mut block).unwrap();
+        let entry = HEADER + 16 * DIRECTORY_ENTRY;
+        assert_eq!(
+            &block[entry..entry + 2],
+            &(Column::Interface as u16).to_le_bytes()
+        );
+        block[entry..entry + 2].copy_from_slice(&999_u16.to_le_bytes());
+        let parsed = EventBlock::parse(&block).unwrap();
+        assert_eq!(parsed.row(0).map(|r| r.interface), Some(0));
     }
 
     #[test]

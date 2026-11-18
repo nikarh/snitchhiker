@@ -151,6 +151,7 @@ impl Format for Protobuf {
                     bytes_out: e.bytes_out,
                     bytes_in: e.bytes_in,
                     container: None,
+                    interface: String::new(),
                 })
                 .collect(),
         }
@@ -211,6 +212,7 @@ impl Format for Columnar {
                 bytes_out: e.bytes_out,
                 bytes_in: e.bytes_in,
                 container: 0,
+                interface: 0,
             })
             .collect();
         let mut columns = Vec::new();

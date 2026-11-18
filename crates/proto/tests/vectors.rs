@@ -148,6 +148,7 @@ fn rows(text: &str) -> Vec<snitchhiker_proto::columns::EventRow> {
                     "bytes_out" => row.bytes_out = number(),
                     "bytes_in" => row.bytes_in = number(),
                     "container" => row.container = u32::try_from(number()).unwrap(),
+                    "interface" => row.interface = u32::try_from(number()).unwrap(),
                     other => panic!("unknown field {other}"),
                 }
             }

@@ -635,7 +635,7 @@ enum Reply {
 fn block_of(daemon: &Daemon, rows: &[EventRow]) -> Result<Block, String> {
     let mut ids: Vec<u32> = rows
         .iter()
-        .flat_map(|r| [r.exe, r.host, r.container])
+        .flat_map(|r| [r.exe, r.host, r.container, r.interface])
         .collect();
     ids.sort_unstable();
     ids.dedup();
@@ -1751,6 +1751,7 @@ pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
             .container
             .as_deref()
             .map(|key| Box::new(convert::container_from_key(key))),
+        interface: stored.interface.clone().unwrap_or_default(),
     }
 }
 

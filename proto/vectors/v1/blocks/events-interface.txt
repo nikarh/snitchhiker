@@ -1,0 +1,38 @@
+# An event block of two rows, one from a container, with the interfaces they went through: one field per line,
+# `name value`, rows separated by a blank line. Addresses are hex. The block (events-interface.hex) must parse to these
+# rows, and these rows must encode to it.
+seq 2000
+time_ms 1763300000000
+exe 5
+host 9
+uid 0
+pid 7311
+address 00000000000000000000ffffcb007146
+port 8080
+protocol 6
+context 2
+action 2
+source 2
+rule 0
+bytes_out 0
+bytes_in 0
+container 11
+interface 12
+
+seq 2001
+time_ms 1763300000250
+exe 3
+host 0
+uid 1000
+pid 4242
+address 00000000000000000000ffffc000020a
+port 443
+protocol 6
+context 1
+action 1
+source 1
+rule 18
+bytes_out 517
+bytes_in 4096
+container 0
+interface 13

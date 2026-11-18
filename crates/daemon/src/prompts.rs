@@ -338,6 +338,7 @@ mod tests {
                 rule: None,
                 cookie: None,
                 container: None,
+                interface: None,
             },
         }
     }

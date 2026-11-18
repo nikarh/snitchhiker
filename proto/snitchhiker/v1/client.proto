@@ -497,6 +497,8 @@ message ConnectionEvent {
   uint64 bytes_in = 15;
   // The container it came from (context CONTEXT_CONTAINER), when it could be named.
   ContainerIdentity container = 16;
+  // The interface it left through (or, forwarded, came in through), when known: "wlan0", "wg0", "docker0".
+  string interface = 17;
 }
 
 message ListEvents {

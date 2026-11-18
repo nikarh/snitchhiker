@@ -30,6 +30,6 @@ sudo snitchhiker contexts shop/web                          # a Compose service'
 ## Live, Events and Explain
 
 - **Live** shows connections as they happen: allowed and blocked each second of the last two minutes, the busiest programs of the last minute, and the newest connections (pause it to read them).
-- **Events** is the history, newest first, filtered with the [query language](/reference/query-language/). Each row says what decided it (the rule, by folder and name, or the policy, a prompt's answer or monitor mode) and the program's PID; **Columns** hides what isn't wanted. Its info button (or a double-click) says why a connection is decided so under today's rules: every rule that matches it, the deciding one first.
+- **Events** is the history, newest first, filtered with the [query language](/reference/query-language/). Each row says what decided it (the rule, by folder and name, or the policy, a prompt's answer or monitor mode), the program's PID and the network interface it went through (for a forwarded connection, the one it came in through, such as a container's bridge); **Columns** hides what isn't wanted. Its info button (or a double-click) says why a connection is decided so under today's rules: every rule that matches it, the deciding one first.
 
 ![Why a connection was decided as it was](../../../assets/screenshots/explain-light.png)

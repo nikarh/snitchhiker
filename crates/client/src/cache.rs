@@ -80,7 +80,8 @@ CREATE TABLE IF NOT EXISTS events (
     rule INTEGER NOT NULL,
     bytes_out INTEGER NOT NULL,
     bytes_in INTEGER NOT NULL,
-    container INTEGER NOT NULL
+    container INTEGER NOT NULL,
+    interface INTEGER NOT NULL
 );
 -- [low, high) of sequence numbers held for `query` ('' : every event).
 CREATE TABLE IF NOT EXISTS coverage (query TEXT NOT NULL, low INTEGER NOT NULL, high INTEGER NOT NULL);
@@ -112,7 +113,7 @@ impl Cache {
     /// The cache of node `epoch` in `dir` (one file per epoch: a recreated node starts afresh).
     pub fn open(dir: &Path, epoch: u64) -> Result<Self, Error> {
         // The format is in the name: a cache of an older format is dropped as another epoch's is.
-        let path = dir.join(format!("{epoch:016x}.v2.db"));
+        let path = dir.join(format!("{epoch:016x}.v3.db"));
         // Caches of other epochs are of a database that is gone.
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
@@ -157,7 +158,7 @@ impl Cache {
             string.execute(params![id, value])?;
         }
         let mut event = self.connection.prepare_cached(
-            "INSERT OR REPLACE INTO events VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT OR REPLACE INTO events VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         )?;
         for r in rows {
             event.execute(params![
@@ -177,6 +178,7 @@ impl Cache {
                 int(r.bytes_out),
                 int(r.bytes_in),
                 r.container,
+                r.interface,
             ])?;
         }
         Ok(())
@@ -294,7 +296,7 @@ impl Cache {
         };
         let mut statement = self.connection.prepare_cached(
             "SELECT seq, time_ms, exe, host, uid, pid, address, port, protocol, context, action, source, rule,
-                    bytes_out, bytes_in, container
+                    bytes_out, bytes_in, container, interface
              FROM events WHERE seq < ?1 AND seq >= ?2 ORDER BY seq DESC",
         )?;
         let candidates = statement.query_map(params![before, low], |row| {
@@ -316,6 +318,7 @@ impl Cache {
                 bytes_out: uint(row.get(13)?),
                 bytes_in: uint(row.get(14)?),
                 container: row.get(15)?,
+                interface: row.get(16)?,
             })
         })?;
         let mut rows = Vec::new();
@@ -458,7 +461,7 @@ impl<'a> Strings<'a> {
     fn used(&mut self, rows: &[EventRow]) -> Vec<(u32, String)> {
         let ids: HashSet<u32> = rows
             .iter()
-            .flat_map(|r| [r.exe, r.host])
+            .flat_map(|r| [r.exe, r.host, r.container, r.interface])
             .filter(|id| *id != 0)
             .collect();
         ids.into_iter()

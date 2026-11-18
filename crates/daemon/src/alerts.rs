@@ -280,6 +280,7 @@ mod tests {
             rule: Some(1),
             cookie: None,
             container: None,
+            interface: None,
         }
     }
 
@@ -290,6 +291,7 @@ mod tests {
             host: 1,
             new_exe,
             container: 0,
+            interface: 0,
         }
     }
 

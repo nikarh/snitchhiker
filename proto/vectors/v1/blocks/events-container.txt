@@ -1,5 +1,7 @@
 # An event block of two rows, one from a container: one field per line, `name value`, rows separated by a blank line.
-# Addresses are hex. The block (events-container.hex) must parse to these rows, and these rows must encode to it.
+# Addresses are hex. The block (events-container.hex) must parse to these rows.
+# It is a block of a node from before interfaces were recorded (no interface column): readers must still take it.
+# decode-only
 seq 2000
 time_ms 1763300000000
 exe 5
