@@ -21,6 +21,7 @@ ignore = [
   { id = "RUSTSEC-2026-0370", reason = "zvariant 5: gpui-pre's zbus 5 (the daemon is on zbus 6)" },
   { id = "RUSTSEC-2026-0371", reason = "zbus_names 4: gpui-pre's zbus 5" },
   { id = "RUSTSEC-2026-0372", reason = "zvariant_derive 5: gpui-pre's zbus 5" },
+  { id = "RUSTSEC-2026-0543", reason = "chrono, unmaintained: gpui-pre's and gpui-component's dates (the app formats local times with it too)" },
 ]
 
 [licenses]
