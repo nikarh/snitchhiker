@@ -6,7 +6,8 @@
 //! - every kind of history query on a large database: under 20 ms.
 //!
 //! The database has `SNITCHHIKER_BENCH_EVENTS` events (1 000 000 by default; `mise run bench:full` uses 10 000 000)
-//! spread over 30 days, of a few thousand programs and hosts. It is built in a temporary directory and removed.
+//! spread over 30 days, of a few thousand programs and hosts. It is built in `/dev/shm` (or `SNITCHHIKER_BENCH_DIR`)
+//! and removed.
 
 #![expect(clippy::print_stdout, reason = "a benchmark reports on stdout")]
 #![expect(
@@ -194,7 +195,20 @@ fn event(i: u64, count: u64, exes: &[Arc<str>], hosts: &[Arc<str>]) -> Event {
 }
 
 fn store(count: u64) -> Vec<String> {
-    let dir = std::env::temp_dir().join(format!("snitchhiker-bench-{}", std::process::id()));
+    // In memory where there is /dev/shm: the budget is the store's own work. A disk's speed is the machine's (shared CI
+    // runners' differ by half from one run to the next); what reaches it is the size an event takes, reported below.
+    let base = std::env::var_os("SNITCHHIKER_BENCH_DIR").map_or_else(
+        || {
+            let shm = std::path::Path::new("/dev/shm");
+            if shm.is_dir() {
+                shm.to_path_buf()
+            } else {
+                std::env::temp_dir()
+            }
+        },
+        std::path::PathBuf::from,
+    );
+    let dir = base.join(format!("snitchhiker-bench-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut store = Store::open(&dir.join("state.db")).unwrap();
     let exes: Vec<Arc<str>> = (0..300)
