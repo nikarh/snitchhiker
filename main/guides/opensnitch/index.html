@@ -134,16 +134,58 @@
 </tr>
 </tbody>
 </table>
-<p>How values compare is kept:</p>
+<p>How values compare:</p>
 <ul>
-<li>A <code dir="auto">simple</code> operator compares the whole value. OpenSnitch compares without case unless the rule is <code dir="auto">sensitive</code>; such values become <code dir="auto">(?i)</code> regular expressions, since paths in Snitchhiker otherwise compare exactly. Host names compare without case in Snitchhiker anyway.</li>
-<li>A <code dir="auto">regexp</code> operator matches anywhere in the value in OpenSnitch, and a whole value in Snitchhiker. Regular expressions that aren’t anchored with <code dir="auto">^…$</code> are wrapped in <code dir="auto">.*(?:…).*</code>, so they still match anywhere.</li>
+<li>
+<p>A <code dir="auto">simple</code> operator compares the whole value, and imports as that exact value. OpenSnitch’s UI marks every condition case-insensitive unless <code dir="auto">sensitive</code> is ticked, but Linux paths and command lines have case, so a <code dir="auto">simple</code> path imports as the exact path. Host names compare without case in Snitchhiker anyway.</p>
+</li>
+<li>
+<p>The patterns OpenSnitch’s UI writes become Snitchhiker’s own conditions:</p>
+<table>
+<thead>
+<tr>
+<th>OpenSnitch <code dir="auto">regexp</code></th>
+<th>Snitchhiker</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code dir="auto">dest.host</code> <code dir="auto">^(|.*\.)example\.com$</code> (the name and its subdomains)</td>
+<td><code dir="auto">host = ["example.com", "*.example.com"]</code></td>
+</tr>
+<tr>
+<td><code dir="auto">dest.host</code> <code dir="auto">^.*\.example\.com$</code></td>
+<td><code dir="auto">host = ["*.example.com"]</code></td>
+</tr>
+<tr>
+<td><code dir="auto">dest.host</code> <code dir="auto">^(a.example.com|b.example.org)$</code></td>
+<td><code dir="auto">host = ["a.example.com", "b.example.org"]</code></td>
+</tr>
+<tr>
+<td><code dir="auto">dest.ip</code> <code dir="auto">^(10.1.1.5|10.1.1.6)$</code></td>
+<td><code dir="auto">net = ["10.1.1.5/32", "10.1.1.6/32"]</code></td>
+</tr>
+<tr>
+<td><code dir="auto">dest.ip</code> <code dir="auto">192\.168\.1\..*</code></td>
+<td><code dir="auto">net = ["192.168.1.0/24"]</code></td>
+</tr>
+</tbody>
+</table>
+<p>These shapes are taken as anchored even when the <code dir="auto">^</code> or <code dir="auto">$</code> is missing: unanchored, <code dir="auto">172\.18\..*</code> also matched <code dir="auto">10.172.18.1</code>, which no rule meant. An unescaped <code dir="auto">.</code> in a name or an address is taken as a dot.</p>
+</li>
+<li>
+<p>Other <code dir="auto">regexp</code> operators match anywhere in the value in OpenSnitch, and a whole value in Snitchhiker. Those not anchored with <code dir="auto">^…$</code> are wrapped in <code dir="auto">.*(?:…).*</code>, so they still match anywhere. A <code dir="auto">dest.ip</code> pattern of another shape isn’t imported.</p>
+</li>
+<li>
+<p>The same condition written twice in one rule (OpenSnitch’s UI does this) counts once.</p>
+</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="what-isnt-imported">What isn’t imported</h2><a class="sl-anchor-link" href="#what-isnt-imported"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “What isn’t imported”</span></a></div>
 <ul>
 <li><strong>Temporary rules</strong>: any <code dir="auto">duration</code> other than <code dir="auto">always</code>.</li>
 <li><strong>Operands Snitchhiker has no condition for</strong>: environment variables (<code dir="auto">process.env.*</code>), interfaces, process ids, executable hashes, and block lists (<code dir="auto">lists</code>). The import names each rule and the operand.</li>
-<li><strong>A rule with two conditions on the same operand</strong> (two <code dir="auto">dest.port</code> in one list): both would have to hold, which a Snitchhiker condition can’t say.</li>
+<li><strong>A rule with two different conditions on the same operand</strong> (two <code dir="auto">dest.port</code> in one list): both would have to hold, which a Snitchhiker condition can’t say.</li>
+<li><strong>Conditions on the connection’s local end</strong> (<code dir="auto">source.ip</code>, <code dir="auto">source.port</code>, <code dir="auto">source.network</code>): Snitchhiker decides by the destination. A rule from loopback to loopback is covered by the built-in System folder’s Loopback rule.</li>
 <li><strong>A rule matching everything</strong> (<code dir="auto">true</code>): set <a href="/snitchhiker/main/reference/configuration/#no_match"><code dir="auto">no_match</code></a> instead.</li>
 </ul>
 <div class="sl-heading-wrapper level-h2"><h2 id="differences-to-know">Differences to know</h2><a class="sl-anchor-link" href="#differences-to-know"><span aria-hidden="true" class="sl-anchor-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="m12.11 15.39-3.88 3.88a2.52 2.52 0 0 1-3.5 0 2.47 2.47 0 0 1 0-3.5l3.88-3.88a1 1 0 1 0-1.42-1.42l-3.88 3.89a4.48 4.48 0 0 0 6.33 6.33l3.89-3.88a1 1 0 0 0-1.42-1.42m8.58-12.08a4.49 4.49 0 0 0-6.33 0l-3.89 3.88a1 1 0 1 0 1.42 1.42l3.88-3.88a2.52 2.52 0 0 1 3.5 0 2.47 2.47 0 0 1 0 3.5l-3.88 3.88a1 1 0 0 0 0 1.42 1 1 0 0 0 1.42 0l3.88-3.89a4.49 4.49 0 0 0 0-6.33M8.83 15.17a1 1 0 0 0 .71.29 1 1 0 0 0 .71-.29l4.92-4.92a1 1 0 1 0-1.42-1.42l-4.92 4.92a1 1 0 0 0 0 1.42"></path></svg></span><span class="sr-only" data-pagefind-ignore>Section titled “Differences to know”</span></a></div>
