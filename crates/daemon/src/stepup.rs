@@ -11,7 +11,8 @@ use zbus_polkit::policykit1::{AuthorityProxy, CheckAuthorizationFlags, Subject};
 pub const ACTION_ID: &str = "org.snitchhiker.manage";
 
 /// Asks polkit whether the process of `pidfd` (running as `uid`) may do what `message` says; this waits while the
-/// user authenticates. An error means polkit couldn't be asked (no polkit, no system bus): refused, then.
+/// user authenticates. An error means polkit couldn't be asked (no polkit, no system bus) or couldn't ask the user
+/// (no polkit agent in their session): refused, then, with the reason to tell them.
 ///
 /// Called from the API's own threads, never from inside zbus, so `block_on` waits on this thread alone.
 pub fn authorize(pidfd: &OwnedFd, uid: u32, message: &str) -> Result<bool, String> {
@@ -35,6 +36,12 @@ pub fn authorize(pidfd: &OwnedFd, uid: u32, message: &str) -> Result<bool, Strin
             )
             .await
             .map_err(|e| format!("polkit: {e}"))?;
+        // Not authorized, yet authorization could be had by authenticating: no agent was there to ask.
+        if !result.is_authorized && result.is_challenge {
+            return Err("no polkit agent is running in this session to ask for a password (desktops start one; \
+                 under a bare window manager, start one such as polkit-gnome or lxpolkit)"
+                .to_owned());
+        }
         Ok(result.is_authorized)
     })
 }

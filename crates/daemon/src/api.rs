@@ -1781,6 +1781,7 @@ fn step_up(
     action: &str,
 ) -> Result<(), v1::response::Result> {
     let unchecked = caller.role == v1::Role::Root || daemon.shared.config.step_up == StepUp::Off;
+    let mut why = None;
     let outcome = if unchecked {
         v1::AuditOutcome::Unchecked
     } else if let Some((name, key)) = &caller.device {
@@ -1801,6 +1802,7 @@ fn step_up(
             Some(Ok(false)) | None => v1::AuditOutcome::Refused,
             Some(Err(reason)) => {
                 warn!(%reason, "step-up authorization couldn't be asked for; refused");
+                why = Some(reason);
                 v1::AuditOutcome::Refused
             }
         }
@@ -1847,7 +1849,10 @@ fn step_up(
     if outcome == v1::AuditOutcome::Refused {
         return Err(error(
             v1::ErrorCode::NotAuthorized,
-            format!("not authorized to {action}"),
+            match why {
+                Some(why) => format!("not authorized to {action}: {why}"),
+                None => format!("not authorized to {action}"),
+            },
         ));
     }
     Ok(())
