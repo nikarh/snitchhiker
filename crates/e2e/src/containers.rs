@@ -840,15 +840,17 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     let _ = run("virsh", &["destroy", GUEST]);
     run("virsh", &["create", "/tmp/e2e-guest.xml"])?;
     let mut seen = Vec::new();
-    for _ in 0..60 {
+    // A nested guest on a shared runner can take a minute or more to boot: the loop ends as soon as both are seen.
+    for _ in 0..180 {
         thread::sleep(Duration::from_secs(1));
         seen = decisions(&daemon, "203.0.113.9")?;
         if seen.iter().any(|l| l.contains(":8096")) && seen.iter().any(|l| l.contains(":8097")) {
             break;
         }
     }
+    let state = run("virsh", &["domstate", GUEST]).unwrap_or_else(|e| e);
     let _ = run("virsh", &["destroy", GUEST]);
-    let found = seen.join("\n");
+    let found = format!("guest {}\n{}", state.trim(), seen.join("\n"));
     check(
         seen.iter()
             .any(|l| l.contains("allow") && l.contains(GUEST) && l.contains(":8096")),

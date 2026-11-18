@@ -14,11 +14,16 @@ no_client = "deny"
 prompt_timeout_secs = 60'
 
 result() { e2e/vm.sh node ssh "cat /tmp/desktop-result.txt" 2>/dev/null; }
+# A scenario that couldn't run fails on its result, which is cleared first, rather than ending the run.
+ui() {
+  e2e/vm.sh node ssh "sudo rm -f /tmp/desktop-result.txt" >/dev/null 2>&1 || true
+  scripts/ui-vm.sh "$@" || echo "ui-vm.sh exited $?" >&2
+}
 pass() { echo "ok    desktop/$1"; }
 fail() { echo "FAIL  desktop/$1: $2"; echo "$3" | sed 's/^/      /'; failed=1; }
 
 # 1. A prompt answered in the app: Allow on its card leaves a rule in the program's folder.
-scripts/ui-vm.sh "${shots}/prompt" '
+ui "${shots}/prompt" '
 pkill -x curl || true
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
@@ -30,7 +35,7 @@ shot asked
 # focused window the keyboard focus.
 session wtype -k Shift_L -s 5000 -k Shift_L &
 sleep 2
-click 318 328
+click 271 432
 sleep 2
 { snitchhiker rules; snitchhiker events --limit 5; } > /tmp/desktop-result.txt' "${ask}" >/dev/null 2>&1
 out=$(result)
@@ -41,14 +46,15 @@ else
 fi
 
 # 2. A rule edited in the app: Edit, Deny, Save.
-scripts/ui-vm.sh "${shots}/edit" '
+ui "${shots}/edit" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 snitchhiker rules add allow --exe /usr/bin/curl --host api.example.com --port 443 --name "curl API" >/dev/null
 sleep 1
 page rules
-click 1165 121
-click 545 138
-click 955 665
+click 1174 158
+sleep 1
+click 512 181
+click 957 665
 sleep 1
 { snitchhiker rules; snitchhiker history --limit 1; } > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
@@ -59,7 +65,7 @@ else
 fi
 
 # 3. A notification's "Allow once": the waiting connection is allowed, and no rule is made.
-scripts/ui-vm.sh "${shots}/notification" '
+ui "${shots}/notification" '
 pkill -x curl || true
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 runuser -u mallory -- curl -s -m 20 http://198.51.100.9:443 >/dev/null 2>&1 &
@@ -77,7 +83,7 @@ else
 fi
 
 # 4. The tray icon: it registers with a tray that starts after the app, and asks for attention while a prompt waits.
-scripts/ui-vm.sh "${shots}/tray" '
+ui "${shots}/tray" '
 pkill -x curl || true
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 # The VM'"'"'s own background traffic (NTP, the resolver) mustn'"'"'t be waiting too.
@@ -112,7 +118,7 @@ else
 fi
 
 # 5. The session check: under the compositor no warning, through a proxy of its socket a warning.
-scripts/ui-vm.sh "${shots}/session" '
+ui "${shots}/session" '
 runtime=/run/user/$uid
 rm -f $runtime/wayland-proxy
 runuser -u mallory -- socat UNIX-LISTEN:$runtime/wayland-proxy,fork UNIX-CONNECT:$runtime/wayland-1 </dev/null >/dev/null 2>&1 &
@@ -131,7 +137,7 @@ else
 fi
 
 # 6. OpenSnitch imported in the app: the preview's Import adds the rules that convert; the system firewall stays.
-scripts/ui-vm.sh "${shots}/import" '
+ui "${shots}/import" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
 mkdir -p /etc/opensnitchd/rules && rm -f /etc/opensnitchd/rules/*.json
@@ -145,10 +151,10 @@ printf "%s" "{\"Enabled\": true, \"SystemRules\": [{\"Chains\": [{\"Name\": \"na
 chmod 600 /etc/opensnitchd/rules/*.json /etc/opensnitchd/system-fw.json
 page rules
 sleep 1
-click 941 48
+click 977 89
 sleep 2
 shot preview
-click 969 623
+click 972 555
 for _ in $(seq 20); do snitchhiker rules | grep -q OpenSnitch/ && break; sleep 0.5; done
 { snitchhiker rules; snitchhiker system; } > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
@@ -159,7 +165,7 @@ else
 fi
 
 # 7. A rule dragged onto a folder moves there.
-scripts/ui-vm.sh "${shots}/drag" '
+ui "${shots}/drag" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 for id in $(snitchhiker folders | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker folders rm "$id" >/dev/null 2>&1 || true; done
 snitchhiker folders add Bin >/dev/null
@@ -167,7 +173,7 @@ snitchhiker rules add allow --exe /usr/bin/curl --name "curl" >/dev/null
 snitchhiker rules add allow --exe /usr/bin/wget --name "wget" >/dev/null
 sleep 1
 page rules
-drag 760 121 300 113
+drag 700 157 300 147
 sleep 1
 snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
@@ -178,7 +184,7 @@ else
 fi
 
 # 8. The app keeps the history it was sent, where only the app can reach it.
-scripts/ui-vm.sh "${shots}/cache" '
+ui "${shots}/cache" '
 for i in 1 2 3; do curl -s -m 1 http://198.51.100.20:$((8000 + i)) >/dev/null 2>&1 || true; done
 sleep 3
 db=$(ls /var/cache/snitchhiker-ui/$uid/*.db | head -1)
@@ -196,7 +202,7 @@ else
 fi
 
 # 9. An agent's proposal approved in the app: the agent is told, and its connection then goes through.
-scripts/ui-vm.sh "${shots}/proposal" '
+ui "${shots}/proposal" '
 ip addr add 192.0.2.77/32 dev lo 2>/dev/null || true
 kill "$(cat /tmp/server.pid 2>/dev/null)" 2>/dev/null || true
 # A bare listener (http.server would look its own address up in DNS, which the policy refuses).
@@ -211,7 +217,7 @@ sleep 2
 shot proposals
 session wtype -k Shift_L -s 5000 -k Shift_L &
 sleep 2
-click 329 487
+click 277 468
 sleep 4
 shot approved
 { cat /tmp/agent.out; snitchhiker rules; } > /tmp/desktop-result.txt
@@ -226,17 +232,17 @@ fi
 
 # 10. A node added in the app by its pairing link (here this machine's own node, over the network): the app pairs,
 # keeps the node, and shows it beside this machine's.
-SNITCHHIKER_UI_REMOTE=1 scripts/ui-vm.sh "${shots}/node" '
+SNITCHHIKER_UI_REMOTE=1 ui "${shots}/node" '
 for id in $(snitchhiker devices | awk "NR > 1 {print \$1}"); do snitchhiker devices rm "$id" >/dev/null; done
 link=$(snitchhiker pair | grep "^snitchhiker://")
 page devices
 sleep 2
-click 315 253
+click 265 267
 sleep 2
-click 640 144
+click 320 153
 type_text "$link"
 sleep 1
-click 49 266
+click 43 259
 sleep 10
 { snitchhiker devices; cat /var/lib/snitchhiker-ui/$uid/nodes.toml; } > /tmp/desktop-result.txt 2>&1' 'mode = "monitor"' \
   >/dev/null 2>&1
@@ -249,20 +255,20 @@ fi
 
 # 11. Text and the clipboard in the setgid app: a rule named with non-ASCII text typed in its editor is saved as
 # typed, and the events table Copy CSV copies is on the Wayland clipboard.
-scripts/ui-vm.sh "${shots}/clipboard" '
+ui "${shots}/clipboard" '
 for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
 page rules
-click 1240 48
+click 1229 89
 sleep 1
-click 720 102
+click 712 148
 type_text "café rule"
-click 720 250
+click 712 278
 type_text "/usr/bin/curl"
-click 955 668
+click 957 665
 sleep 1
 snitchhiker rules > /tmp/desktop-result.txt
 page events
-click 1250 48
+click 1225 89
 sleep 1
 session wl-paste -n | head -1 >> /tmp/desktop-result.txt' >/dev/null 2>&1
 out=$(result)
