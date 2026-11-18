@@ -799,7 +799,9 @@ pub fn docker_on_its_nftables_backend_is_decided_too() -> Result<(), String> {
 }
 
 /// A real VM, started by libvirt on its default network (`virbr0`): this machine's kernel with a busybox initramfs
-/// that connects out every second. Its connections are forwarded from the bridge, and decided by the VM's name.
+/// that connects out every second. Its connections are forwarded from the bridge, and decided by the VM's name. It has
+/// ACPI and an APIC, as libvirt's VMs normally do: without them its timer is the emulated PIT, which under nested
+/// virtualization ticks slowly or not at all, and the guest's boot crawls or hangs.
 pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     const GUEST: &str = "e2e-guest";
     run("systemctl", &["start", "libvirtd"])?;
@@ -821,6 +823,7 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
         "<domain type='kvm'><name>{GUEST}</name><memory unit='MiB'>192</memory><vcpu>1</vcpu>\
          <os><type arch='x86_64'>hvm</type><kernel>{images}/e2e-vmlinuz</kernel>\
          <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 panic=-1 mitigations=off</cmdline></os>\
+         <features><acpi/><apic/></features><cpu mode='host-passthrough'/>\
          <devices><interface type='network'><source network='default'/><model type='virtio'/></interface>\
          <serial type='file'><source path='/tmp/e2e-guest.console'/></serial></devices></domain>"
     );
