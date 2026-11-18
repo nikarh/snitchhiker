@@ -16,7 +16,7 @@ license: MIT OR Apache-2.0
 overrides:
   deb:
     depends:
-      - snitchhiker (= ${SNITCHHIKER_VERSION})
+      - snitchhiker (= ${SNITCHHIKER_VERSION}-1)
       - libc6 (>= 2.35)
     scripts:
       postinstall: dist/packaging/deb/remote-postinst
