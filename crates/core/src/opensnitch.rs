@@ -5,8 +5,13 @@
 //! - `simple` operators compare whole values, case-insensitively unless `sensitive`; `regexp` ones match anywhere in
 //!   the value (Go's `MatchString`); `network` ones match a CIDR range; `list` ones need all of theirs to hold, as
 //!   Snitchhiker's conditions do.
-//! - Host names compare without case in Snitchhiker anyway. Other case-insensitive values become `(?i)` regular
-//!   expressions; unanchored regular expressions are wrapped so they still match anywhere.
+//! - Host names compare without case in Snitchhiker anyway. A `simple` path or command line is taken as the exact
+//!   text even when not `sensitive` (OpenSnitch's UI writes every condition so; Linux's paths have case); case-
+//!   insensitive regular expressions keep `(?i)`, and unanchored ones are wrapped so they still match anywhere.
+//! - The patterns OpenSnitch's UI writes become Snitchhiker's own forms: `^(|.*\.)example\.com$` the host names
+//!   `example.com` and `*.example.com`; a list of names `^(a.example.com|b.example.com)$` those names; a list of addresses `^(10.1.1.5|10.1.1.6)$` those addresses; an address's first
+//!   numbers and `.*` (`192\.168\.1\..*`) their network. Such a pattern without anchors is taken as meant: anchored.
+//! - The same condition twice (OpenSnitch's UI writes some so) counts once.
 //! - `precedence` rules go in the override tier; others in the normal one.
 //! - Temporary rules (any `duration` but `always`) are left out: they were never meant to last.
 //! - Operands Snitchhiker has no condition for (environment variables, interfaces, process ids, hashes, block lists)
@@ -166,86 +171,84 @@ fn unanchored(regex: &str, sensitive: bool) -> String {
     }
 }
 
-/// A pattern matching what OpenSnitch's `simple` or `regexp` operator matched, for a text value.
+/// A pattern matching what OpenSnitch's `simple` or `regexp` operator matched, for a text value. A `simple` one is
+/// the exact text even when not `sensitive`: OpenSnitch's UI writes every condition so, and Linux paths and command
+/// lines have case.
 fn text_pattern(operator: &Operator) -> Result<String, String> {
     match operator.kind.as_str() {
-        "simple" if operator.sensitive => Ok(operator.data.clone()),
-        "simple" => Ok(format!("re:(?i){}", regex_escape(&operator.data))),
+        "simple" => Ok(operator.data.clone()),
         "regexp" => Ok(unanchored(&operator.data, operator.sensitive)),
         other => Err(format!("`{other}` on {}", operator.operand)),
     }
 }
 
-fn regex_escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        if "\\.+*?()|[]{}^$#&-~".contains(c) {
-            escaped.push('\\');
-        }
-        escaped.push(c);
+/// Puts one operator's values into a condition. Two operators on the same operand both have to hold, which a list
+/// (any of its values) can't say, unless they allow the same values: OpenSnitch's UI writes some conditions twice.
+fn put<T: PartialEq>(field: &mut Vec<T>, values: Vec<T>, operand: &str) -> Result<(), String> {
+    if field.is_empty() {
+        *field = values;
+        Ok(())
+    } else if field.len() == values.len() && values.iter().all(|v| field.contains(v)) {
+        Ok(())
+    } else {
+        Err(format!("two different conditions on {operand}"))
     }
-    escaped
 }
 
-/// Adds one operator's condition; two on the same operand would need both to hold, which Snitchhiker's lists can't say.
+/// Adds one operator's condition.
 fn add(conditions: &mut Conditions, operator: &Operator) -> Result<(), String> {
-    let once = |values: &Vec<String>| {
-        if values.is_empty() {
-            Ok(())
-        } else {
-            Err(format!("two conditions on {}", operator.operand))
-        }
-    };
     let simple = operator.kind == "simple";
-    match operator.operand.as_str() {
-        "process.path" => {
-            once(&conditions.exe)?;
-            conditions.exe.push(text_pattern(operator)?);
-        }
-        "process.command" => {
-            once(&conditions.cmdline)?;
-            conditions.cmdline.push(text_pattern(operator)?);
-        }
+    let operand = operator.operand.as_str();
+    match operand {
+        "process.path" => put(&mut conditions.exe, vec![text_pattern(operator)?], operand)?,
+        "process.command" => put(
+            &mut conditions.cmdline,
+            vec![text_pattern(operator)?],
+            operand,
+        )?,
         "process.parent.path" => {
-            once(&conditions.parent)?;
-            conditions.parent.push(text_pattern(operator)?);
+            put(
+                &mut conditions.parent,
+                vec![text_pattern(operator)?],
+                operand,
+            )?;
         }
         "dest.host" => {
-            once(&conditions.host)?;
-            conditions.host.push(match operator.kind.as_str() {
-                "simple" => operator.data.trim_end_matches('.').to_ascii_lowercase(),
+            let hosts = match operator.kind.as_str() {
+                "simple" => vec![operator.data.trim_end_matches('.').to_ascii_lowercase()],
                 // Host names match without case anyway.
-                "regexp" => unanchored(&operator.data, true),
+                "regexp" => host_shape(&operator.data)
+                    .unwrap_or_else(|| vec![unanchored(&operator.data, true)]),
                 other => return Err(format!("`{other}` on dest.host")),
-            });
+            };
+            put(&mut conditions.host, hosts, operand)?;
         }
         // An address, a network, or a range that is exactly one network (`127.0.0.0-127.255.255.255`, as
         // OpenSnitch's own rules write loopback).
         "dest.ip" | "dest.network" if simple || operator.kind == "network" => {
-            once(&conditions.net)?;
-            conditions.net.push(
-                crate::system::parse_network(&operator.data)
-                    .map_err(|e| format!("{}: {e}", operator.operand))?
-                    .to_string(),
-            );
+            let net = crate::system::parse_network(&operator.data)
+                .map_err(|e| format!("{operand}: {e}"))?
+                .to_string();
+            put(&mut conditions.net, vec![net], operand)?;
         }
-        "dest.port" if simple => {
-            once(&conditions.port)?;
-            conditions.port.push(operator.data.clone());
+        "dest.ip" | "dest.network" if operator.kind == "regexp" => {
+            let nets = address_shape(&operator.data).ok_or_else(|| {
+                format!(
+                    "{operand} `{}` is neither a list of addresses nor an address's first numbers followed by `.*`",
+                    operator.data
+                )
+            })?;
+            put(&mut conditions.net, nets, operand)?;
         }
+        "dest.port" if simple => put(&mut conditions.port, vec![operator.data.clone()], operand)?,
         "user.id" if simple => {
-            if !conditions.uid.is_empty() {
-                return Err("two conditions on user.id".to_owned());
-            }
-            conditions.uid.push(
-                operator
-                    .data
-                    .parse()
-                    .map_err(|_| format!("user.id `{}` isn't a number", operator.data))?,
-            );
+            let uid = operator
+                .data
+                .parse()
+                .map_err(|_| format!("user.id `{}` isn't a number", operator.data))?;
+            put(&mut conditions.uid, vec![uid], operand)?;
         }
         "protocol" if simple => {
-            once(&conditions.protocol)?;
             let protocol = match operator.data.to_ascii_lowercase().as_str() {
                 "tcp" | "tcp6" => "tcp",
                 "udp" | "udp6" => "udp",
@@ -253,7 +256,20 @@ fn add(conditions: &mut Conditions, operator: &Operator) -> Result<(), String> {
                 "icmp6" | "icmpv6" => "icmpv6",
                 other => return Err(format!("protocol `{other}`")),
             };
-            conditions.protocol.push(protocol.to_owned());
+            put(&mut conditions.protocol, vec![protocol.to_owned()], operand)?;
+        }
+        "source.ip" | "source.network" | "source.port" => {
+            let loopback = operator
+                .data
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback());
+            return Err(if loopback {
+                "Snitchhiker doesn't match on the connection's local address; connections to loopback are allowed \
+                 by the System folder's Loopback rule"
+                    .to_owned()
+            } else {
+                format!("Snitchhiker doesn't match on the connection's local address ({operand})")
+            });
         }
         operand => {
             return Err(format!(
@@ -263,6 +279,119 @@ fn add(conditions: &mut Conditions, operator: &Operator) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The pattern without OpenSnitch's anchors. Patterns of the shapes below that lack them are taken as anchored: an
+/// unanchored `172\.18\..*` also matched `10.172.18.1`, which no one meant.
+fn strip_anchors(regex: &str) -> &str {
+    let regex = regex.strip_prefix('^').unwrap_or(regex);
+    match regex.strip_suffix('$') {
+        Some(rest) if !rest.ends_with('\\') => rest,
+        _ => regex,
+    }
+}
+
+/// Literal text of a pattern made of letters, digits, `-`, `_`, `:` and dots (`\.`, or `.` meant as one); `None` for
+/// anything else.
+fn literal(text: &str) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' if chars.next()? == '.' => out.push('.'),
+            '.' => out.push('.'),
+            c if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':') => out.push(c),
+            _ => return None,
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The host names of a `dest.host` pattern OpenSnitch's UI writes: `^(|.*\.)example\.com$` (the name and its
+/// subdomains), `^(.*\.)?example\.com$`, `^.*\.example\.com$` (subdomains only), `^example\.com$`, or a list of
+/// names, `^(a.example.com|b.example.com)$`.
+fn host_shape(regex: &str) -> Option<Vec<String>> {
+    let body = strip_anchors(regex);
+    if let Some(names) = body.strip_prefix('(').and_then(|b| b.strip_suffix(')'))
+        && !names.contains('(')
+        && names.split('|').all(|name| !name.is_empty())
+    {
+        let mut hosts: Vec<String> = Vec::new();
+        for name in names.split('|') {
+            for host in one_host(name)? {
+                if !hosts.contains(&host) {
+                    hosts.push(host);
+                }
+            }
+        }
+        return Some(hosts);
+    }
+    one_host(body)
+}
+
+fn one_host(body: &str) -> Option<Vec<String>> {
+    let (apex, subdomains, name) = if let Some(name) = body
+        .strip_prefix("(|.*\\.)")
+        .or_else(|| body.strip_prefix("(.*\\.|)"))
+        .or_else(|| body.strip_prefix("(.*\\.)?"))
+    {
+        (true, true, name)
+    } else if let Some(name) = body.strip_prefix(".*\\.") {
+        (false, true, name)
+    } else {
+        (true, false, body)
+    };
+    let name = literal(name)?.to_ascii_lowercase();
+    if name.contains(':') || name.starts_with('.') || name.ends_with('.') || name.contains("..") {
+        return None;
+    }
+    let mut hosts = Vec::new();
+    if apex {
+        hosts.push(name.clone());
+    }
+    if subdomains {
+        hosts.push(format!("*.{name}"));
+    }
+    Some(hosts)
+}
+
+/// The networks of a `dest.ip` pattern of the shapes people write: a list of addresses, `^(10.1.1.5|10.1.1.6)$`, or
+/// an IPv4 address's first numbers followed by anything, `192\.168\.1\..*` (`192.168.1.0/24`).
+fn address_shape(regex: &str) -> Option<Vec<String>> {
+    let body = strip_anchors(regex);
+    for any in [".*", ".+", "\\d+", "[0-9]+", "\\d{1,3}", "[0-9]{1,3}"] {
+        if let Some(prefix) = body.strip_suffix(any) {
+            let prefix = literal(prefix)?;
+            let octets: Vec<u8> = prefix
+                .strip_suffix('.')?
+                .split('.')
+                .map(|octet| octet.parse().ok())
+                .collect::<Option<_>>()?;
+            if octets.is_empty() || octets.len() > 3 {
+                return None;
+            }
+            let mut address = [0u8; 4];
+            for (slot, octet) in address.iter_mut().zip(&octets) {
+                *slot = *octet;
+            }
+            let length = u8::try_from(octets.len() * 8).ok()?;
+            let net = ipnet::Ipv4Net::new(address.into(), length).ok()?;
+            return Some(vec![net.to_string()]);
+        }
+    }
+    let body = body
+        .strip_prefix('(')
+        .and_then(|b| b.strip_suffix(')'))
+        .unwrap_or(body);
+    let mut nets: Vec<String> = Vec::new();
+    for alternative in body.split('|') {
+        let address: std::net::IpAddr = literal(alternative)?.parse().ok()?;
+        let net = ipnet::IpNet::from(address).to_string();
+        if !nets.contains(&net) {
+            nets.push(net);
+        }
+    }
+    Some(nets)
 }
 
 #[cfg(test)]
@@ -288,7 +417,7 @@ mod tests {
         let rule = &imported.file.rule[0];
         assert_eq!(rule.tier, Tier::Override);
         assert_eq!(rule.conditions.exe, vec!["/usr/bin/curl"]);
-        assert_eq!(rule.conditions.host, vec![r"re:^(.*\.)?example\.com$"]);
+        assert_eq!(rule.conditions.host, vec!["example.com", "*.example.com"]);
         assert_eq!(rule.conditions.port, vec!["443"]);
         assert_eq!(rule.conditions.uid, vec![1000]);
         assert_eq!(rule.conditions.protocol, vec!["tcp"]);
@@ -300,10 +429,7 @@ mod tests {
     fn case_and_anchoring_keep_their_meaning() {
         let imported = one(r#"{"name": "a", "action": "deny", "duration": "always",
                 "operator": {"type": "simple", "operand": "process.path", "data": "/opt/App.bin"}}"#);
-        assert_eq!(
-            imported.file.rule[0].conditions.exe,
-            vec![r"re:(?i)/opt/App\.bin"]
-        );
+        assert_eq!(imported.file.rule[0].conditions.exe, vec!["/opt/App.bin"]);
         let imported = one(r#"{"name": "b", "action": "deny", "duration": "always",
                 "operator": {"type": "regexp", "operand": "process.command", "data": "--remote-debugging", "sensitive": true}}"#);
         assert_eq!(
@@ -386,5 +512,87 @@ mod tests {
         assert_eq!(imported.file.rule[1].conditions.net, vec!["192.168.0.1/32"]);
         let skipped: Vec<&str> = imported.skipped.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(skipped, vec!["lookahead"]);
+    }
+
+    fn list(name: &str, operators: &str) -> String {
+        format!(
+            r#"{{"name": "{name}", "action": "allow", "duration": "always",
+                "operator": {{"type": "list", "operand": "list", "list": [{operators}]}}}}"#
+        )
+    }
+
+    #[test]
+    fn opensnitchs_own_patterns_become_snitchhikers_forms() {
+        let rule = |name: &str, operators: &str| (format!("{name}.json"), list(name, operators));
+        let imported = import(
+            &[
+                rule(
+                    "domain",
+                    r#"{"type": "regexp", "operand": "dest.host", "data": "^(|.*\\.)us\\.sentry\\.io$"},
+                       {"type": "simple", "operand": "dest.port", "data": "443"},
+                       {"type": "regexp", "operand": "dest.host", "data": "^(|.*\\.)us\\.sentry\\.io$"}"#,
+                ),
+                rule(
+                    "subdomains",
+                    r#"{"type": "regexp", "operand": "dest.host", "data": ".*\\.Example\\.com"}"#,
+                ),
+                rule(
+                    "names",
+                    r#"{"type": "regexp", "operand": "dest.host", "data": "^(time.cloudflare.com|0.arch.pool.ntp.org)$"}"#,
+                ),
+                rule(
+                    "prefix",
+                    r#"{"type": "regexp", "operand": "dest.ip", "data": "172\\.18\\..*"},
+                       {"type": "simple", "operand": "process.path", "data": "/usr/bin/docker-proxy", "sensitive": true}"#,
+                ),
+                rule(
+                    "addresses",
+                    r#"{"type": "regexp", "operand": "dest.ip", "data": "^(10.1.1.176|10.9.1.76|10.9.1.76)$"}"#,
+                ),
+                rule(
+                    "other",
+                    r#"{"type": "regexp", "operand": "dest.ip", "data": "^10\\.[0-5]\\..*"}"#,
+                ),
+                rule(
+                    "different",
+                    r#"{"type": "simple", "operand": "dest.host", "data": "a.com"},
+                       {"type": "simple", "operand": "dest.host", "data": "b.com"}"#,
+                ),
+                rule(
+                    "source",
+                    r#"{"type": "simple", "operand": "source.ip", "data": "127.0.0.1"},
+                       {"type": "simple", "operand": "dest.ip", "data": "127.0.0.1"}"#,
+                ),
+            ],
+            "OpenSnitch",
+        );
+        let conditions: Vec<(&str, &Conditions)> = imported
+            .file
+            .rule
+            .iter()
+            .map(|r| (r.name.as_str(), &r.conditions))
+            .collect();
+        let [
+            ("domain", domain),
+            ("subdomains", subdomains),
+            ("names", names),
+            ("prefix", prefix),
+            ("addresses", addresses),
+        ] = conditions.as_slice()
+        else {
+            panic!("{conditions:?} {:?}", imported.skipped);
+        };
+        assert_eq!(domain.host, vec!["us.sentry.io", "*.us.sentry.io"]);
+        assert_eq!(subdomains.host, vec!["*.example.com"]);
+        assert_eq!(
+            names.host,
+            vec!["time.cloudflare.com", "0.arch.pool.ntp.org"]
+        );
+        assert_eq!(prefix.net, vec!["172.18.0.0/16"]);
+        assert_eq!(prefix.exe, vec!["/usr/bin/docker-proxy"]);
+        assert_eq!(addresses.net, vec!["10.1.1.176/32", "10.9.1.76/32"]);
+        let skipped: Vec<&str> = imported.skipped.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(skipped, vec!["other", "different", "source"]);
+        assert!(imported.skipped[2].1.contains("Loopback rule"));
     }
 }
