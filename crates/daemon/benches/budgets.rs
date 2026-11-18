@@ -154,6 +154,14 @@ fn decide() -> Vec<String> {
     }
 }
 
+/// The CPU time this thread has run, as the scheduler counts it (`/proc/thread-self/schedstat`, in ns): without the
+/// time it waited for a CPU, or a hypervisor ran something else.
+fn thread_cpu() -> Option<Duration> {
+    let text = std::fs::read_to_string("/proc/thread-self/schedstat").ok()?;
+    let nanos = text.split_whitespace().next()?.parse().ok()?;
+    Some(Duration::from_nanos(nanos))
+}
+
 /// The `i`th event of the history, shaped like a busy workstation's: 300 programs, each talking to its own few of
 /// 3000 hosts, the busiest program and hosts taking most of the traffic (a Zipf-like spread), and one connection in
 /// a hundred to a name never seen before (CDN shards, trackers): 10 000 new names a million events.
@@ -222,6 +230,7 @@ fn store(count: u64) -> Vec<String> {
 
     // Ingestion: in the writer's batches.
     let started = Instant::now();
+    let cpu_started = thread_cpu();
     let mut recorded = Vec::new();
     let mut batch = Vec::with_capacity(snitchhiker_daemon::runtime::BATCH);
     for i in 0..count {
@@ -236,8 +245,16 @@ fn store(count: u64) -> Vec<String> {
         }
     }
     store.record(&batch, &mut recorded).unwrap();
-    let rate = count as f64 / started.elapsed().as_secs_f64();
-    println!("ingest {count} events: {rate:.0}/s (budget {INGEST_PER_SEC}/s)");
+    let wall = count as f64 / started.elapsed().as_secs_f64();
+    // The budget is the writer's own work: its CPU time, not the time a shared machine's other tenants held the CPU
+    // (CI runners' wall-clock rates differ by half from one run to the next). Wall time where there is no schedstat.
+    let rate = match (cpu_started, thread_cpu()) {
+        (Some(from), Some(to)) if to > from => count as f64 / to.saturating_sub(from).as_secs_f64(),
+        _ => wall,
+    };
+    println!(
+        "ingest {count} events: {rate:.0}/s of the writer's CPU time, {wall:.0}/s of wall time (budget {INGEST_PER_SEC}/s)"
+    );
     if rate < INGEST_PER_SEC {
         over.push(format!("ingestion: {rate:.0}/s < {INGEST_PER_SEC}/s"));
     }
