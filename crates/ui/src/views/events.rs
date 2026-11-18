@@ -25,11 +25,13 @@ use crate::model::{Model, address};
 use crate::views::explain;
 use crate::views::text::clipped;
 
-const COLUMNS: [(&str, &str, f32); 9] = [
+const COLUMNS: [(&str, &str, f32); 11] = [
     ("time", "Time", 176.),
     ("action", "Action", 76.),
     ("why", "", 44.),
+    ("rule", "Decided by", 200.),
     ("program", "Program", 240.),
+    ("pid", "PID", 72.),
     ("destination", "Destination", 210.),
     ("port", "Port", 84.),
     ("user", "User", 60.),
@@ -45,7 +47,9 @@ pub struct EventsTable {
 }
 
 /// Columns that can be hidden: (key, label).
-pub const OPTIONAL: [(&str, &str); 5] = [
+pub const OPTIONAL: [(&str, &str); 7] = [
+    ("rule", "Decided by"),
+    ("pid", "PID"),
     ("destination", "Destination"),
     ("port", "Port"),
     ("user", "User"),
@@ -228,6 +232,7 @@ fn events_csv(model: &Model) -> String {
                 time(row.time_ms),
                 action,
                 model.events.string(row.exe).unwrap_or("").to_owned(),
+                row.pid.to_string(),
                 if row.host == 0 {
                     String::new()
                 } else {
@@ -239,12 +244,23 @@ fn events_csv(model: &Model) -> String {
                 row.uid.to_string(),
                 row.bytes_out.to_string(),
                 row.bytes_in.to_string(),
+                decided_by(row, model),
             ]
         });
     crate::csv::table(
         &[
-            "time", "action", "program", "host", "address", "port", "protocol", "uid", "sent",
+            "time",
+            "action",
+            "program",
+            "pid",
+            "host",
+            "address",
+            "port",
+            "protocol",
+            "uid",
+            "sent",
             "received",
+            "decided by",
         ],
         rows,
     )
@@ -371,10 +387,12 @@ pub fn action_tag(action: u8, cx: &App) -> gpui::Div {
         .child(word)
 }
 
-fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
+fn cell(row: &EventRow, column: &str, model: &Model) -> SharedString {
     match column {
-        0 => time(row.time_ms).into(),
-        2 => {
+        "time" => time(row.time_ms).into(),
+        "rule" => decided_by(row, model).into(),
+        "pid" => row.pid.to_string().into(),
+        "program" => {
             let program = match model.events.string(row.exe) {
                 // A socket older than the daemon, or a process gone before it was seen (or a VM's: no program).
                 Some("") | None => "(unknown program)",
@@ -398,16 +416,43 @@ fn cell(row: &EventRow, column: usize, model: &Model) -> SharedString {
                 None => program.to_owned().into(),
             }
         }
-        3 => match model.events.string(row.host) {
+        "destination" => match model.events.string(row.host) {
             Some(host) if row.host != 0 => host.to_owned().into(),
             _ => address(row).to_string().into(),
         },
-        4 => format!("{}/{}", row.port, protocol(row.protocol)).into(),
-        5 => row.uid.to_string().into(),
-        6 => bytes(row.bytes_out).into(),
-        7 => bytes(row.bytes_in).into(),
+        "port" => format!("{}/{}", row.port, protocol(row.protocol)).into(),
+        "user" => row.uid.to_string().into(),
+        "out" => bytes(row.bytes_out).into(),
+        "in" => bytes(row.bytes_in).into(),
         _ => SharedString::default(),
     }
+}
+
+/// What decided a connection: its rule (by folder and name), or what decided when no rule did.
+fn decided_by(row: &EventRow, model: &Model) -> String {
+    let list = &model.rules;
+    match v1::Source::try_from(i32::from(row.source)) {
+        Ok(v1::Source::Rule) => list.rules.iter().find(|r| r.id == row.rule).map_or_else(
+            || format!("rule {} (deleted)", row.rule),
+            |r| {
+                format!(
+                    "{}{}",
+                    crate::views::rules::folder_path(list, r.folder),
+                    r.name
+                )
+            },
+        ),
+        Ok(v1::Source::Policy) => "no rule: the policy".to_owned(),
+        Ok(v1::Source::Monitor) => "passed (monitor mode)".to_owned(),
+        Ok(v1::Source::Prompt) => "an answer to a prompt".to_owned(),
+        Ok(v1::Source::Timeout) => "a prompt nobody answered".to_owned(),
+        Ok(v1::Source::Unspecified) | Err(_) => String::new(),
+    }
+}
+
+/// Columns whose numbers line up on the right, as their headers do.
+fn numeric(key: &str) -> bool {
+    matches!(key, "pid" | "out" | "in")
 }
 
 impl TableDelegate for EventsTable {
@@ -423,7 +468,7 @@ impl TableDelegate for EventsTable {
         let col_ix = self.shown.get(col_ix).copied().unwrap_or(usize::MAX);
         let (key, name, width) = COLUMNS.get(col_ix).copied().unwrap_or(("", "", 100.));
         let column = Column::new(key, name).width(crate::columns::width(cx, "events", key, width));
-        if col_ix >= 7 {
+        if numeric(key) {
             column.text_right()
         } else {
             column
@@ -442,10 +487,11 @@ impl TableDelegate for EventsTable {
         let Some(row) = model.events.get(row_ix) else {
             return div().into_any_element();
         };
-        if col_ix == 1 {
+        let key = COLUMNS.get(col_ix).map_or("", |(key, _, _)| *key);
+        if key == "action" {
             return action_tag(row.action, cx).into_any_element();
         }
-        if col_ix == 2 {
+        if key == "why" {
             let (model, requests, seq) = (self.model.clone(), self.requests.clone(), row.seq);
             return Button::new(SharedString::from(format!("why-{seq}")))
                 .small()
@@ -457,25 +503,22 @@ impl TableDelegate for EventsTable {
                 })
                 .into_any_element();
         }
-        // The columns of `cell`, which doesn't have the info button's.
-        let col_ix = if col_ix > 2 { col_ix - 1 } else { col_ix };
-        let text = cell(row, col_ix, model);
+        let text = cell(row, key, model);
         let line = h_flex()
             .w_full()
             .overflow_hidden()
             .text_ellipsis()
             // Times, paths, addresses and counts in the monospace face; the user's name not.
-            .when(col_ix != 5, |line| {
+            .when(!matches!(key, "user" | "rule"), |line| {
                 line.font_family(cx.theme().mono_font_family.clone())
             });
-        // The byte counts line up on the right, as their headers do.
-        if col_ix >= 6 {
+        if numeric(key) {
             line.justify_end()
         } else {
             line
         }
         .child(clipped(
-            SharedString::from(format!("event-{row_ix}-{col_ix}")),
+            SharedString::from(format!("event-{row_ix}-{key}")),
             text,
         ))
         .into_any_element()
@@ -509,8 +552,8 @@ impl TableDelegate for EventsTable {
             [vec![
                 time(row.time_ms),
                 model.events.string(row.exe).unwrap_or("").to_owned(),
-                cell(&row, 3, model).to_string(),
-                cell(&row, 4, model).to_string(),
+                cell(&row, "destination", model).to_string(),
+                cell(&row, "port", model).to_string(),
             ]],
         );
         let (explaining, requests) = (self.model.clone(), self.requests.clone());
