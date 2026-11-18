@@ -323,35 +323,39 @@ pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
     let device = Key::generate();
     let link = link(&daemon, "phone")?;
     pair(&device, &link, "phone", &options).map_err(|e| e.to_string())?;
-    // An allow rule for any program to anywhere: a dangerous action.
+    // Letting through what the policy blocks: a dangerous action. Each request loosens a different setting, so the
+    // second still loosens after the first went ahead.
     let ask = {
         let device = device.clone();
         let node = link.node.clone();
-        move || {
+        move |no_match: bool| {
             let mut client = connect(&device, &node, &Options::default(), "e2e", "0")
                 .map_err(|e| e.to_string())?;
-            client
-                .call(v1::request::Method::AddRule(v1::AddRule {
-                    rule: Some(v1::Rule {
-                        name: "anything".to_owned(),
-                        enabled: true,
-                        action: v1::Action::Allow.into(),
-                        tier: v1::Tier::Normal.into(),
-                        conditions: Some(v1::Conditions {
-                            port: vec!["9".to_owned()],
-                            ..v1::Conditions::default()
-                        }),
-                        ..v1::Rule::default()
-                    }),
-                }))
-                .map(|_| "added".to_owned())
-                .map_err(|e| e.to_string())
+            let set = if no_match {
+                v1::SetPolicy {
+                    no_match: Some(v1::Policy::Allow.into()),
+                    ..v1::SetPolicy::default()
+                }
+            } else {
+                v1::SetPolicy {
+                    on_timeout: Some(v1::Action::Allow.into()),
+                    ..v1::SetPolicy::default()
+                }
+            };
+            match client.call(v1::request::Method::SetPolicy(set)) {
+                Ok(v1::response::Result::Error(error)) => Err(error.message),
+                Ok(_) => Ok("set".to_owned()),
+                Err(e) => Err(e.to_string()),
+            }
         }
     };
     let mut outcomes = Vec::new();
     let mut listed = String::new();
-    for verb in ["approve", "deny"] {
-        let waiting = thread::spawn(ask.clone());
+    for (verb, no_match) in [("approve", true), ("deny", false)] {
+        let waiting = thread::spawn({
+            let ask = ask.clone();
+            move || ask(no_match)
+        });
         let mut id = None;
         for _ in 0..50 {
             thread::sleep(Duration::from_millis(200));
@@ -380,12 +384,12 @@ pub fn a_devices_dangerous_request_waits_for_approval() -> Result<(), String> {
     let audit = daemon.cli(&["audit"])?;
     let found = format!("{listed}\noutcomes: {outcomes:?}\n{audit}");
     check(
-        listed.contains("phone") && listed.contains("allow programs to connect broadly"),
+        listed.contains("phone") && listed.contains("change the policy"),
         "the request didn't say which device asked for what",
         &found,
     )?;
     check(
-        outcomes.first().is_some_and(|o| o == "added")
+        outcomes.first().is_some_and(|o| o == "set")
             && outcomes
                 .get(1)
                 .is_some_and(|o| o.contains("not authorized")),

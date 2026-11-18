@@ -133,10 +133,13 @@ const SCENARIOS: &[Scenario] = &[
         subscriptions::waiting_prompts_are_sent_on_subscribing,
     ),
     (
-        "step-up/allow-everything-needs-authorization",
-        stepup::allow_everything_needs_authorization,
+        "step-up/loosening-the-policy-needs-authorization",
+        stepup::loosening_the_policy_needs_authorization,
     ),
-    ("step-up/no-way-around-it", stepup::no_way_around_step_up),
+    (
+        "step-up/rule-changes-need-no-authorization",
+        stepup::rule_changes_need_no_authorization,
+    ),
     (
         "step-up/other-local-users-are-viewers",
         stepup::other_local_users_are_viewers,
@@ -146,8 +149,8 @@ const SCENARIOS: &[Scenario] = &[
         agents::a_proposal_is_approved_for_the_session,
     ),
     (
-        "agents/a-broad-proposal-needs-step-up",
-        agents::a_broad_proposal_needs_step_up,
+        "agents/a-broad-proposal-is-marked-and-approved",
+        agents::a_broad_proposal_is_marked_and_approved,
     ),
     (
         "agents/envelopes-approve-and-muting-denies",
@@ -441,6 +444,11 @@ fn main() -> ExitCode {
         (args.get(1).map(String::as_str), args.get(2), args.get(3))
     {
         return stepup::add_rule(socket, kind);
+    }
+    if let (Some("--set-policy"), Some(socket), Some(kind)) =
+        (args.get(1).map(String::as_str), args.get(2), args.get(3))
+    {
+        return stepup::set_policy(socket, kind);
     }
     if let (Some("--request"), Some(socket), Some(step)) =
         (args.get(1).map(String::as_str), args.get(2), args.get(3))

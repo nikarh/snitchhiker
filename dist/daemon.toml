@@ -36,8 +36,8 @@ no_match = "deny"
 # `snitchhikerd trust-client <path>` instead, which also pins it to its SHA-256.
 #trusted_clients = []
 
-# What confirms a dangerous action a client asks for (a rule that allows broadly, naming no particular program or
-# destination; a looser policy; pairing a device): polkit (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`).
+# What confirms a dangerous action a client asks for (a looser policy or system firewall; pairing a device): polkit
+# (the user's password, usually) or off. Either way it is audited (`snitchhiker audit`). Rules never need it.
 #step_up = "polkit"
 
 # The local users who administer the node through the desktop app: members of these groups (those who may become root,

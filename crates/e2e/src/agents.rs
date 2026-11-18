@@ -249,9 +249,9 @@ fn verify(
     )
 }
 
-/// A proposal marked broad (any destination) is approved by a client only with polkit's authorization; an unmarked
-/// one needs none.
-pub fn a_broad_proposal_needs_step_up() -> Result<(), String> {
+/// A proposal marked broad (any destination) is shown with its risks and approved by a client like any other: what a
+/// rule says takes no authorization (decision 0018), polkit refusing or not.
+pub fn a_broad_proposal_is_marked_and_approved() -> Result<(), String> {
     let _ = run(
         "ip",
         &["addr", "add", &format!("{ADDRESS}/32"), "dev", "lo"],
@@ -302,11 +302,12 @@ fn broad_scenario() -> Result<(), String> {
         serde_json::from_str(&line).map_err(|e| format!("{e}: {line}"))?;
     let broad = at(&proposed, "/everything/id").as_u64().unwrap_or(0);
     let narrow = at(&proposed, "/proposal/id").as_u64().unwrap_or(0);
-    crate::stepup::polkit_answers(None)?;
-    let unauthorized = crate::stepup::approve_as_client(broad)?;
+    let marked = at(&proposed, "/everything/rules/0/marked")
+        .as_bool()
+        .unwrap_or(false);
+    crate::stepup::polkit_answers(Some("NO"))?;
+    let broad_approved = crate::stepup::approve_as_client(broad)?;
     let narrow_approved = crate::stepup::approve_as_client(narrow)?;
-    crate::stepup::polkit_answers(Some("YES"))?;
-    let authorized = crate::stepup::approve_as_client(broad)?;
     crate::stepup::polkit_answers(None)?;
     let audit = daemon.cli(&["audit"])?;
     if let Some(stdin) = agent.stdin.as_mut() {
@@ -314,22 +315,16 @@ fn broad_scenario() -> Result<(), String> {
     }
     let _ = agent.wait();
     drop(listener);
-    let found = format!(
-        "{proposed:#}\nunauthorized: {unauthorized}narrow: {narrow_approved}authorized: {authorized}{audit}"
-    );
+    let found = format!("{proposed:#}\nbroad: {broad_approved}narrow: {narrow_approved}{audit}");
+    check(marked, "a broad proposal wasn't marked", &found)?;
     check(
-        unauthorized.contains("not authorized"),
-        "a broad proposal was approved without step-up",
+        broad_approved.trim() == "approved" && narrow_approved.trim() == "approved",
+        "a proposal wasn't approved",
         &found,
     )?;
     check(
-        narrow_approved.trim() == "approved",
-        "an unmarked proposal needed step-up",
-        &found,
-    )?;
-    check(
-        authorized.trim() == "approved" && audit.contains("approve agent proposal"),
-        "an authorized broad proposal wasn't approved, or wasn't audited",
+        !audit.contains("approve agent proposal"),
+        "approving a proposal asked for authorization",
         &found,
     )
 }

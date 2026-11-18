@@ -1,5 +1,6 @@
-//! Step-up: a client's request for an allow-everything rule needs polkit's authorization of the client's process; a
-//! narrow rule doesn't, and neither does root. Every dangerous attempt is audited.
+//! Step-up: a client's request to loosen the policy (connections no rule decides allowed) needs polkit's authorization
+//! of the client's process; tightening it doesn't, and neither does root. What rules say needs none (decision 0018).
+//! Every dangerous attempt is audited.
 
 use std::path::Path;
 use std::thread;
@@ -16,7 +17,6 @@ const RULES: &str = "/etc/polkit-1/rules.d/49-snitchhiker-e2e.rules";
 /// The client side (`snitchhiker-e2e --add-rule <socket> <broad|narrow>`): adds an allow rule for port 9 to any
 /// destination for any program (broad), or for one program (narrow); prints `added` or the error.
 pub fn add_rule(socket: &str, kind: &str) -> std::process::ExitCode {
-    use std::io::Write as _;
     let mut conditions = v1::Conditions {
         port: vec!["9".to_owned()],
         ..v1::Conditions::default()
@@ -32,15 +32,44 @@ pub fn add_rule(socket: &str, kind: &str) -> std::process::ExitCode {
         conditions: Some(conditions),
         ..v1::Rule::default()
     };
-    let result = Client::connect(Path::new(socket), "e2e", "0").and_then(|mut client| {
-        client.call(v1::request::Method::AddRule(v1::AddRule {
-            rule: Some(rule),
-        }))
-    });
+    call(
+        socket,
+        v1::request::Method::AddRule(v1::AddRule { rule: Some(rule) }),
+        "added",
+    )
+}
+
+/// The client side (`snitchhiker-e2e --set-policy <socket> <loosen|tighten>`): lets connections no rule decides
+/// through (loosen) or rejects them (tighten); prints `set` or the error.
+pub fn set_policy(socket: &str, kind: &str) -> std::process::ExitCode {
+    let no_match = if kind == "loosen" {
+        v1::Policy::Allow
+    } else {
+        v1::Policy::Reject
+    };
+    call(
+        socket,
+        v1::request::Method::SetPolicy(v1::SetPolicy {
+            no_match: Some(no_match.into()),
+            ..v1::SetPolicy::default()
+        }),
+        "set",
+    )
+}
+
+/// Makes one request as a client; prints `done` or the error.
+fn call(socket: &str, method: v1::request::Method, done: &str) -> std::process::ExitCode {
+    use std::io::Write as _;
+    let result =
+        Client::connect(Path::new(socket), "e2e", "0").and_then(|mut client| client.call(method));
     let mut out = std::io::stdout().lock();
     match result {
+        Ok(v1::response::Result::Error(error)) => {
+            let _ = writeln!(out, "error: {}", error.message);
+            std::process::ExitCode::FAILURE
+        }
         Ok(_) => {
-            let _ = writeln!(out, "added");
+            let _ = writeln!(out, "{done}");
             std::process::ExitCode::SUCCESS
         }
         Err(error) => {
@@ -104,15 +133,14 @@ pub fn polkit_answers(result: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
-fn as_client(kind: &str) -> Result<String, String> {
-    let (_, text) = as_mallory(
-        CLIENT,
-        &["--add-rule", "/run/snitchhiker/client.sock", kind],
-    )?;
+fn as_client(flag: &str, kind: &str) -> Result<String, String> {
+    let (_, text) = as_mallory(CLIENT, &[flag, "/run/snitchhiker/client.sock", kind])?;
     Ok(text)
 }
 
-pub fn allow_everything_needs_authorization() -> Result<(), String> {
+/// Loosening the policy takes polkit's authorization (none answering is a refusal); tightening it doesn't, nor does
+/// root; and a rule allowing every program anywhere is a rule like any other.
+pub fn loosening_the_policy_needs_authorization() -> Result<(), String> {
     install_clients()?;
     let mut daemon = crate::daemon::Running::start(
         "step-up",
@@ -120,47 +148,42 @@ pub fn allow_everything_needs_authorization() -> Result<(), String> {
     )?;
     // No answer from polkit (no rule, and no agent to ask the user through): refused.
     polkit_answers(None)?;
-    let unanswered = as_client("broad")?;
-    let narrow = as_client("narrow")?;
+    let unanswered = as_client("--set-policy", "loosen")?;
+    let tightened = as_client("--set-policy", "tighten")?;
+    let broad = as_client("--add-rule", "broad")?;
     polkit_answers(Some("NO"))?;
-    let refused = as_client("broad")?;
+    let refused = as_client("--set-policy", "loosen")?;
     polkit_answers(Some("YES"))?;
-    let authorized = as_client("broad")?;
+    let authorized = as_client("--set-policy", "loosen")?;
     polkit_answers(None)?;
-    let root = daemon.cli(&[
-        "rules",
-        "add",
-        "allow",
-        "--port",
-        "9",
-        "--name",
-        "root broad",
-    ]);
+    let root = daemon.cli(&["policy", "set", "on_timeout=allow"]);
     let audit = daemon.cli(&["audit"])?;
     daemon.stop()?;
     let found = format!(
-        "unanswered: {unanswered}narrow: {narrow}refused: {refused}authorized: {authorized}root: {root:?}\n{audit}"
+        "unanswered: {unanswered}tightened: {tightened}broad: {broad}refused: {refused}authorized: {authorized}\
+         root: {root:?}\n{audit}"
     );
     check(
         unanswered.contains("not authorized") && refused.contains("not authorized"),
-        "an allow-everything rule was added without authorization",
+        "the policy was loosened without authorization",
         &found,
     )?;
     check(
-        narrow.trim() == "added",
-        "a narrow rule needed authorization",
+        tightened.trim() == "set",
+        "tightening the policy needed authorization",
         &found,
     )?;
     check(
-        authorized.trim() == "added",
-        "an authorized allow-everything rule wasn't added",
+        broad.trim() == "added",
+        "a rule allowing every program anywhere needed authorization",
         &found,
     )?;
     check(
-        root.is_ok(),
-        "root's allow-everything rule wasn't added",
+        authorized.trim() == "set",
+        "an authorized loosening didn't happen",
         &found,
     )?;
+    check(root.is_ok(), "root couldn't loosen the policy", &found)?;
     let outcomes: Vec<&str> = audit
         .lines()
         .filter_map(|line| line.split_whitespace().nth(2))
@@ -294,15 +317,14 @@ fn made(output: &str) -> Result<u64, String> {
         .ok_or_else(|| format!("nothing was made: {output}"))
 }
 
-/// Allowing broadly is judged on the rules in force after a change, whatever the change: a narrow rule whose folder's
-/// scope is removed or that is moved out of it, a rule imported disabled and enabled after, a rule naming every
-/// program by a wildcard, a folder of many rules turned off, a deletion undone. Without authorization, none of them
-/// happens; what is narrow still does.
-pub fn no_way_around_step_up() -> Result<(), String> {
+/// What rules say takes no authorization, whatever the path to it (decision 0018): a narrow rule whose folder's scope
+/// is removed or that is moved out of it, a rule imported disabled and enabled after, a rule naming every program by a
+/// wildcard, a folder of many rules turned off. All of them happen with polkit refusing, and nothing is audited.
+pub fn rule_changes_need_no_authorization() -> Result<(), String> {
     use std::fmt::Write as _;
     install_clients()?;
     let mut daemon = crate::daemon::Running::start(
-        "step-up-around",
+        "step-up-rules",
         &format!("mode = \"monitor\"\ntrusted_clients = [\"{CLIENT}\"]\n"),
     )?;
     polkit_answers(Some("NO"))?;
@@ -346,14 +368,14 @@ pub fn no_way_around_step_up() -> Result<(), String> {
         ("turning off a folder of 21 rules", &disabled),
     ] {
         check(
-            out.contains("not authorized"),
-            &format!("{what} went ahead without authorization"),
+            out.starts_with("ok"),
+            &format!("{what} didn't happen"),
             &found,
         )?;
     }
     check(
-        audit.matches("refused").count() >= 5,
-        "the refused attempts weren't audited",
+        !audit.contains("refused"),
+        "a change to the rules asked for authorization",
         &found,
     )
 }

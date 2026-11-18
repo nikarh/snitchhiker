@@ -107,35 +107,6 @@ impl Pattern {
     }
 }
 
-/// Whether `source` matches finitely many values (with `{home}`, finitely many in any one home): an exact text, a glob
-/// without `*` (`?`, `[..]` and `{a,b}` choose among finitely many), a regular expression without unbounded
-/// repetition (`(?i)/usr/bin/curl`, `/usr/bin/(curl|wget)`). Such a pattern names particular things; one that
-/// isn't valid names nothing.
-#[must_use]
-pub fn finite(source: &PatternSource) -> bool {
-    let regex = match source {
-        PatternSource::Exact(_) => return true,
-        PatternSource::Glob(text) => match glob_to_regex(strip_home(text).1, text) {
-            Ok(regex) => regex,
-            Err(_) => return false,
-        },
-        PatternSource::Regex(text) => text.clone(),
-    };
-    regex_syntax::Parser::new()
-        .parse(&regex)
-        .is_ok_and(|hir| finite_hir(&hir))
-}
-
-fn finite_hir(hir: &regex_syntax::hir::Hir) -> bool {
-    use regex_syntax::hir::HirKind;
-    match hir.kind() {
-        HirKind::Empty | HirKind::Literal(_) | HirKind::Class(_) | HirKind::Look(_) => true,
-        HirKind::Repetition(repetition) => repetition.max.is_some() && finite_hir(&repetition.sub),
-        HirKind::Capture(capture) => finite_hir(&capture.sub),
-        HirKind::Concat(parts) | HirKind::Alternation(parts) => parts.iter().all(finite_hir),
-    }
-}
-
 fn strip_home(text: &str) -> (bool, &str) {
     text.strip_prefix(HOME)
         .map_or((false, text), |rest| (true, rest))
@@ -263,30 +234,5 @@ mod tests {
         let pattern = glob("/opt/app (1)/bin/a+b.[x]");
         assert!(pattern.matches("/opt/app (1)/bin/a+b.[x]", None));
         assert!(!pattern.matches("/opt/app 1/bin/aab.x", None));
-    }
-
-    #[test]
-    fn patterns_matching_finitely_many_values_are_told() {
-        for finite_one in [
-            PatternSource::Exact("/usr/bin/curl".to_owned()),
-            PatternSource::Glob("{home}/.cargo/bin/cargo".to_owned()),
-            PatternSource::Glob("/usr/bin/{curl,wget}".to_owned()),
-            PatternSource::Glob("/usr/bin/python3.1?".to_owned()),
-            PatternSource::Regex("(?i)/usr/bin/curl".to_owned()),
-            PatternSource::Regex("/usr/bin/(curl|wget)".to_owned()),
-            PatternSource::Regex("/usr/bin/x{1,3}".to_owned()),
-        ] {
-            assert!(finite(&finite_one), "{finite_one}");
-        }
-        for infinite in [
-            PatternSource::Glob("/**".to_owned()),
-            PatternSource::Glob("/usr/bin/*".to_owned()),
-            PatternSource::Regex(".*".to_owned()),
-            PatternSource::Regex("/usr/bin/[a-z]+".to_owned()),
-            PatternSource::Regex("/usr/bin/x{2,}".to_owned()),
-            PatternSource::Regex("(".to_owned()),
-        ] {
-            assert!(!finite(&infinite), "{infinite}");
-        }
     }
 }

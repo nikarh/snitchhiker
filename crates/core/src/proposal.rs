@@ -1,7 +1,6 @@
 //! Shaping agents' proposals (plan §5.11). An agent only suggests: what reaches a person is a rule made from what the
 //! kernel saw where it can be (the program of the blocked connections, not the one the agent typed), refused when it
-//! would allow every program everywhere, and marked wherever it is broad, so that approving it needs a second look
-//! (and step-up).
+//! would allow every program everywhere, and marked wherever it is broad, so that approving it gets a second look.
 
 use std::net::IpAddr;
 
@@ -40,7 +39,7 @@ pub struct Observation {
     pub port: u16,
 }
 
-/// Why a shaped rule is broad: approving it takes step-up.
+/// Why a shaped rule is broad: shown to whoever approves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "risk", content = "detail", rename_all = "snake_case")]
 pub enum Risk {

@@ -26,7 +26,7 @@ use crate::store::{
     AuditEntry, Batch, Dimension, Error as StoreError, HOUR_MS, Store, StringKind, UndoError,
 };
 use snitchhiker_core::query::{self, EventFilter};
-use snitchhiker_core::rule::{Expiry, allows_broadly};
+use snitchhiker_core::rule::Expiry;
 use snitchhiker_proto::columns::{self, EventRow};
 
 pub const RUN_DIR: &str = "/run/snitchhiker";
@@ -540,7 +540,7 @@ fn handle(
         Method::ListPrompts(_) => R::Prompts(v1::PromptList {
             prompts: daemon.shared.broker.list(),
         }),
-        Method::AnswerPrompt(answer) => answer_prompt(daemon, caller, app, &answer),
+        Method::AnswerPrompt(answer) => answer_prompt(daemon, app, &answer),
         Method::Learn(learn) => self::learn(daemon, &learn),
         Method::ImportRules(import) => import_rules(daemon, caller, app, &import),
         Method::ReadOpenSnitch(_) => read_opensnitch(),
@@ -1526,34 +1526,16 @@ fn list_events(daemon: &Daemon, list: &v1::ListEvents) -> v1::response::Result {
     }
 }
 
-fn answer_prompt(
-    daemon: &Daemon,
-    caller: &Caller,
-    app: &str,
-    answer: &v1::AnswerPrompt,
-) -> v1::response::Result {
+fn answer_prompt(daemon: &Daemon, app: &str, answer: &v1::AnswerPrompt) -> v1::response::Result {
     let Some(action) = convert::action_from(answer.action()) else {
         return error(v1::ErrorCode::Invalid, "no action");
     };
-    // The suggestions all name a program or a destination; conditions of the client's own may not.
+    // Conditions of the client's own are checked before the prompt is answered.
     if let Some(conditions) = &answer.conditions
         && answer.duration() != v1::Duration::Once
+        && let Err(e) = convert::conditions_from(conditions).to_conditions()
     {
-        let conditions = match convert::conditions_from(conditions).to_conditions() {
-            Ok(conditions) => conditions,
-            Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
-        };
-        if allows_broadly(action, &conditions)
-            && let Err(refused) = step_up(
-                daemon,
-                caller,
-                app,
-                "answer a prompt with a rule that allows programs to connect broadly (naming no particular program \
-                 or destination)",
-            )
-        {
-            return refused;
-        }
+        return error(v1::ErrorCode::Invalid, e.to_string());
     }
     let suggestion = usize::try_from(answer.suggestion).unwrap_or(usize::MAX);
     match daemon.answer_prompt(
@@ -2597,7 +2579,7 @@ fn inside_envelope(daemon: &Daemon, proposal: &v1::Proposal) -> Option<v1::respo
     proposal.decided_ms = proposal.created_ms;
     envelope.name.clone_into(&mut proposal.envelope);
     let actor = format!("envelope \"{}\"", envelope.name);
-    let approved = approve(daemon, None, &actor, &decide, proposal, now_ms());
+    let approved = approve(daemon, &actor, &decide, proposal, now_ms());
     if let v1::response::Result::Proposal(approved) = &approved {
         info!(id = approved.id, envelope = %envelope.name, "an agent's proposal was approved inside an envelope");
         daemon.raise(&crate::alerts::NewAlert {
@@ -2784,7 +2766,7 @@ fn decide_proposal(
         publish_proposal(daemon, &proposal);
         return v1::response::Result::Proposal(Box::new(proposal));
     }
-    approve(daemon, Some(caller), app, decide, proposal, now)
+    approve(daemon, app, decide, proposal, now)
 }
 
 /// The rules approving `proposal` makes, with their indexes in it: as edited (shaped again, so their risks are
@@ -2843,11 +2825,10 @@ fn chosen_rules(
     Ok(chosen)
 }
 
-/// Approves `proposal` as `decide` says: makes its rules (as edited) in its agent's folder. A person (`caller`)
-/// approving a marked rule needs step-up; an envelope (no caller) has checked its bounds instead.
+/// Approves `proposal` as `decide` says: makes its rules (as edited) in its agent's folder. A person approving it saw
+/// its marked rules; an envelope has checked its bounds instead.
 fn approve(
     daemon: &Daemon,
-    caller: Option<&Caller>,
     app: &str,
     decide: &v1::DecideProposal,
     mut proposal: v1::Proposal,
@@ -2877,28 +2858,7 @@ fn approve(
     if chosen.is_empty() {
         return error(v1::ErrorCode::Invalid, "no rule to make");
     }
-    // A marked rule (broad, or one nothing the agent tried matches) takes step-up.
-    let mut risky: Vec<String> = chosen
-        .iter()
-        .flat_map(|(_, r)| r.risks.iter().map(|r| r.description.clone()))
-        .collect();
-    risky.dedup();
-    if !risky.is_empty()
-        && let Some(caller) = caller
-        && let Err(refused) = step_up(
-            daemon,
-            caller,
-            app,
-            &format!(
-                "approve agent proposal {}, which allows {}",
-                proposal.id,
-                risky.join(", ")
-            ),
-        )
-    {
-        return refused;
-    }
-    // Its risks were authorized above.
+    // Its risks were shown to whoever approves it (decision 0018: no password for what rules say).
     let made = change(daemon, None, app, |store, batch| {
         let folder = crate::agents::folder(store, batch, &provenance)?;
         let mut ids = Vec::new();
