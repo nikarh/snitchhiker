@@ -635,14 +635,36 @@ impl Render for App {
                     .min_w_0()
                     .h_full()
                     .overflow_hidden()
-                    .children(self.warnings.iter().map(|warning| {
-                        div()
-                            .px_4()
-                            .py_2()
-                            .bg(cx.theme().warning)
-                            .text_color(cx.theme().warning_foreground)
-                            .child(warning.text())
-                    }))
+                    // What weakens the session, in one banner; dismissed until the app starts again.
+                    .when(!self.warnings.is_empty(), |page| {
+                        page.child(
+                            h_flex()
+                                .flex_none()
+                                .items_start()
+                                .gap_2()
+                                .px_4()
+                                .py_2()
+                                .bg(cx.theme().warning)
+                                .text_color(cx.theme().warning_foreground)
+                                .child(
+                                    v_flex()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .gap_1()
+                                        .children(self.warnings.iter().map(|w| div().child(w.text()))),
+                                )
+                                .child(
+                                    Button::new("dismiss-session-warnings")
+                                        .small()
+                                        .label("Dismiss")
+                                        .tooltip("Hide these until the app starts again")
+                                        .on_click(cx.listener(|app, _, _, cx| {
+                                            app.warnings.clear();
+                                            cx.notify();
+                                        })),
+                                ),
+                        )
+                    })
                     .children(sign)
                     .child(
                         h_flex()

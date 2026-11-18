@@ -108,6 +108,9 @@ shot() { session grim - > "/tmp/ui-shots/\$1.png"; }
 # Each wtype is a new virtual keyboard: keys sent before the compositor took its keymap are lost, hence the pause.
 type_text() { session env LC_ALL=C.UTF-8 wtype -s 300 "\$1"; sleep 0.5; }
 key() { session wtype -s 300 -k "\$1"; sleep 1; }
+# The session's warnings (sway offers every client virtual input) dismissed, so pages start where the clicks expect
+# them; where there is no banner, the click lands on the page's title.
+click 1231 42
 ${setup}
 sleep 2
 shot final

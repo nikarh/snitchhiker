@@ -117,23 +117,26 @@ else
   fail tray-shows-waiting-prompts "the tray item didn't register, or didn't ask for attention" "${out}"
 fi
 
-# 5. The session check: under the compositor no warning, through a proxy of its socket a warning.
+# 5. The session check: under the compositor, the virtual input it offers every client (sway does) but no proxy; through a
+# proxy of its socket, the proxy; under X11, X11.
 ui "${shots}/session" '
 runtime=/run/user/$uid
 rm -f $runtime/wayland-proxy
 runuser -u mallory -- socat UNIX-LISTEN:$runtime/wayland-proxy,fork UNIX-CONNECT:$runtime/wayland-1 </dev/null >/dev/null 2>&1 &
 sleep 1
-direct=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime WAYLAND_DISPLAY=wayland-1 /usr/bin/snitchhiker-ui --session-warnings)
-proxied=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime WAYLAND_DISPLAY=wayland-proxy /usr/bin/snitchhiker-ui --session-warnings)
+direct=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime WAYLAND_DISPLAY=wayland-1 /usr/bin/snitchhiker-ui --session-warnings | tr "\n" "|")
+proxied=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime WAYLAND_DISPLAY=wayland-proxy /usr/bin/snitchhiker-ui --session-warnings | tr "\n" "|")
 x11=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime DISPLAY=:0 /usr/bin/snitchhiker-ui --session-warnings)
 printf "direct[%s] proxied[%s] x11[%s]\n" "$direct" "$proxied" "$x11" > /tmp/desktop-result.txt
 pkill -f wayland-proxy || true' >/dev/null 2>&1
 out=$(result)
-if grep -q 'direct\[\]' <<<"${out}" && grep -q 'proxied\[The display server isn.t a known compositor (/usr/bin/socat' <<<"${out}" \
+if grep -q 'direct\[The compositor lets every program of yours type and click in this window (zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1)' <<<"${out}" \
+  && ! grep -q "direct\[[^]]*isn't a known compositor" <<<"${out}" \
+  && grep -q 'proxied\[The display server isn.t a known compositor (/usr/bin/socat' <<<"${out}" \
   && grep -q 'x11\[X11 session: reduced protection' <<<"${out}"; then
   pass session-weaknesses-are-warned-about
 else
-  fail session-weaknesses-are-warned-about "the session check didn't tell the compositor from a proxy, or X11" "${out}"
+  fail session-weaknesses-are-warned-about "the session check didn't tell the compositor from a proxy, X11, or the virtual input offered" "${out}"
 fi
 
 # 6. OpenSnitch imported in the app: the preview's Import adds the rules that convert; the system firewall stays.
