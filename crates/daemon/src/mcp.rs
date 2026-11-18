@@ -372,7 +372,7 @@ fn proposal_json(p: &v1::Proposal) -> Value {
         v1::ProposalState::Pending => format!(
             "Waiting for a person{}. Call wait_for_proposal with id {}.",
             if p.broad {
-                " (some rules are marked, so approving takes them a password)"
+                " (some rules are marked, for them to look at closely)"
             } else {
                 ""
             },

@@ -303,8 +303,8 @@ fn broad_scenario() -> Result<(), String> {
     let broad = at(&proposed, "/everything/id").as_u64().unwrap_or(0);
     let narrow = at(&proposed, "/proposal/id").as_u64().unwrap_or(0);
     let marked = at(&proposed, "/everything/rules/0/marked")
-        .as_bool()
-        .unwrap_or(false);
+        .as_array()
+        .is_some_and(|reasons| !reasons.is_empty());
     crate::stepup::polkit_answers(Some("NO"))?;
     let broad_approved = crate::stepup::approve_as_client(broad)?;
     let narrow_approved = crate::stepup::approve_as_client(narrow)?;
