@@ -145,6 +145,8 @@ pub enum Update {
     Explanation(Box<v1::Explanation>),
     /// OpenSnitch's files, read by the node.
     OpenSnitch(v1::OpenSnitchFiles),
+    /// How importing rules went.
+    Imported(Result<(), String>),
     Lint(v1::LintReport),
     Policy(v1::NodePolicy),
     SystemFirewall(v1::SystemFirewall),
@@ -309,8 +311,16 @@ fn serve_requests(
                 history.connected(connected.welcome().node_epoch);
             }
         }
+        // An import's failure is told to the import too.
+        let failed = |error: String| {
+            if matches!(request, Request::ImportRules { .. }) {
+                Update::Imported(Err(error))
+            } else {
+                Update::Failed(error)
+            }
+        };
         let Some(connected) = client.as_mut() else {
-            let _ = updates.send_blocking(Update::Failed("the node isn't reachable".to_owned()));
+            let _ = updates.send_blocking(failed("the node isn't reachable".to_owned()));
             continue;
         };
         match perform(connected, &request) {
@@ -320,12 +330,12 @@ fn serve_requests(
             }
             Ok(None) => {}
             Err(ClientError::Remote { message, .. }) => {
-                let _ = updates.send_blocking(Update::Failed(message));
+                let _ = updates.send_blocking(failed(message));
             }
             Err(error) => {
                 // The connection is broken: the next request connects again.
                 client = None;
-                let _ = updates.send_blocking(Update::Failed(error.to_string()));
+                let _ = updates.send_blocking(failed(error.to_string()));
             }
         }
     }
@@ -498,6 +508,9 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Pairing(pairing) => Some(Update::Pairing(pairing)),
         // Done after unpairing: list them again.
         R::Done(_) if matches!(request, Request::RemoveDevice(_)) => None,
+        R::Done(_) if matches!(request, Request::ImportRules { .. }) => {
+            Some(Update::Imported(Ok(())))
+        }
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

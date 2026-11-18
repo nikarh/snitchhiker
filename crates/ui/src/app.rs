@@ -655,6 +655,30 @@ impl Render for App {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(self.title()),
                     )
+                    // What the node refused or couldn't do, until dismissed: a change that didn't happen mustn't go
+                    // unnoticed.
+                    .children(self.model.read(cx).error.clone().map(|error| {
+                        let model = self.model.clone();
+                        h_flex()
+                            .flex_none()
+                            .gap_3()
+                            .px_4()
+                            .py_2()
+                            .bg(cx.theme().danger)
+                            .text_color(cx.theme().danger_foreground)
+                            .child(div().flex_1().min_w_0().child(error))
+                            .child(
+                                Button::new("dismiss-error")
+                                    .small()
+                                    .label("Dismiss")
+                                    .on_click(move |_, _, cx| {
+                                        model.update(cx, |model, cx| {
+                                            model.error = None;
+                                            cx.notify();
+                                        });
+                                    }),
+                            )
+                    }))
                     .when(viewer, |this| {
                         this.child(
                             div()

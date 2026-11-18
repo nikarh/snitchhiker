@@ -253,6 +253,8 @@ pub struct Model {
     pub explanation: Option<v1::Explanation>,
     /// OpenSnitch's files, as the node last sent them (for importing).
     pub opensnitch: Option<v1::OpenSnitchFiles>,
+    /// How the last import of rules went (`None`: none since it was asked for).
+    pub imported: Option<Result<(), String>>,
     /// The last lint report.
     pub lint: Option<v1::LintReport>,
     pub policy: Option<v1::NodePolicy>,
@@ -525,6 +527,13 @@ impl Model {
             Update::ShowPrompts => Changed::ShowPrompts,
             Update::ShowAlerts => Changed::ShowAlerts,
             Update::ShowProposals => Changed::ShowProposals,
+            Update::Imported(result) => {
+                if let Err(error) = &result {
+                    self.error = Some(error.clone());
+                }
+                self.imported = Some(result);
+                Changed::Status
+            }
             Update::Failed(error) => {
                 self.error = Some(error);
                 Changed::Status

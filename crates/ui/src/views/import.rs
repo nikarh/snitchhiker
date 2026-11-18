@@ -32,6 +32,14 @@ pub struct Preview {
     replace_firewall: bool,
     /// Waiting for the node to send the files.
     loading: bool,
+    /// After Import: how it goes.
+    importing: Option<Importing>,
+}
+
+/// An import asked for.
+enum Importing {
+    Running,
+    Finished(Result<(), String>),
 }
 
 impl Preview {
@@ -47,6 +55,7 @@ impl Preview {
             import_rules: false,
             replace_firewall: false,
             loading: true,
+            importing: None,
         }
     }
 
@@ -92,6 +101,7 @@ impl Preview {
             import_rules,
             replace_firewall: false,
             loading: false,
+            importing: None,
         }
     }
 
@@ -119,6 +129,15 @@ impl Preview {
             requests.push(Request::SystemFirewall);
         }
         requests
+    }
+}
+
+/// "1 rule", "3 rules".
+fn rules_count(count: usize) -> String {
+    if count == 1 {
+        "1 rule".to_owned()
+    } else {
+        format!("{count} rules")
     }
 }
 
@@ -162,59 +181,14 @@ fn toggle(
     if on { button.primary() } else { button.ghost() }
 }
 
-impl Render for Preview {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let muted = cx.theme().muted_foreground;
-        if self.loading {
-            return div()
-                .id("import-preview")
-                .text_color(muted)
-                .child("Reading OpenSnitch's files on the node…");
-        }
-        let mut page = v_flex().gap_3();
-        // Rules.
-        page = page.child(
-            div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .child("Rules"),
-        );
-        match &self.rules {
-            Err(e) => page = page.child(div().text_color(muted).child(format!("Not read: {e}"))),
-            Ok((_, names)) => {
-                page = page
-                    .child(format!(
-                        "{} of {} rules convert, into the folder {FOLDER}. They apply to the host only.",
-                        names.len(),
-                        names.len() + self.rules_skipped.len()
-                    ))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(names.iter().take(30).cloned().collect::<Vec<_>>().join(", ")),
-                    );
-                if !self.rules_skipped.is_empty() {
-                    page = page
-                        .child(div().child("Not converted:"))
-                        .child(skipped_list(&self.rules_skipped, muted));
-                }
-                if !names.is_empty() {
-                    let on = self.import_rules;
-                    page = page.child(
-                        h_flex()
-                            .gap_1()
-                            .child(toggle("import-rules-yes", "Import them", on, cx, |p| {
-                                p.import_rules = true;
-                            }))
-                            .child(toggle("import-rules-no", "Leave them", !on, cx, |p| {
-                                p.import_rules = false;
-                            })),
-                    );
-                }
-            }
-        }
-        // The system firewall.
+impl Preview {
+    /// The system firewall's part of the preview.
+    fn firewall_section(
+        &self,
+        mut page: gpui::Div,
+        muted: gpui::Hsla,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         page = page.child(
             div()
                 .pt_2()
@@ -259,6 +233,97 @@ impl Render for Preview {
                     })),
             );
         }
+        page
+    }
+
+    /// How an import asked for goes; `None` before Import.
+    fn outcome(&self, cx: &Context<Self>) -> Option<AnyElement> {
+        let count = self.rules.as_ref().map_or(0, |(_, names)| names.len());
+        let (text, failed) = match self.importing.as_ref()? {
+            Importing::Running => (format!("Importing {}…", rules_count(count)), false),
+            Importing::Finished(Ok(())) => (
+                format!(
+                    "Imported {} into the folder {FOLDER}. They are on the Rules page.",
+                    rules_count(count)
+                ),
+                false,
+            ),
+            Importing::Finished(Err(error)) => (format!("Nothing was imported: {error}"), true),
+        };
+        let theme = cx.theme();
+        let (bg, fg) = if failed {
+            (theme.danger, theme.danger_foreground)
+        } else {
+            (theme.secondary, theme.secondary_foreground)
+        };
+        Some(
+            div()
+                .p_3()
+                .rounded(theme.radius)
+                .bg(bg)
+                .text_color(fg)
+                .child(text)
+                .into_any_element(),
+        )
+    }
+}
+
+impl Render for Preview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let muted = cx.theme().muted_foreground;
+        if self.loading {
+            return div()
+                .id("import-preview")
+                .text_color(muted)
+                .child("Reading OpenSnitch's files on the node…");
+        }
+        let mut page = v_flex().gap_3();
+        if let Some(outcome) = self.outcome(cx) {
+            return div().id("import-preview").child(outcome);
+        }
+        // Rules.
+        page = page.child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .child("Rules"),
+        );
+        match &self.rules {
+            Err(e) => page = page.child(div().text_color(muted).child(format!("Not read: {e}"))),
+            Ok((_, names)) => {
+                page = page
+                    .child(format!(
+                        "{} of {} rules convert, into the folder {FOLDER}. They apply to the host only.",
+                        names.len(),
+                        names.len() + self.rules_skipped.len()
+                    ))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(names.iter().take(30).cloned().collect::<Vec<_>>().join(", ")),
+                    );
+                if !self.rules_skipped.is_empty() {
+                    page = page
+                        .child(div().child("Not converted:"))
+                        .child(skipped_list(&self.rules_skipped, muted));
+                }
+                if !names.is_empty() {
+                    let on = self.import_rules;
+                    page = page.child(
+                        h_flex()
+                            .gap_1()
+                            .child(toggle("import-rules-yes", "Import them", on, cx, |p| {
+                                p.import_rules = true;
+                            }))
+                            .child(toggle("import-rules-no", "Leave them", !on, cx, |p| {
+                                p.import_rules = false;
+                            })),
+                    );
+                }
+            }
+        }
+        page = self.firewall_section(page, muted, cx);
         div()
             .id("import-preview")
             .max_h(px(520.))
@@ -284,35 +349,61 @@ pub fn open(
                 *preview = Preview::from_files(files);
                 cx.notify();
             }
+            if let Some(Importing::Running) = preview.importing
+                && let Some(result) = &model.read(cx).imported
+            {
+                preview.importing = Some(Importing::Finished(result.clone()));
+                cx.notify();
+            }
         })
         .detach();
         Preview::loading()
     });
-    window.open_dialog(cx, move |dialog, _, _| {
-        let (importing, requests) = (preview.clone(), requests.clone());
+    let model = model.clone();
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let (importing, requests, model) = (preview.clone(), requests.clone(), model.clone());
+        let started = preview.read(cx).importing.is_some();
+        let footer = h_flex().w_full().gap_2().justify_end();
+        let footer = if started {
+            footer.child(
+                Button::new("import-close")
+                    .label("Close")
+                    .on_click(|_, window, cx| window.close_dialog(cx)),
+            )
+        } else {
+            footer
+                .child(
+                    Button::new("import-cancel")
+                        .label("Cancel")
+                        .on_click(|_, window, cx| window.close_dialog(cx)),
+                )
+                .child(Button::new("import-go").primary().label("Import").on_click(
+                    move |_, window, cx| {
+                        let sent = importing.read(cx).requests();
+                        let rules = sent
+                            .iter()
+                            .any(|request| matches!(request, Request::ImportRules { .. }));
+                        model.update(cx, |model, _| model.imported = None);
+                        for request in sent {
+                            let _ = requests.send(request);
+                        }
+                        if rules {
+                            // The dialog stays to tell how it went.
+                            importing.update(cx, |preview, cx| {
+                                preview.importing = Some(Importing::Running);
+                                cx.notify();
+                            });
+                        } else {
+                            window.close_dialog(cx);
+                        }
+                    },
+                ))
+        };
         dialog
             .title("Import from OpenSnitch")
             .w(px(760.))
             .child(preview.clone())
-            .footer(
-                h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_end()
-                    .child(
-                        Button::new("import-cancel")
-                            .label("Cancel")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    )
-                    .child(Button::new("import-go").primary().label("Import").on_click(
-                        move |_, window, cx| {
-                            for request in importing.read(cx).requests() {
-                                let _ = requests.send(request);
-                            }
-                            window.close_dialog(cx);
-                        },
-                    )),
-            )
+            .footer(footer)
     });
 }
 
