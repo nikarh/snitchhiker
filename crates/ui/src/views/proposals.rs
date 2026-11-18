@@ -303,11 +303,7 @@ impl Proposals {
         let approve = {
             let proposal = proposal.clone();
             Button::new(SharedString::from(format!("approve-{id}")))
-                .label(if proposal.broad {
-                    "Approve (asks for a password)"
-                } else {
-                    "Approve"
-                })
+                .label("Approve")
                 .primary()
                 .disabled(!armed || !draft.include.iter().any(|i| *i))
                 .on_click(
