@@ -820,9 +820,9 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
     let domain = format!(
         "<domain type='kvm'><name>{GUEST}</name><memory unit='MiB'>192</memory><vcpu>1</vcpu>\
          <os><type arch='x86_64'>hvm</type><kernel>{images}/e2e-vmlinuz</kernel>\
-         <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 quiet panic=-1</cmdline></os>\
+         <initrd>{images}/e2e-initrd.cpio</initrd><cmdline>console=ttyS0 panic=-1</cmdline></os>\
          <devices><interface type='network'><source network='default'/><model type='virtio'/></interface>\
-         <serial type='pty'/></devices></domain>"
+         <serial type='file'><source path='/tmp/e2e-guest.console'/></serial></devices></domain>"
     );
     std::fs::write("/tmp/e2e-guest.xml", domain).map_err(|e| e.to_string())?;
     let daemon = Running::start("libvirt", "mode = \"enforce\"\nno_match = \"deny\"\n")?;
@@ -838,6 +838,7 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
         "the guest",
     ])?;
     let _ = run("virsh", &["destroy", GUEST]);
+    let _ = std::fs::remove_file("/tmp/e2e-guest.console");
     run("virsh", &["create", "/tmp/e2e-guest.xml"])?;
     let mut seen = Vec::new();
     // A nested guest on a shared runner can take a minute or more to boot: the loop ends as soon as both are seen.
@@ -849,8 +850,15 @@ pub fn a_libvirt_vm_is_decided_by_its_name() -> Result<(), String> {
         }
     }
     let state = run("virsh", &["domstate", GUEST]).unwrap_or_else(|e| e);
+    let console = std::fs::read_to_string("/tmp/e2e-guest.console").unwrap_or_default();
+    let console: Vec<&str> = console.lines().rev().take(20).collect();
     let _ = run("virsh", &["destroy", GUEST]);
-    let found = format!("guest {}\n{}", state.trim(), seen.join("\n"));
+    let found = format!(
+        "guest {}\n{}\nits console's last lines:\n{}",
+        state.trim(),
+        seen.join("\n"),
+        console.into_iter().rev().collect::<Vec<_>>().join("\n")
+    );
     check(
         seen.iter()
             .any(|l| l.contains("allow") && l.contains(GUEST) && l.contains(":8096")),
@@ -882,8 +890,9 @@ done
 cat > $d/init <<'INIT'
 #!/bin/sh
 mount -t proc proc /proc; mount -t sysfs sys /sys
-for k in failover net_failover virtio_net; do insmod /modules/$k.ko 2>/dev/null; done
+for k in failover net_failover virtio_net; do insmod /modules/$k.ko; done
 ip link set eth0 up; ip addr add 192.168.122.50/24 dev eth0; ip route add default via 192.168.122.1
+echo 'e2e-guest: network up'; ip addr show eth0; ip route
 while true; do
   wget -T 1 -q -O /dev/null http://203.0.113.95:8096/; wget -T 1 -q -O /dev/null http://203.0.113.95:8097/
   sleep 1
