@@ -27,8 +27,8 @@ An agent runs as the user, so its MCP server does too. Whatever the agent can ca
 - **Shaped by the node.** Each proposed rule is shaped (`snitchhiker_core::proposal`): its program is the one the
   kernel saw for the agent's refused connections to those destinations, not the agent's word; a rule for any program
   everywhere is refused; any host, public-suffix wildcards, wide networks, the LAN and the metadata service, any port
-  with a broad destination, replaceable binaries, and rules nothing refused matches are marked. A marked proposal takes
-  step-up to approve.
+  with a broad destination, replaceable binaries, and rules nothing refused matches are marked for the person approving
+  it. (A marked proposal took step-up to approve until decision 0018.)
 - **Session-scoped by default.** An approved rule carries a `session` condition: it matches only processes descended
   from the agent (pid and start time), and goes when the agent exits. The person may choose a duration instead.
 - **Stored and recorded.** Proposals are kept (pending, approved, denied, withdrawn, expired) with their provenance and

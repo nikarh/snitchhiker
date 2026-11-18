@@ -276,8 +276,8 @@ Even a genuine UI session should not be enough for actions that disable protecti
 | --- | --- | --- |
 | Propose | `agent.sock` only: dry-run checks, the caller's own blocked connections, submitting and withdrawing rule proposals | nothing: any local process can connect. The tier is powerless by design; every proposal needs a human in the Decide tier |
 | Read | events, stats, rules, connections | an authenticated client session (local UI, or a paired device with the `viewer` or `admin` role) |
-| Decide | answer a prompt, create or edit a rule that is narrower than "app → anything" | session + `admin` role |
-| Dangerous | disable interception or the firewall; change the default, timeout or fail policy; configure agent auto-approval envelopes; delete a folder with more than N rules; create allow-everything rules; pair or unpair devices; change trusted clients; export the device key | session + **step-up**: polkit (password or fingerprint through the system polkit agent, `auth_admin_keep`), *or* confirmation on another paired admin device (the phone), configurable per node |
+| Decide | answer a prompt, create, edit or delete rules and folders (any rule: decision 0018) | session + `admin` role |
+| Dangerous | disable interception or the firewall; change the default, timeout or fail policy; configure agent auto-approval envelopes; pair or unpair devices; change trusted clients; export the device key | session + **step-up**: polkit (password or fingerprint through the system polkit agent, `auth_admin_keep`), *or* confirmation on another paired admin device (the phone), configurable per node |
 
 - polkit is reached with `zbus_polkit` on zbus 6. It is pure Rust, so it needs no system library. The subject is
   passed as a pidfd so it cannot be raced.
@@ -767,7 +767,7 @@ Today they can only trip a prompt that says "node → 104.16.x.x:443" with no co
 - the normalized rules as a diff, with risk badges and the matching blocked connections as evidence;
 - edit before approving (narrow a host, shorten the duration, drop an item), then approve or deny with a reason that
   is returned to the agent;
-- approving needs the Decide tier. Anything the shaping step flagged as broad needs step-up.
+- approving needs the Decide tier. What the shaping step flagged as broad is shown marked (decision 0018: no step-up).
 - "Mute proposals from this process tree" for spam.
 
 **Pre-authorized envelopes (optional, off by default).** The human can declare, as a dangerous-tier action, an envelope
@@ -920,8 +920,7 @@ One small language is used for rule search, event filters, statistics pivots and
 2. this app → this host, any port
 3. this app → `*.registrable-domain` (only offered when it differs from the host)
 4. this app → this IP / this /24
-5. this app → anywhere *(shown with a warning colour; counts as a dangerous action if the node requires step-up for
-   it)*
+5. this app → anywhere *(shown with a warning colour)*
 6. any app → this host
 
 For containers and VMs the ladder is different: see [§5.10](#510-containers-vms-and-network-namespaces). Agent
@@ -2033,8 +2032,8 @@ the security model, and the GUI framework are proven before the bulk of feature 
   - [x] Session lifecycle bound to the pidfd and logind session. A connection ends with its client's process; the
         logind session, used for presence, moves to M5 with prompt routing.
 - [x] **Step-up**
-  - [x] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions. Today's
-        only dangerous action through the protocol is an allow-everything rule; others join as they are added.
+  - [x] Action tiers, polkit integration, the polkit policy file, and an audit trail of dangerous actions. Rules
+        aren't among the dangerous actions (decision 0018): a looser policy or system firewall, envelopes and devices are.
 - [x] **Prompt broker**
   - [x] Pending prompts keyed and coalesced, held queue, timeouts, first-answer-wins, resolution broadcast.
   - [x] (Moved to M5.) Routing policy per node and kind (all, selected, escalation), logind lock/idle presence, per-device mute;
@@ -2141,7 +2140,7 @@ Early because the user's own coding agents benefit immediately. It needs the pro
       desktop app), connects, and its rules go when it exits.
 - **DoD:** Claude Code, blocked while running `cargo build` in a project, calls `recent_blocked`, proposes
   session-scoped allows for `crates.io` and `static.crates.io` for `cargo`, the user approves in the desktop app, and the
-  build succeeds. A proposal for `node → *` is flagged and cannot be approved without step-up.
+  build succeeds. A proposal for `node → *` is flagged for the person approving it.
 
 ### M5. Remote: iroh, pairing, relay, multi-node
 

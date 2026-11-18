@@ -86,7 +86,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `WithdrawProposal` | `Proposal` | (agent) |
 | `AnnotatePending` | `Done` | A note on a prompt the agent's own process opened (agent) |
 | `ListProposals` | `ProposalList` | Proposals, newest first |
-| `DecideProposal` | `Proposal` | Approves (with the rules as edited, for a duration) or denies, with a reason the agent is told; a marked rule needs step-up |
+| `DecideProposal` | `Proposal` | Approves (with the rules as edited, for a duration) or denies, with a reason the agent is told; marked rules are shown as such |
 | `Explain` | `Explanation` | Why a recorded connection (by its `seq`) is decided as it is by today's rules |
 | `LintRules` | `LintReport` | Rules that never match, are shadowed, unused for `unused_days`, could merge, or name a moved binary |
 | `EditRules` | `Done` | One edit (enable, move, action, expiry, delete) of many rules, as one batch |

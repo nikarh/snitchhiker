@@ -118,7 +118,7 @@ The local users who administer the node through the desktop app: members of thes
 
 ### `step_up`
 
-What confirms a dangerous action a client asks for, such as a rule that allows programs to connect broadly ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
+What confirms a dangerous action a client asks for, such as loosening the policy ([Security](/internals/security/#dangerous-actions-need-more-than-a-session)). Default `"polkit"`: polkit must authorize the client's process, usually with an administrator's password. `"off"`: the client's session is enough. Either way the attempt is audited.
 
 ## Remote devices
 

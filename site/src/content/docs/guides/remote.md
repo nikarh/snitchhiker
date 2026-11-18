@@ -96,7 +96,7 @@ The app's **Wake-ups** card says how it is woken: through a UnifiedPush app (ntf
 
 ## Dangerous actions from a device
 
-A device can't confirm a dangerous action with a password on the node, as a client there does through polkit. When a device asks for one (a rule for any program to anywhere, pairing another device), the request waits up to two minutes for an approval on the node: a card on the desktop app's **Prompts** page there (approving asks for the administrator's password), or `sudo snitchhiker approvals approve <id>`. Denied, or not answered in time, it is refused. Another remote device can't approve it.
+A device can't confirm a dangerous action with a password on the node, as a client there does through polkit. When a device asks for one (loosening the policy, pairing another device), the request waits up to two minutes for an approval on the node: a card on the desktop app's **Prompts** page there (approving asks for the administrator's password), or `sudo snitchhiker approvals approve <id>`. Denied, or not answered in time, it is refused. Another remote device can't approve it.
 
 ## Where the keys are
 

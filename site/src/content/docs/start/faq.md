@@ -40,7 +40,7 @@ Yes: that is what monitor mode, `snitchhiker learn` and the command line are for
 
 ## Can malware just turn it off?
 
-Not without root. The daemon runs as root; clients reach it through a socket that only trusted, root-installed client binaries may use, and dangerous actions (turning interception off, a rule that allows broadly, pairing a device) need an administrator's password or an approval on another device. Malware running as you can make connections a prompt asks about, or propose rules as an agent would, but a person decides ([Security model](/internals/security/)). Malware running as root can do anything, including removing any firewall.
+Not without root. The daemon runs as root; clients reach it through a socket that only trusted, root-installed client binaries may use, and dangerous actions (turning interception off, loosening the policy, pairing a device) need an administrator's password or an approval on another device. Malware running as you can make connections a prompt asks about, or propose rules as an agent would, but a person decides ([Security model](/internals/security/)). Malware running as root can do anything, including removing any firewall.
 
 ## Is it free?
 

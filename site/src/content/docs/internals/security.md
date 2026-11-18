@@ -55,16 +55,14 @@ Every local user may run the desktop app, and the app may connect: what it may d
 
 ## Dangerous actions need more than a session
 
-Some requests would undo the firewall, or what watches it, in one step, so a client's session isn't enough for them. A change to the rules is judged by the rules it leaves in force, not by the request, so every way to the same result needs the same authorization. A change is dangerous when, after it:
+Some requests switch the firewall off wholesale, or hand control of it to someone else, so a client's session isn't enough for them. A change is judged by the state it leaves, not by the request, so every way to the same result needs the same authorization. A change is dangerous when, after it:
 
-- **a rule in force allows broadly**: an enabled allow rule, in enabled folders, that with its folders' conditions names no particular program and no particular destination. A particular program is a path, app identity, container or VM named by patterns that each match finitely many values (an exact name, a glob without `*`, a regular expression without unbounded repetition such as `re:(?i)/usr/bin/curl`), or a binary hash; a particular destination is a host name (or a regular expression matching finitely many), `*.` and a name that isn't a public suffix, a network no wider than a /24 (IPv4) or /48 (IPv6), or a blocklist. So a rule for `glob:/**`, for `0.0.0.0/0`, or for `re:.*` as host is broad, and so is a narrow rule once its folder's scope is removed, or one imported disabled and then enabled. Splitting a broad rule into several doesn't help: each is broad.
-- **more than 20 rules stop being in force** at once: deleted, disabled, or in a folder that is.
 - **the policy lets through what it blocked** (`monitor`, `no_match = "allow"`, `allow` for `no_client` or `on_timeout`), or keeps less history.
 - **the system firewall lets in what it kept out.**
 
-Undoing a change is judged the same way. Pairing a device, unpairing or muting another one (it would no longer be told of prompts and alerts; a device may do either to itself), approving an agent's broad proposal and changing an agent's envelope are dangerous too.
+Undoing a change is judged the same way. Pairing a device, unpairing or muting another one (it would no longer be told of prompts and alerts; a device may do either to itself) and changing an agent's envelope are dangerous too.
 
-Deleting rules one at a time isn't: each deletion is in the history, can be undone, and is no different from what an administrator does every day. Acknowledging the alerts raised for dangerous actions isn't either: asking for it would raise another such alert. The audit trail keeps every attempt whatever happens to the alerts.
+What rules say isn't. A process that can drive the app could add a rule for a program it wrote somewhere it may write (its home directory) as easily as a rule for every program, so asking for a password for some rules would protect nothing; asking for it for every allow rule of a program a user may replace would ask on half of all prompts. Rules are changed with a session; every change is in the history and can be undone. Agents' broad proposals are marked for whoever approves them. Acknowledging the alerts raised for dangerous actions isn't dangerous either: asking for it would raise another such alert. The audit trail keeps every attempt whatever happens to the alerts.
 
 For these the daemon asks polkit whether the client's process may do it (action `org.snitchhiker.manage`, the process named by its pidfd). By default polkit asks for an administrator's password through the user's polkit agent and remembers it for a few minutes. Local policy can change that with a file in `/etc/polkit-1/rules.d/`. When polkit doesn't authorize the request, or can't be asked (not installed, no agent), the request is refused with `ERROR_CODE_NOT_AUTHORIZED`. Root's requests on the admin socket need no step-up, and [`step_up = "off"`](/reference/configuration/#step_up) switches it off.
 
@@ -122,7 +120,7 @@ The end-to-end suite runs in disposable VMs on every change and includes an unpr
 | `local-auth/same-user-cannot-attach-or-read-memory` | attaching to a client, or reading its memory |
 | `local-auth/registered-clients-are-pinned` | a registered client binary changed in place, and registering a binary that isn't a setgid client |
 | `local-auth/connection-ends-with-its-process` | keeping a client's connection after the client exits, by holding its socket |
-| `step-up/allow-everything-needs-authorization` | adding an allow-everything rule from a client without polkit's authorization |
+| `step-up/loosening-the-policy-needs-authorization` | loosening the policy from a client without polkit's authorization |
 | `local-auth/client-refuses-a-fake-node` | posing as the daemon to a client, with a socket of one's own |
 | `tamper/admin-socket-refuses-ordinary-users` | the command line run by an ordinary user |
 | `tamper/disguised-clients-are-refused` | a hard link to the client binary, and the client run inside a user namespace |
