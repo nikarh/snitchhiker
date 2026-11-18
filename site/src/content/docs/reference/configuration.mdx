@@ -48,14 +48,16 @@ The packages install this file, which starts in monitor mode and describes each 
 
 ### `no_match`
 
-What happens to a connection no rule decides. Default `"deny"`.
+What happens to a connection no rule decides. Default `"ask"`, as OpenSnitch does: the desktop app prompts for it.
 
 | Value | |
 | --- | --- |
+| `"ask"` | it is held while clients are asked ([Prompts](/guides/prompts/)); with none listening, `no_client` decides |
 | `"allow"` | it passes |
 | `"deny"` | its packet is dropped; the program times out |
 | `"reject"` | its packet is dropped and its socket closed; the program fails at once |
-| `"ask"` | it is held while clients are asked ([Prompts](/guides/prompts/)) |
+
+Packages before this default shipped `no_match = "deny"`. An upgrade keeps a `daemon.toml` that was edited, so such an install keeps dropping unmatched connections without asking until the line is changed (or **Settings → No rule matches → Ask** in the app).
 
 ### `no_client`
 

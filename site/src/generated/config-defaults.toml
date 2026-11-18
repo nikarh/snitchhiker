@@ -1,6 +1,6 @@
 # Every setting of daemon.toml with its default (generated from Config::default()).
 mode = "enforce"
-no_match = "deny"
+no_match = "ask"
 no_client = "deny"
 prompt_timeout_secs = 30
 on_timeout = "deny"

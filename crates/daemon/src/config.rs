@@ -148,7 +148,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             mode: Mode::Enforce,
-            no_match: Policy::Deny,
+            no_match: Policy::Ask,
             no_client: Action::Deny,
             prompt_timeout_secs: 30,
             on_timeout: Action::Deny,

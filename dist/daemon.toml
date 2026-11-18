@@ -6,9 +6,10 @@
 # (`snitchhiker events`), to learn what a machine does before enforcing. Packages start in monitor mode.
 mode = "monitor"
 
-# What happens to a connection no rule decides: allow, deny (dropped; the program times out), reject (dropped,
-# and the program's socket closed at once) or ask (held while the connected clients are asked).
-no_match = "deny"
+# What happens to a connection no rule decides: ask (held while the connected clients are asked: the desktop app
+# prompts for it), allow, deny (dropped; the program times out) or reject (dropped, and the program's socket closed at
+# once).
+no_match = "ask"
 
 # With no_match = "ask": what happens when no client listens for prompts, how long a prompt waits for an answer
 # (1 to 3600 seconds), and what happens when nobody answers in time. Each of allow, deny or reject.

@@ -58,14 +58,14 @@ In `/etc/snitchhiker/daemon.toml`, set the mode and what happens to connections 
 
 ```toml title="/etc/snitchhiker/daemon.toml"
 mode = "enforce"
-no_match = "deny"
+no_match = "ask"
 ```
 
 ```bash
 sudo systemctl restart snitchhikerd
 ```
 
-From now on a connection no rule allows is dropped. `snitchhiker events` shows what was blocked and why. To be asked instead, use `no_match = "ask"`: see [Prompts](/guides/prompts/).
+From now on a connection no rule decides is held while the desktop app (or a paired phone) asks about it ([Prompts](/guides/prompts/)); with no app listening it is dropped (`no_client`). `snitchhiker events` shows what was blocked and why. On a machine nobody answers prompts on, use `no_match = "deny"` to drop such connections at once.
 
 :::caution
 On a machine you reach over the network, allow your way in and out (SSH, the package mirrors) before enforcing. Leave [`fail`](/reference/configuration/#fail) at `"open"` there, so that a stopped daemon doesn't cut the machine off.

@@ -5,7 +5,7 @@ sidebar:
   order: 2
 ---
 
-With `no_match = "ask"` in the [configuration](/reference/configuration/#no_match), a connection no rule decides isn't dropped or let through: its first packet is held while the connected clients are asked. The answer decides it, and can leave a rule behind so the question isn't asked again.
+With `no_match = "ask"` in the [configuration](/reference/configuration/#no_match) (the default), a connection no rule decides isn't dropped or let through: its first packet is held while the connected clients are asked. The answer decides it, and can leave a rule behind so the question isn't asked again.
 
 The desktop app and the [Android app](/install/android/) are the usual ways to answer; the [command line](/reference/cli/#prompts) can as well.
 

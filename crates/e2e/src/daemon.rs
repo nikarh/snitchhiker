@@ -70,6 +70,10 @@ impl Running {
         if !settings.contains("default_rules") {
             defaults.push_str("default_rules = false\n");
         }
+        // Unmatched connections are dropped, unless a scenario says otherwise (one that asks says so).
+        if !settings.contains("no_match") {
+            defaults.push_str("no_match = \"deny\"\n");
+        }
         // The test user's clients administer it, unless a scenario says who does.
         if !settings.contains("admin_groups") {
             defaults.push_str("admin_groups = [\"e2e-admins\"]\n");
