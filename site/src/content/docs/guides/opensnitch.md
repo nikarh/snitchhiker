@@ -43,16 +43,29 @@ One difference: in OpenSnitch an accept in the `mangle_output` chain (its ICMP, 
 | `precedence: true` | the override tier; otherwise the normal tier |
 | `enabled` | `enabled` |
 
-How values compare is kept:
+How values compare:
 
-- A `simple` operator compares the whole value. OpenSnitch compares without case unless the rule is `sensitive`; such values become `(?i)` regular expressions, since paths in Snitchhiker otherwise compare exactly. Host names compare without case in Snitchhiker anyway.
-- A `regexp` operator matches anywhere in the value in OpenSnitch, and a whole value in Snitchhiker. Regular expressions that aren't anchored with `^…$` are wrapped in `.*(?:…).*`, so they still match anywhere.
+- A `simple` operator compares the whole value, and imports as that exact value. OpenSnitch's UI marks every condition case-insensitive unless `sensitive` is ticked, but Linux paths and command lines have case, so a `simple` path imports as the exact path. Host names compare without case in Snitchhiker anyway.
+- The patterns OpenSnitch's UI writes become Snitchhiker's own conditions:
+
+  | OpenSnitch `regexp` | Snitchhiker |
+  | --- | --- |
+  | `dest.host` `^(\|.*\.)example\.com$` (the name and its subdomains) | `host = ["example.com", "*.example.com"]` |
+  | `dest.host` `^.*\.example\.com$` | `host = ["*.example.com"]` |
+  | `dest.host` `^(a.example.com\|b.example.org)$` | `host = ["a.example.com", "b.example.org"]` |
+  | `dest.ip` `^(10.1.1.5\|10.1.1.6)$` | `net = ["10.1.1.5/32", "10.1.1.6/32"]` |
+  | `dest.ip` `192\.168\.1\..*` | `net = ["192.168.1.0/24"]` |
+
+  These shapes are taken as anchored even when the `^` or `$` is missing: unanchored, `172\.18\..*` also matched `10.172.18.1`, which no rule meant. An unescaped `.` in a name or an address is taken as a dot.
+- Other `regexp` operators match anywhere in the value in OpenSnitch, and a whole value in Snitchhiker. Those not anchored with `^…$` are wrapped in `.*(?:…).*`, so they still match anywhere. A `dest.ip` pattern of another shape isn't imported.
+- The same condition written twice in one rule (OpenSnitch's UI does this) counts once.
 
 ## What isn't imported
 
 - **Temporary rules**: any `duration` other than `always`.
 - **Operands Snitchhiker has no condition for**: environment variables (`process.env.*`), interfaces, process ids, executable hashes, and block lists (`lists`). The import names each rule and the operand.
-- **A rule with two conditions on the same operand** (two `dest.port` in one list): both would have to hold, which a Snitchhiker condition can't say.
+- **A rule with two different conditions on the same operand** (two `dest.port` in one list): both would have to hold, which a Snitchhiker condition can't say.
+- **Conditions on the connection's local end** (`source.ip`, `source.port`, `source.network`): Snitchhiker decides by the destination. A rule from loopback to loopback is covered by the built-in System folder's Loopback rule.
 - **A rule matching everything** (`true`): set [`no_match`](/reference/configuration/#no_match) instead.
 
 ## Differences to know
