@@ -8,7 +8,7 @@ use gpui::{
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window,
     div, px,
 };
-use gpui_component::button::Button;
+use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::table::{DataTable, TableEvent, TableState};
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
@@ -68,6 +68,8 @@ pub struct App {
     status: Entity<Status>,
     /// What weakens the session's protection, shown above every page.
     warnings: Vec<crate::session::Warning>,
+    /// Whether the warnings show their particulars and remedies.
+    warning_details: bool,
     settings: Entity<Settings>,
     alerts: Entity<Alerts>,
     live: Entity<crate::views::live::Live>,
@@ -169,6 +171,7 @@ impl App {
             status,
             settings,
             warnings: crate::session::check(),
+            warning_details: false,
             alerts,
             live,
             system,
@@ -403,7 +406,81 @@ impl App {
     }
 }
 
+/// Where the documentation explains the session warnings.
+const SESSION_DOCS: &str =
+    "https://nikarh.github.io/snitchhiker/internals/security/#the-desktop-session";
+
 impl App {
+    /// What weakens the session, in one banner: a short title and line each, the particulars on request; dismissed
+    /// until the app starts again.
+    fn warning_banner(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let details = self.warning_details;
+        let rows = self.warnings.iter().map(|warning| {
+            v_flex()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .flex_wrap()
+                        .child(
+                            div()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(warning.title()),
+                        )
+                        .child(warning.summary()),
+                )
+                .when(details, |row| {
+                    row.child(div().text_sm().opacity(0.85).child(warning.details()))
+                })
+        });
+        // In a narrow window the buttons go below, and the text keeps the width.
+        h_flex()
+            .flex_none()
+            .flex_wrap()
+            .items_start()
+            .gap_2()
+            .px_4()
+            .py_2()
+            .bg(theme.warning)
+            .text_color(theme.warning_foreground)
+            .child(v_flex().flex_1().min_w(px(260.)).gap_1().children(rows))
+            .child(
+                h_flex()
+                    .flex_none()
+                    .ml_auto()
+                    .gap_1()
+                    .child(
+                        Button::new("session-warning-details")
+                            .small()
+                            .ghost()
+                            .label(if details { "Hide details" } else { "Details" })
+                            .on_click(cx.listener(|app, _, _, cx| {
+                                app.warning_details = !app.warning_details;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        Button::new("session-warning-docs")
+                            .small()
+                            .ghost()
+                            .label("Learn more")
+                            .tooltip("What each warning means, and how to fix it")
+                            .on_click(|_, _, cx| cx.open_url(SESSION_DOCS)),
+                    )
+                    .child(
+                        Button::new("dismiss-session-warnings")
+                            .small()
+                            .label("Dismiss")
+                            .tooltip("Hide these until the app starts again")
+                            .on_click(cx.listener(|app, _, _, cx| {
+                                app.warnings.clear();
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     /// The pages, in groups, with how many things wait on each.
     fn places(
         waiting: usize,
@@ -636,35 +713,7 @@ impl Render for App {
                     .h_full()
                     .overflow_hidden()
                     // What weakens the session, in one banner; dismissed until the app starts again.
-                    .when(!self.warnings.is_empty(), |page| {
-                        page.child(
-                            h_flex()
-                                .flex_none()
-                                .items_start()
-                                .gap_2()
-                                .px_4()
-                                .py_2()
-                                .bg(cx.theme().warning)
-                                .text_color(cx.theme().warning_foreground)
-                                .child(
-                                    v_flex()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .gap_1()
-                                        .children(self.warnings.iter().map(|w| div().child(w.text()))),
-                                )
-                                .child(
-                                    Button::new("dismiss-session-warnings")
-                                        .small()
-                                        .label("Dismiss")
-                                        .tooltip("Hide these until the app starts again")
-                                        .on_click(cx.listener(|app, _, _, cx| {
-                                            app.warnings.clear();
-                                            cx.notify();
-                                        })),
-                                ),
-                        )
-                    })
+                    .when(!self.warnings.is_empty(), |page| page.child(self.warning_banner(cx)))
                     .children(sign)
                     .child(
                         h_flex()

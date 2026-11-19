@@ -67,7 +67,7 @@ Every dangerous request is recorded in the audit trail, with the client, its use
 
 ## The desktop session
 
-Code running as you controls your display: no app can fully defend its window against it. The desktop app says when the session makes that easier, with a banner above every page:
+Code running as you controls your display: no app can fully defend its window against it. The desktop app says when the session makes that easier, with a banner above every page: a short title and one line for each finding, **Details** for the particulars and the fix, and **Learn more** for this section. **Dismiss** hides the banner until the app starts again. The findings:
 
 - **X11.** Any X11 client can read another's window and send it clicks and keys, so a program of yours could answer a prompt. A Wayland session is safer.
 - **A display server that isn't a known compositor.** The app checks the process at the other end of its Wayland socket: it must be yours, and its executable a known compositor (sway, KWin, GNOME Shell, Hyprland, and others) installed where only root can change it: the file the process runs must be the one at its path, and that path and every directory above it root's and writable by no one else. A proxy put between the app and the compositor is reported, even one copied under a compositor's name. A nested compositor run inside yours passes the check. A compositor that holds capabilities from its executable (sway, for `cap_sys_nice`) can't be inspected, even by you; such a process can't be a proxy of yours, since only root gives a file capabilities, so its name is trusted.
@@ -76,7 +76,7 @@ Code running as you controls your display: no app can fully defend its window ag
 - **A writable `/dev/uinput`.** A program of yours can create a keyboard or mouse the kernel treats as real (`ydotool`), under any compositor.
 - **The `input` group.** Its members can write to input devices: type and click anywhere.
 
-Each warning says how to close the hole: a compositor that limits these protocols to chosen programs, `/dev/uinput` writable by root alone (or a group you aren't in), leaving the `input` group. Prompt and proposal buttons arm only while the app's window is active, and only once both the prompt and the window's activation are a moment old, so a click or key meant for another window can't answer a prompt that just appeared, nor one waiting in a window just raised.
+Each warning's details say how to close the hole: a compositor that limits these protocols to chosen programs, `/dev/uinput` writable by root alone (or a group you aren't in), leaving the `input` group. Prompt and proposal buttons arm only while the app's window is active, and only once both the prompt and the window's activation are a moment old, so a click or key meant for another window can't answer a prompt that just appeared, nor one waiting in a window just raised.
 
 ## History the app keeps
 

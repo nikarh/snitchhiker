@@ -52,34 +52,63 @@ pub enum Warning {
 }
 
 impl Warning {
+    /// A few words: what is wrong.
     #[must_use]
-    pub fn text(&self) -> String {
+    pub fn title(&self) -> &'static str {
         match self {
-            Self::X11 => "X11 session: reduced protection. Any program of yours can read this window and click in it. \
-                          A Wayland session is safer."
-                .to_owned(),
+            Self::X11 => "X11 session",
+            Self::UnknownCompositor(_) => "Unknown display server",
+            Self::VirtualInput(_) => "Virtual input open to all",
+            Self::WindowControl => "Window control open to all",
+            Self::Uinput => "/dev/uinput writable",
+            Self::InputGroup => "In the input group",
+        }
+    }
+
+    /// One short line: what it lets other programs do.
+    #[must_use]
+    pub fn summary(&self) -> &'static str {
+        match self {
+            Self::X11 => "Any program can see this window and click in it.",
+            Self::UnknownCompositor(_) => "Something may sit between this window and the screen.",
+            Self::VirtualInput(_) => "Any program can type and click in this window.",
+            Self::WindowControl => "Any program can raise and focus this window.",
+            Self::Uinput => "Any program can make a fake keyboard or mouse.",
+            Self::InputGroup => "Any program can type and click anywhere.",
+        }
+    }
+
+    /// The particulars, and how to close the hole: shown on request.
+    #[must_use]
+    pub fn details(&self) -> String {
+        match self {
+            Self::X11 => "X11 lets every client read and drive every window. Use a Wayland session.".to_owned(),
             Self::UnknownCompositor(peer) => format!(
-                "The display server isn't a known compositor ({peer}): something may be between this window and the \
-                 screen."
+                "The Wayland socket leads to {peer}, not a known compositor installed by root."
             ),
             Self::VirtualInput(protocols) => format!(
-                "The compositor lets every program of yours type and click in this window ({}): one could answer \
-                 prompts or change the firewall. Compositors that keep virtual input to programs they trust (GNOME, \
-                 KDE Plasma) don't offer it to every program.",
-                protocols.join(", ")
+                "The compositor offers {} to every program, so one could answer prompts or change the firewall. GNOME \
+                 and KDE Plasma keep virtual input to programs they trust; wlroots compositors such as sway offer it \
+                 to all.",
+                protocols.join(" and ")
             ),
             Self::WindowControl => format!(
-                "The compositor lets every program of yours raise, focus or close this window ({WINDOW_CONTROL}): with \
-                 virtual input, it could bring the window forward and click in it."
+                "The compositor offers {WINDOW_CONTROL} to every program: with virtual input, one could bring this \
+                 window forward and click in it."
             ),
-            Self::Uinput => "/dev/uinput is writable by you: programs of yours can make a keyboard or mouse and type \
-                             and click anywhere, under any compositor. Make it writable by root alone (a udev rule), \
-                             or leave the group that may write it."
+            Self::Uinput => "This works under any compositor (ydotool). Make /dev/uinput writable by root alone (a \
+                             udev rule), or leave the group that may write it."
                 .to_owned(),
-            Self::InputGroup => "You are in the input group: programs of yours can type and click anywhere, in this \
-                                 window too. Leave the group (log in again after) unless a program of yours needs it."
+            Self::InputGroup => "Members can write to input devices directly. Leave the group (log in again after) \
+                                 unless a program of yours needs it."
                 .to_owned(),
         }
+    }
+
+    /// The whole warning on one line, for `--session-warnings`.
+    #[must_use]
+    pub fn line(&self) -> String {
+        format!("{}: {} {}", self.title(), self.summary(), self.details())
     }
 }
 

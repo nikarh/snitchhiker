@@ -130,10 +130,10 @@ x11=$(runuser -u mallory -- env XDG_RUNTIME_DIR=$runtime DISPLAY=:0 /usr/bin/sni
 printf "direct[%s] proxied[%s] x11[%s]\n" "$direct" "$proxied" "$x11" > /tmp/desktop-result.txt
 pkill -f wayland-proxy || true' >/dev/null 2>&1
 out=$(result)
-if grep -q 'direct\[The compositor lets every program of yours type and click in this window (zwp_virtual_keyboard_manager_v1, zwlr_virtual_pointer_manager_v1)' <<<"${out}" \
-  && ! grep -q "direct\[[^]]*isn't a known compositor" <<<"${out}" \
-  && grep -q 'proxied\[The display server isn.t a known compositor (/usr/bin/socat' <<<"${out}" \
-  && grep -q 'x11\[X11 session: reduced protection' <<<"${out}"; then
+if grep -q 'direct\[Virtual input open to all: .*offers zwp_virtual_keyboard_manager_v1 and zwlr_virtual_pointer_manager_v1' <<<"${out}" \
+  && ! grep -q "direct\[[^]]*Unknown display server" <<<"${out}" \
+  && grep -q 'proxied\[Unknown display server: .*leads to /usr/bin/socat' <<<"${out}" \
+  && grep -q 'x11\[X11 session: ' <<<"${out}"; then
   pass session-weaknesses-are-warned-about
 else
   fail session-weaknesses-are-warned-about "the session check didn't tell the compositor from a proxy, X11, or the virtual input offered" "${out}"

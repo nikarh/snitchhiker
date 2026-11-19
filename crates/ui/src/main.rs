@@ -40,7 +40,7 @@ fn main() -> ExitCode {
         let text = session::check()
             .iter()
             .fold(String::new(), |mut text, warning| {
-                text.push_str(&warning.text());
+                text.push_str(&warning.line());
                 text.push('\n');
                 text
             });
