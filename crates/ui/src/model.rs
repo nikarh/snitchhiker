@@ -254,7 +254,7 @@ pub struct Model {
     /// OpenSnitch's files, as the node last sent them (for importing).
     pub opensnitch: Option<v1::OpenSnitchFiles>,
     /// How the last import of rules went (`None`: none since it was asked for).
-    pub imported: Option<Result<(), String>>,
+    pub imported: Option<Result<v1::RulesImported, String>>,
     /// The last lint report.
     pub lint: Option<v1::LintReport>,
     pub policy: Option<v1::NodePolicy>,

@@ -808,16 +808,27 @@ pub fn opensnitch_rules_import_and_apply() -> Result<(), String> {
     }
     let mut daemon = Running::start("opensnitch", "mode = \"enforce\"\nno_match = \"reject\"\n")?;
     let report = daemon.cli(&["rules", "import-opensnitch", dir])?;
+    // Imported again: nothing is added twice.
+    let again = daemon.cli(&["rules", "import-opensnitch", dir])?;
     thread::sleep(Duration::from_millis(300));
     let allowed_ok = mallory_connects(allowed)?;
     let other_ok = mallory_connects(other)?;
     let listed = daemon.cli(&["rules"])?;
+    let folders = daemon.cli(&["folders"])?;
     daemon.stop()?;
     let _ = std::fs::remove_dir_all(dir);
-    let found = format!("{report}{listed}allowed: {allowed_ok}, other: {other_ok}");
+    let found = format!("{report}{again}{listed}{folders}allowed: {allowed_ok}, other: {other_ok}");
     check(
         report.contains("imported 1 of 2") && report.contains("skipped by-environment"),
         "the import didn't report what it couldn't convert",
+        &found,
+    )?;
+    check(
+        again.contains("imported 0 of 2")
+            && again.contains("1 already imported")
+            && listed.matches("allow-python").count() == 1
+            && folders.matches("OpenSnitch").count() == 1,
+        "importing again added rules or a folder twice",
         &found,
     )?;
     check(

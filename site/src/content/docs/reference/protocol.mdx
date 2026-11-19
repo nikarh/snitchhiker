@@ -73,7 +73,7 @@ A `Request` carries a client-chosen `id` and one method. The node answers each w
 | `Undo` | `Done` | Undoes a change's batch, unless changed again since |
 | `SetRuleEnabled` | `Done` | |
 | `ListAudit` | `AuditPage` | Dangerous actions asked for, newest first: `limit` entries with `id` below `before` (0: from the newest) |
-| `ImportRules` | `Done` | A [rule file](/reference/rule-files/) as TOML, into a new folder; checked as a whole first |
+| `ImportRules` | `RulesImported` | A [rule file](/reference/rule-files/) as TOML, into the top-level folder of that name (made if there is none); checked as a whole first. Rules whose name the folder already has aren't added again: `added` counts the new ones, `already` names the others |
 | `ExportRules` | `RuleFile` | The stored rules as a rule file |
 | `Learn` | `RuleFile` | Rules for the connections no rule decided in the last hours |
 | `ListEvents` | `EventPage` | History, newest first: `limit` entries with `seq` below `before` (0: from the newest) |

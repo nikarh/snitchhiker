@@ -1473,6 +1473,42 @@ fn folders(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     }
 }
 
+/// `rules import <path>`: a rule file, into the folder it names or one named after the file.
+fn import_file(client: &mut Client, path: &str) -> Result<(), Error> {
+    let toml = std::fs::read_to_string(path).map_err(|e| Error::Usage(format!("{path}: {e}")))?;
+    let folder = Path::new(path).file_stem().map_or_else(
+        || "Imported".to_owned(),
+        |s| s.to_string_lossy().into_owned(),
+    );
+    let (added, already) = imported_counts(client.call(v1::request::Method::ImportRules(
+        v1::ImportRules { toml, folder },
+    ))?)?;
+    out(&format!(
+        "imported {added} rules from {path}\n{}",
+        already_imported(&already)
+    ))
+}
+
+/// The line for the rules an import found already there, if any.
+fn already_imported(already: &[String]) -> String {
+    if already.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{} already imported (the folder has rules of these names): {}\n",
+        already.len(),
+        already.join(", ")
+    )
+}
+
+/// How many rules an import added, and which it found already there.
+fn imported_counts(result: v1::response::Result) -> Result<(u32, Vec<String>), Error> {
+    match result {
+        v1::response::Result::RulesImported(imported) => Ok((imported.added, imported.already)),
+        _ => Err(unexpected()),
+    }
+}
+
 /// `rules import-opensnitch`: OpenSnitch's rule files in `dir`, converted and imported (or printed, `dry_run`).
 fn import_opensnitch(dir: &str, dry_run: bool, version: &str) -> Result<(), Error> {
     let mut files = Vec::new();
@@ -1502,19 +1538,23 @@ fn import_opensnitch(dir: &str, dry_run: bool, version: &str) -> Result<(), Erro
         return out(&format!("{toml}{comments}"));
     }
     let mut client = connect(version)?;
-    if !imported.file.rule.is_empty() {
-        client.call(v1::request::Method::ImportRules(v1::ImportRules {
-            toml,
-            folder: "OpenSnitch".to_owned(),
-        }))?;
-    }
+    let (added, already) = if imported.file.rule.is_empty() {
+        (0, Vec::new())
+    } else {
+        imported_counts(
+            client.call(v1::request::Method::ImportRules(v1::ImportRules {
+                toml,
+                folder: "OpenSnitch".to_owned(),
+            }))?,
+        )?
+    };
     let _ = writeln!(
         report,
-        "imported {} of {} rules into the folder OpenSnitch; they apply to the host only \
+        "imported {added} of {} rules into the folder OpenSnitch; they apply to the host only \
          (add context = \"any\" to a rule for containers too)",
-        imported.file.rule.len(),
         imported.file.rule.len() + imported.skipped.len()
     );
+    report.push_str(&already_imported(&already));
     out(&report)
 }
 
@@ -1604,14 +1644,7 @@ fn rules(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         Some("import") => {
             let path: String = args.free_from_str()?;
             reject_rest(args)?;
-            let toml =
-                std::fs::read_to_string(&path).map_err(|e| Error::Usage(format!("{path}: {e}")))?;
-            let folder = Path::new(&path).file_stem().map_or_else(
-                || "Imported".to_owned(),
-                |s| s.to_string_lossy().into_owned(),
-            );
-            client.call(Method::ImportRules(v1::ImportRules { toml, folder }))?;
-            out(&format!("imported {path}\n"))
+            import_file(&mut client, &path)
         }
         Some("export") => {
             reject_rest(args)?;

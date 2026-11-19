@@ -146,7 +146,7 @@ pub enum Update {
     /// OpenSnitch's files, read by the node.
     OpenSnitch(v1::OpenSnitchFiles),
     /// How importing rules went.
-    Imported(Result<(), String>),
+    Imported(Result<v1::RulesImported, String>),
     Lint(v1::LintReport),
     Policy(v1::NodePolicy),
     SystemFirewall(v1::SystemFirewall),
@@ -508,9 +508,7 @@ fn perform(client: &mut Client, request: &Request) -> Result<Option<Update>, Cli
         R::Pairing(pairing) => Some(Update::Pairing(pairing)),
         // Done after unpairing: list them again.
         R::Done(_) if matches!(request, Request::RemoveDevice(_)) => None,
-        R::Done(_) if matches!(request, Request::ImportRules { .. }) => {
-            Some(Update::Imported(Ok(())))
-        }
+        R::RulesImported(imported) => Some(Update::Imported(Ok(imported))),
         R::EventBlock(event_block) => {
             let (rows, strings) = block(&event_block).map_err(|e| ClientError::Remote {
                 code: v1::ErrorCode::Invalid,

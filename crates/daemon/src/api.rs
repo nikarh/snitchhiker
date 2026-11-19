@@ -1697,23 +1697,69 @@ fn import_rules(
         Ok(rules) => rules,
         Err(e) => return error(v1::ErrorCode::Invalid, e.to_string()),
     };
-    done(change(daemon, Some(caller), app, |store, batch| {
-        let folder = store.put_folder(
-            &snitchhiker_core::rule::Folder {
-                id: 0,
-                parent: None,
-                name: name.clone(),
-                enabled: true,
-                scope: scope.clone(),
-            },
-            batch,
-        )?;
-        rules.iter().try_for_each(|rule| {
-            let mut rule = rule.clone();
+    let imported = change(daemon, Some(caller), app, |store, batch| {
+        let plan = repeated(&store.folders()?, &store.rules()?, &name, &rules);
+        let folder = match plan.folder {
+            Some(folder) => folder,
+            None => store.put_folder(
+                &snitchhiker_core::rule::Folder {
+                    id: 0,
+                    parent: None,
+                    name: name.clone(),
+                    enabled: true,
+                    scope: scope.clone(),
+                },
+                batch,
+            )?,
+        };
+        for rule in &plan.add {
+            let mut rule = (*rule).clone();
             rule.folder = Some(folder);
-            store.put_rule(&rule, batch).map(|_| ())
+            store.put_rule(&rule, batch)?;
+        }
+        Ok(v1::RulesImported {
+            added: u32::try_from(plan.add.len()).unwrap_or(u32::MAX),
+            already: plan.already,
         })
-    }))
+    });
+    imported.map_or_else(|e| e, v1::response::Result::RulesImported)
+}
+
+/// What importing rules into a folder adds.
+struct Import<'a> {
+    /// The top-level folder of that name, if there is one.
+    folder: Option<snitchhiker_core::rule::FolderId>,
+    add: Vec<&'a snitchhiker_core::rule::Rule>,
+    /// The names of the rules that folder already has.
+    already: Vec<String>,
+}
+
+/// An import repeated adds nothing again: the rules go into the first top-level folder of that name, and a rule whose
+/// name a rule in such a folder already has (an import names its rules after their source) is left out. With several
+/// top-level folders of that name (from imports before this), all of their rules count.
+fn repeated<'a>(
+    folders: &[snitchhiker_core::rule::Folder],
+    existing: &[snitchhiker_core::rule::Rule],
+    name: &str,
+    rules: &'a [snitchhiker_core::rule::Rule],
+) -> Import<'a> {
+    let same: Vec<_> = folders
+        .iter()
+        .filter(|f| f.parent.is_none() && f.name == name)
+        .map(|f| f.id)
+        .collect();
+    let names: std::collections::HashSet<&str> = existing
+        .iter()
+        .filter(|r| r.folder.is_some_and(|f| same.contains(&f)))
+        .map(|r| r.name.as_str())
+        .collect();
+    let (already, add): (Vec<_>, Vec<_>) =
+        rules.iter().partition(|r| names.contains(r.name.as_str()));
+    Import {
+        folder: same.iter().min().copied(),
+        add,
+        already: already.into_iter().map(|r| r.name.clone()).collect(),
+    }
 }
 
 pub(crate) fn event(stored: &crate::store::StoredEvent) -> v1::ConnectionEvent {
@@ -2974,6 +3020,53 @@ mod tests {
             v1::Role::Agent,
             &Method::ListRules(v1::ListRules {})
         ));
+    }
+
+    #[test]
+    fn an_import_repeated_adds_only_whats_new() {
+        use snitchhiker_core::rule::{Folder, Rule};
+        let folder = |id, parent, name: &str| Folder {
+            id,
+            parent,
+            name: name.to_owned(),
+            enabled: true,
+            scope: Vec::new(),
+        };
+        let rule = |name: &str, folder| Rule {
+            id: 0,
+            folder,
+            name: name.to_owned(),
+            enabled: true,
+            action: snitchhiker_core::rule::Action::Allow,
+            tier: snitchhiker_core::rule::Tier::default(),
+            expiry: snitchhiker_core::rule::Expiry::default(),
+            log: true,
+            notes: String::new(),
+            conditions: Vec::new(),
+        };
+        let incoming = [rule("curl", None), rule("git", None), rule("ssh", None)];
+        // Nothing yet: a new folder, everything added.
+        let first = repeated(&[], &[], "OpenSnitch", &incoming);
+        assert_eq!((first.folder, first.add.len()), (None, 3));
+        // Imported twice before (two folders), one rule since renamed, and a nested folder of that name.
+        let folders = [
+            folder(7, None, "OpenSnitch"),
+            folder(3, None, "OpenSnitch"),
+            folder(9, Some(3), "OpenSnitch"),
+            folder(4, None, "Other"),
+        ];
+        let existing = [
+            rule("curl", Some(3)),
+            rule("git", Some(7)),
+            rule("ssh (edited)", Some(3)),
+            rule("ssh", Some(4)),
+            rule("ssh", Some(9)),
+        ];
+        let again = repeated(&folders, &existing, "OpenSnitch", &incoming);
+        assert_eq!(again.folder, Some(3));
+        assert_eq!(again.already, vec!["curl", "git"]);
+        let added: Vec<&str> = again.add.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(added, vec!["ssh"]);
     }
 
     #[test]

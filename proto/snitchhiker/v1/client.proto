@@ -175,6 +175,7 @@ message Response {
     Blocklists blocklists = 43;
     Envelopes envelopes = 44;
     OpenSnitchFiles open_snitch_files = 45;
+    RulesImported rules_imported = 46;
   }
 }
 
@@ -456,6 +457,14 @@ message ImportRules {
   string toml = 1;
   // The folder's name when the file has none.
   string folder = 2;
+}
+
+// What an import did. The rules go into the top-level folder of that name, which is made only if there is none; a
+// rule whose name a rule in that folder already has is not added again (an import is repeated, not duplicated).
+message RulesImported {
+  uint32 added = 1;
+  // The rules not added because the folder has a rule of that name.
+  repeated string already = 2;
 }
 
 message ExportRules {}

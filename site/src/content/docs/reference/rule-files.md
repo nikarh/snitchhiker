@@ -31,7 +31,7 @@ notes = "Anything else it should not reach."
 
 | Key | Type | |
 | --- | --- | --- |
-| `name` | string | Required. Without a `[folder]`, imported rules go in a folder named after the file. |
+| `name` | string | Required. Without a `[folder]`, imported rules go in a folder named after the file. An import adds to an existing top-level folder of that name, leaving out rules whose name it already has. |
 | any condition | as below | Added to every rule of the file. |
 
 ## `[[rule]]`

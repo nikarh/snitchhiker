@@ -16,6 +16,8 @@ The rules go in a folder named `OpenSnitch`, where they can be reviewed, moved a
 
 In the desktop app, **Import…** on the Rules page has the node read the same files (they are root's; the node reads only OpenSnitch's own locations, for administrators) and shows what would convert and what wouldn't (with the reason) before anything changes. It also reads OpenSnitch's system firewall, below.
 
+Importing again is safe: a rule whose name the folder `OpenSnitch` already has is left as it is (edited or not), and the import says how many it found. Only rules added in OpenSnitch since come in. A rule you renamed after importing it counts as new.
+
 ## The system firewall
 
 OpenSnitch's `/etc/opensnitchd/system-fw.json` converts to Snitchhiker's [system firewall](/guides/system-firewall/): its input, forward and output chains (filter or mangle), their drop policies, and rules over TCP and UDP ports, ICMP types, connection state, addresses (a range like `127.0.0.0-127.255.255.255` becomes the network it is), protocols and interfaces. Not converted, and listed: NAT and prerouting chains, `!=` comparisons, port lists, marks, legacy iptables rules, and targets other than accept, drop, reject, log and queue.
