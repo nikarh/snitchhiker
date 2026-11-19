@@ -425,6 +425,13 @@ fn helper(args: &[String]) -> Option<ExitCode> {
         }
         "--tray" => Some(exit("tray", tray::serve(args.get(2)?))),
         "--agent" => Some(exit("agent", agents::agent(args.get(2)?, args.get(3)?))),
+        "--scroll" => {
+            let (x, y, steps, interval) = (number(2)?, number(3)?, number(4)?, number(5)?);
+            Some(exit(
+                "scroll",
+                pointer::scroll(x, y, steps, u64::from(interval)),
+            ))
+        }
         "--click" => {
             let right = args.get(4).is_some_and(|b| b == "right");
             Some(exit("click", pointer::click(number(2)?, number(3)?, right)))

@@ -157,3 +157,33 @@ pub fn click(x: u32, y: u32, right: bool) -> Result<(), String> {
     queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// Turns the wheel down `steps` notches over (`x`, `y`), one every `interval_ms`, as a hand scrolling a list: how the
+/// desktop scenarios scroll, and time how the app keeps up.
+pub fn scroll(x: u32, y: u32, steps: u32, interval_ms: u64) -> Result<(), String> {
+    use wayland_client::protocol::wl_pointer::{Axis, AxisSource};
+    let connection =
+        Connection::connect_to_env().map_err(|e| format!("the Wayland session: {e}"))?;
+    let (globals, mut queue) =
+        registry_queue_init::<State>(&connection).map_err(|e| e.to_string())?;
+    let handle = queue.handle();
+    let seat: WlSeat = globals
+        .bind(&handle, 1..=7, ())
+        .map_err(|e| format!("wl_seat: {e}"))?;
+    let manager: ZwlrVirtualPointerManagerV1 = globals
+        .bind(&handle, 1..=2, ())
+        .map_err(|e| format!("the virtual pointer protocol: {e}"))?;
+    let pointer = manager.create_virtual_pointer(Some(&seat), &handle, ());
+    let mut state = State;
+    step(&pointer, &mut queue, &mut state, x, y)?;
+    for _ in 0..steps {
+        pointer.axis_source(AxisSource::Wheel);
+        pointer.axis_discrete(millis(), Axis::VerticalScroll, 15.0, 1);
+        pointer.frame();
+        queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+    }
+    pointer.destroy();
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    Ok(())
+}

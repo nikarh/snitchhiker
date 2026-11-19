@@ -5,7 +5,7 @@
 #   scripts/ui-vm.sh <output dir> [setup] [daemon.toml]
 #
 # setup: a shell snippet run as root in the VM once the app is up (to make history, or connections to prompt for). It
-# can call `page <name>` (a sidebar entry: rules, devices, ...), `click <x> <y>`, `right_click <x> <y>` and `drag <x1> <y1> <x2> <y2>` (the virtual pointer, through
+# can call `page <name>` (a sidebar entry: rules, devices, ...), `click <x> <y>`, `right_click <x> <y>` and `drag <x1> <y1> <x2> <y2>`, `scroll <x> <y> <steps> <ms>` (the virtual pointer, through
 # snitchhiker-e2e), `type_text <text>` and `key <name>`
 # (the virtual keyboard: `key Return`), and `shot <name>` (a screenshot, <name>.png in the output dir); a screenshot
 # `final.png` is taken after it.
@@ -104,6 +104,8 @@ page() {
 }
 right_click() { session /tmp/snitchhiker-e2e-ui --click "\$1" "\$2" right; sleep 1; }
 drag() { session /tmp/snitchhiker-e2e-ui --drag "\$1" "\$2" "\$3" "\$4"; sleep 1; }
+# The wheel turned down over (x, y): <steps> notches, one every <ms> milliseconds.
+scroll() { session /tmp/snitchhiker-e2e-ui --scroll "\$1" "\$2" "\$3" "\$4"; }
 shot() { session grim - > "/tmp/ui-shots/\$1.png"; }
 # Each wtype is a new virtual keyboard: keys sent before the compositor took its keymap are lost, hence the pause.
 type_text() { session env LC_ALL=C.UTF-8 wtype -s 300 "\$1"; sleep 0.5; }
