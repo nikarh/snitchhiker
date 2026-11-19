@@ -159,6 +159,13 @@ impl Selection {
     }
 }
 
+/// A rule shown: where it is in the model's list, and its folder path with name and its conditions, as drawn.
+struct Row {
+    index: usize,
+    name: SharedString,
+    conditions: SharedString,
+}
+
 /// Rules being dragged onto a folder: their ids, and what the drag shows.
 #[derive(Debug, Clone)]
 pub struct DraggedRules {
@@ -189,8 +196,9 @@ pub struct RulesTable {
     folder: Option<u64>,
     /// Only the temporary rules, or only the permanent ones (`None`: both).
     lifetime: Option<Lifetime>,
-    /// Indices into the model's rules of those shown, in order.
-    visible: Vec<usize>,
+    /// The rules shown, in order, with the text drawn for them: worked out once when the rules, the search or the
+    /// folder change, not for every frame drawn while scrolling.
+    rows: Vec<Row>,
     pub selection: Selection,
     /// The column sorted by, and whether descending.
     sort: Option<(usize, bool)>,
@@ -205,7 +213,7 @@ impl RulesTable {
             filter: None,
             folder: None,
             lifetime: None,
-            visible: Vec::new(),
+            rows: Vec::new(),
             selection: Selection::default(),
             sort: None,
         }
@@ -215,7 +223,13 @@ impl RulesTable {
     pub fn recompute(&mut self, cx: &App) {
         let list = &self.model.read(cx).rules;
         let inside = self.folder.map(|folder| subtree(list, folder));
-        self.visible = list
+        let paths = folder_paths(list);
+        let path_of = |rule: &v1::Rule| {
+            rule.folder
+                .and_then(|f| paths.get(&f))
+                .map_or("", String::as_str)
+        };
+        let mut visible: Vec<usize> = list
             .rules
             .iter()
             .enumerate()
@@ -231,8 +245,7 @@ impl RulesTable {
             })
             .filter(|(_, rule)| {
                 self.filter.as_ref().is_none_or(|filter| {
-                    let path = folder_path(list, rule.folder);
-                    filter.matches(&view(rule, path.trim_end_matches('/')))
+                    filter.matches(&view(rule, path_of(rule).trim_end_matches('/')))
                 })
             })
             .map(|(index, _)| index)
@@ -244,30 +257,48 @@ impl RulesTable {
                     1 => rule.map_or(String::new(), |r| u8::from(r.enabled).to_string()),
                     2 => rule.map_or(String::new(), |r| r.action.to_string()),
                     3 => rule.map_or(String::new(), |r| {
-                        format!("{}{}", folder_path(list, r.folder), r.name).to_lowercase()
+                        format!("{}{}", path_of(r), r.name).to_lowercase()
                     }),
                     _ => rule.map_or(String::new(), |r| conditions(r.conditions.as_ref())),
                 }
             };
-            self.visible.sort_by_cached_key(key);
+            visible.sort_by_cached_key(key);
             if descending {
-                self.visible.reverse();
+                visible.reverse();
             }
         }
+        self.rows = visible
+            .into_iter()
+            .filter_map(|index| {
+                let rule = list.rules.get(index)?;
+                Some(Row {
+                    index,
+                    name: format!("{}{}", path_of(rule), rule.name).into(),
+                    conditions: conditions(rule.conditions.as_ref()).into(),
+                })
+            })
+            .collect();
         let ids: BTreeSet<u64> = list.rules.iter().map(|r| r.id).collect();
         self.selection.retain(|id| ids.contains(&id));
     }
 
-    /// The ids of the rules shown, in order.
+    /// The ids of the rules shown that can be selected (not locked), in order.
     #[must_use]
     pub fn shown(&self, cx: &App) -> Vec<u64> {
         let list = &self.model.read(cx).rules;
-        self.visible
+        self.rows
             .iter()
-            .filter_map(|i| list.rules.get(*i))
+            .filter_map(|row| list.rules.get(row.index))
             .filter(|r| !r.locked)
             .map(|r| r.id)
             .collect()
+    }
+
+    /// The rule shown in a row.
+    fn rule<'a>(&self, row_ix: usize, list: &'a v1::RuleList) -> Option<&'a v1::Rule> {
+        self.rows
+            .get(row_ix)
+            .and_then(|row| list.rules.get(row.index))
     }
 }
 
@@ -337,6 +368,14 @@ fn tier_name(tier: v1::Tier) -> &'static str {
     }
 }
 
+/// Every folder's path (`Apps/curl/`), at once.
+fn folder_paths(list: &v1::RuleList) -> std::collections::HashMap<u64, String> {
+    list.folders
+        .iter()
+        .map(|f| (f.id, folder_path(list, Some(f.id))))
+        .collect()
+}
+
 /// `Apps/curl/`: the folders a rule is in.
 #[must_use]
 pub fn folder_path(list: &v1::RuleList, folder: Option<u64>) -> String {
@@ -397,7 +436,7 @@ pub fn conditions(conditions: Option<&v1::Conditions>) -> String {
 
 impl RulesTable {
     /// A rule's folder and name, which drags it (with the selection, when it is selected) onto a folder.
-    fn name_cell(&self, rule: &v1::Rule, list: &v1::RuleList) -> gpui::AnyElement {
+    fn name_cell(&self, rule: &v1::Rule, name: SharedString) -> gpui::AnyElement {
         let id = rule.id;
         // The selection moves together when the rule dragged is part of it.
         let ids = if self.selection.contains(id) {
@@ -418,10 +457,12 @@ impl RulesTable {
             .on_drag(DraggedRules { ids, label }, |dragged, _, _, cx| {
                 cx.new(|_| DragPreview(dragged.label.clone()))
             })
-            .child(div().overflow_hidden().text_ellipsis().child(clipped(
-                SharedString::from(format!("rule-name-{id}")),
-                format!("{}{}", folder_path(list, rule.folder), rule.name),
-            )))
+            .child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(clipped(SharedString::from(format!("rule-name-{id}")), name)),
+            )
             .children(expiry_tag(rule).map(|tag| div().flex_none().child(tag)))
             .into_any_element()
     }
@@ -464,7 +505,7 @@ impl TableDelegate for RulesTable {
     }
 
     fn rows_count(&self, _: &App) -> usize {
-        self.visible.len()
+        self.rows.len()
     }
 
     fn column(&self, col_ix: usize, cx: &App) -> Column {
@@ -499,13 +540,7 @@ impl TableDelegate for RulesTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
-        let list = self.model.read(cx).rules.clone();
-        let Some(rule) = self
-            .visible
-            .get(row_ix)
-            .and_then(|i| list.rules.get(*i))
-            .cloned()
-        else {
+        let Some(rule) = self.rule(row_ix, &self.model.read(cx).rules).cloned() else {
             return menu;
         };
         if rule.locked {
@@ -547,8 +582,10 @@ impl TableDelegate for RulesTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let list = self.model.read(cx).rules.clone();
-        let Some(rule) = self.visible.get(row_ix).and_then(|i| list.rules.get(*i)) else {
+        // Drawn for every visible cell of every frame: nothing here walks or copies the rule list.
+        let model = self.model.clone();
+        let list = &model.read(cx).rules;
+        let (Some(rule), Some(row)) = (self.rule(row_ix, list), self.rows.get(row_ix)) else {
             return div().into_any_element();
         };
         let id = rule.id;
@@ -600,7 +637,7 @@ impl TableDelegate for RulesTable {
             2 => crate::views::events::action_tag(u8::try_from(rule.action).unwrap_or(0), cx)
                 .into_any_element(),
             // The tier, when it isn't the usual one.
-            3 if !rule.locked => self.name_cell(rule, &list),
+            3 if !rule.locked => self.name_cell(rule, row.name.clone()),
             3 => h_flex()
                 .gap_1()
                 .overflow_hidden()
@@ -610,7 +647,7 @@ impl TableDelegate for RulesTable {
                 )
                 .child(div().overflow_hidden().text_ellipsis().child(clipped(
                     SharedString::from(format!("rule-name-{id}")),
-                    format!("{}{}", folder_path(&list, rule.folder), rule.name),
+                    row.name.clone(),
                 )))
                 .into_any_element(),
             4 => div()
@@ -620,7 +657,7 @@ impl TableDelegate for RulesTable {
                 .text_color(cx.theme().muted_foreground)
                 .child(clipped(
                     SharedString::from(format!("rule-conditions-{id}")),
-                    conditions(rule.conditions.as_ref()),
+                    row.conditions.clone(),
                 ))
                 .into_any_element(),
             5 if !rule.locked => self.actions_cell(rule),
@@ -688,13 +725,10 @@ impl RulesPage {
         // A double-click on a rule edits it, as its Edit button does.
         cx.subscribe_in(&table, window, |page, table, event, window, cx| {
             if let TableEvent::DoubleClickedRow(row) = event {
-                let list = page.model.read(cx).rules.clone();
                 let rule = table
                     .read(cx)
                     .delegate()
-                    .visible
-                    .get(*row)
-                    .and_then(|i| list.rules.get(*i))
+                    .rule(*row, &page.model.read(cx).rules)
                     .filter(|r| !r.locked)
                     .cloned();
                 if let Some(rule) = rule {
@@ -845,10 +879,16 @@ impl RulesPage {
     fn tree(&mut self, cx: &mut Context<Self>) -> gpui::AnyElement {
         self.wake_at_next_expiry(cx);
         let theme = cx.theme().clone();
-        let list = self.model.read(cx).rules.clone();
+        let rules = &self.model.read(cx).rules;
+        let temporaries = rules.rules.iter().filter(|r| temporary(r)).count();
+        let total = rules.rules.len();
+        // The folders alone: the rules aren't copied for every frame the page is drawn.
+        let list = v1::RuleList {
+            folders: rules.folders.clone(),
+            rules: Vec::new(),
+        };
         let chosen = self.table.read(cx).delegate().folder;
         let lifetime = self.table.read(cx).delegate().lifetime;
-        let temporaries = list.rules.iter().filter(|r| temporary(r)).count();
         let mut column = v_flex()
             .gap_px()
             .child(self.folder_row(
@@ -867,7 +907,7 @@ impl RulesPage {
             ))
             .child(Self::lifetime_row(
                 Lifetime::Permanent,
-                list.rules.len() - temporaries,
+                total - temporaries,
                 lifetime == Some(Lifetime::Permanent),
                 cx,
             ))
@@ -1018,7 +1058,10 @@ impl RulesPage {
                 .label(label)
                 .on_click(move |_, _, _| send(edit))
         };
-        let list = self.model.read(cx).rules.clone();
+        let list = v1::RuleList {
+            folders: self.model.read(cx).rules.folders.clone(),
+            rules: Vec::new(),
+        };
         let move_to = {
             let send = send.clone();
             Button::new("bulk-move")
