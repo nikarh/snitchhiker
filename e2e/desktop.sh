@@ -281,5 +281,29 @@ else
   fail text-and-clipboard "the typed rule name or the copied table didn't come through" "${out}"
 fi
 
+# 12. Rules selected as on a desktop and deleted together: a click, Shift+click for a range, Ctrl+click to take one out,
+# then the Delete key and the dialog's Delete. Shift and Ctrl are held by a virtual keyboard while the pointer clicks.
+ui "${shots}/select" '
+for id in $(snitchhiker rules | awk "\$1 ~ /^[0-9]+\$/ {print \$1}"); do snitchhiker rules rm "$id" >/dev/null; done
+for name in alpha bravo charlie delta; do snitchhiker rules add allow --exe /usr/bin/$name --name $name >/dev/null; done
+sleep 1
+page rules
+click 700 157
+(session wtype -M shift -s 2500 -m shift) & sleep 0.8; click 700 250; wait $!
+(session wtype -M ctrl -s 2500 -m ctrl) & sleep 0.8; click 700 218; wait $!
+shot selected
+key Delete
+shot asked
+click 803 187
+sleep 1
+snitchhiker rules > /tmp/desktop-result.txt' >/dev/null 2>&1
+out=$(result)
+if grep -q "bravo" <<<"${out}" && grep -q "delta" <<<"${out}" && ! grep -q "alpha" <<<"${out}" \
+  && ! grep -q "charlie" <<<"${out}"; then
+  pass rules-selected-and-deleted-together
+else
+  fail rules-selected-and-deleted-together "the rules clicked, Shift- and Ctrl-clicked weren't the ones deleted" "${out}"
+fi
+
 echo "screenshots in ${shots}"
 exit "${failed}"

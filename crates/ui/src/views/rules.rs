@@ -1,5 +1,5 @@
 //! Rules: the folder tree beside the rules of the folder chosen (and below it), searched with the query language.
-//! Rules are selected with their check boxes (Shift for a range) and changed together; folders are switched off and on
+//! Rules are selected as on a desktop (click, Ctrl+click, Shift+click, Ctrl+A, Escape) and changed together; folders are switched off and on
 //! with their subtree. Locked rules and folders (the defaults, root's rule files) are only shown.
 
 use std::collections::BTreeSet;
@@ -14,7 +14,7 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_component::switch::Switch;
-use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableEvent, TableState};
+use gpui_component::table::{Column, ColumnSort, DataTable, TableDelegate, TableState};
 use gpui_component::tag::Tag;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, WindowExt as _, h_flex, v_flex};
 use snitchhiker_core::query::{self, RuleFilter, RuleView};
@@ -119,6 +119,47 @@ impl Selection {
         }
     }
 
+    /// A click on a rule's row, as in a file manager: alone it selects that rule only; with Ctrl it adds the rule or
+    /// takes it out; with Shift, the rules from the last one clicked to this one are selected instead (with Ctrl and
+    /// Shift: added). `order` is the rules shown, in order; a rule not among them (a locked one) clears the selection.
+    pub fn click_row(&mut self, id: u64, order: &[u64], ctrl: bool, shift: bool) {
+        if !order.contains(&id) {
+            self.clear();
+            return;
+        }
+        let range = shift
+            .then(|| {
+                let from = order.iter().position(|r| Some(*r) == self.anchor)?;
+                let to = order.iter().position(|r| *r == id)?;
+                order.get(from.min(to)..=from.max(to))
+            })
+            .flatten();
+        match (range, ctrl) {
+            (Some(range), add) => {
+                if !add {
+                    self.selected.clear();
+                }
+                self.selected.extend(range);
+            }
+            (None, true) => {
+                if !self.selected.remove(&id) {
+                    self.selected.insert(id);
+                }
+                self.anchor = Some(id);
+            }
+            (None, false) => {
+                self.selected = BTreeSet::from([id]);
+                self.anchor = Some(id);
+            }
+        }
+    }
+
+    /// Selects exactly `ids` (Ctrl+A: the rules shown).
+    pub fn select_all(&mut self, ids: &[u64]) {
+        self.selected = ids.iter().copied().collect();
+        self.anchor = ids.first().copied();
+    }
+
     /// Selects all of `ids`, or, when all are selected, none.
     pub fn toggle_all(&mut self, ids: &[u64]) {
         if ids.iter().all(|id| self.selected.contains(id)) {
@@ -162,6 +203,7 @@ impl Selection {
 /// A rule shown: where it is in the model's list, and its folder path with name and its conditions, as drawn.
 struct Row {
     index: usize,
+    id: u64,
     name: SharedString,
     conditions: SharedString,
 }
@@ -273,6 +315,7 @@ impl RulesTable {
                 let rule = list.rules.get(index)?;
                 Some(Row {
                     index,
+                    id: rule.id,
                     name: format!("{}{}", path_of(rule), rule.name).into(),
                     conditions: conditions(rule.conditions.as_ref()).into(),
                 })
@@ -299,6 +342,40 @@ impl RulesTable {
         self.rows
             .get(row_ix)
             .and_then(|row| list.rules.get(row.index))
+    }
+
+    /// A click on a row (not on its buttons): selects as a file manager does; a double click edits the rule.
+    fn row_clicked(
+        &mut self,
+        row_ix: usize,
+        event: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) {
+        let Some(id) = self.rows.get(row_ix).map(|row| row.id) else {
+            return;
+        };
+        if event.click_count() == 2 {
+            let rule = self
+                .rule(row_ix, &self.model.read(cx).rules)
+                .filter(|r| !r.locked)
+                .cloned();
+            if let Some(rule) = rule {
+                crate::views::editor::open(
+                    self.model.clone(),
+                    self.requests.clone(),
+                    Some(rule),
+                    window,
+                    cx,
+                );
+            }
+            return;
+        }
+        let modifiers = event.modifiers();
+        let order = self.shown(cx);
+        self.selection
+            .click_row(id, &order, modifiers.secondary(cx), modifiers.shift);
+        cx.notify();
     }
 }
 
@@ -665,6 +742,29 @@ impl TableDelegate for RulesTable {
         }
     }
 
+    fn render_tr(
+        &mut self,
+        row_ix: usize,
+        _: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let selected = self
+            .rows
+            .get(row_ix)
+            .is_some_and(|row| self.selection.contains(row.id));
+        let table = cx.entity();
+        div()
+            .id(("row", row_ix))
+            .when(selected, |row| row.bg(cx.theme().table_active))
+            .on_click(move |event, window, cx| {
+                table.update(cx, |table, cx| {
+                    // The table's keys (Ctrl+A, Delete, Escape) apply from here on.
+                    window.focus(&gpui::Focusable::focus_handle(table, cx), cx);
+                    table.delegate_mut().row_clicked(row_ix, event, window, cx);
+                });
+            })
+    }
+
     fn render_empty(
         &mut self,
         _: &mut Window,
@@ -722,27 +822,6 @@ impl RulesPage {
         })
         .detach();
         cx.observe(&table, |_, _, cx| cx.notify()).detach();
-        // A double-click on a rule edits it, as its Edit button does.
-        cx.subscribe_in(&table, window, |page, table, event, window, cx| {
-            if let TableEvent::DoubleClickedRow(row) = event {
-                let rule = table
-                    .read(cx)
-                    .delegate()
-                    .rule(*row, &page.model.read(cx).rules)
-                    .filter(|r| !r.locked)
-                    .cloned();
-                if let Some(rule) = rule {
-                    crate::views::editor::open(
-                        page.model.clone(),
-                        page.requests.clone(),
-                        Some(rule),
-                        window,
-                        cx,
-                    );
-                }
-            }
-        })
-        .detach();
         cx.observe(&model, |_, _, cx| cx.notify()).detach();
         Self {
             model,
@@ -1110,11 +1189,7 @@ impl RulesPage {
                 .child(move_to)
                 .child(action)
                 .child(expires)
-                .child(button(
-                    "bulk-delete",
-                    "Delete",
-                    v1::edit_rules::Edit::Delete(true),
-                ))
+                .child(self.delete_button(selection.ids()))
                 .child(div().flex_1())
                 .child(
                     Button::new("bulk-clear")
@@ -1131,6 +1206,97 @@ impl RulesPage {
                 .into_any_element(),
         )
     }
+}
+
+/// "1 rule", "3 rules".
+fn rules_count(count: usize) -> String {
+    if count == 1 {
+        "1 rule".to_owned()
+    } else {
+        format!("{count} rules")
+    }
+}
+
+gpui::actions!(
+    rules,
+    [
+        /// Ctrl+A in the rules table: every rule shown.
+        SelectAllRules,
+        /// The Delete key in the rules table: the rules selected, after asking.
+        DeleteSelectedRules,
+        /// Escape in the rules table (the table itself has no selection of its own to clear first).
+        ClearRuleSelection
+    ]
+);
+
+/// Where the rules table's keys apply: while it (or a row in it) has focus.
+const KEYS: &str = "RulesTable";
+
+/// The rules table's keys, as on any desktop: Ctrl+A selects every rule shown, Delete deletes the selection (after
+/// asking), Escape clears it.
+pub fn bind_keys(cx: &mut App) {
+    cx.bind_keys([
+        gpui::KeyBinding::new("ctrl-a", SelectAllRules, Some(KEYS)),
+        gpui::KeyBinding::new("delete", DeleteSelectedRules, Some(KEYS)),
+        gpui::KeyBinding::new("escape", ClearRuleSelection, Some(KEYS)),
+    ]);
+}
+
+/// Asks before deleting the rules selected, then deletes them in one change (one entry of the history, undone
+/// together).
+fn delete_dialog(
+    ids: Vec<u64>,
+    requests: mpsc::Sender<Request>,
+    table: Entity<TableState<RulesTable>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    if ids.is_empty() {
+        return;
+    }
+    let title = format!("Delete {}?", rules_count(ids.len()));
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let (ids, requests, table) = (ids.clone(), requests.clone(), table.clone());
+        dialog
+            .title(title.clone())
+            .w(px(420.))
+            .child(
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if ids.len() == 1 {
+                        "Undo in History brings it back."
+                    } else {
+                        "One change: Undo in History brings them all back."
+                    }),
+            )
+            .footer(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .justify_end()
+                    .child(
+                        Button::new("delete-rules-cancel")
+                            .label("Cancel")
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
+                    )
+                    .child(
+                        Button::new("delete-rules-confirm")
+                            .danger()
+                            .label("Delete")
+                            .on_click(move |_, window, cx| {
+                                let _ = requests.send(Request::EditRules(v1::EditRules {
+                                    ids: ids.clone(),
+                                    edit: Some(v1::edit_rules::Edit::Delete(true)),
+                                }));
+                                table.update(cx, |table, cx| {
+                                    table.delegate_mut().selection.clear();
+                                    cx.notify();
+                                });
+                                window.close_dialog(cx);
+                            }),
+                    ),
+            )
+    });
 }
 
 /// Sends a bulk change of the rules selected.
@@ -1278,6 +1444,46 @@ fn new_folder(
 }
 
 impl RulesPage {
+    /// The bulk bar's Delete: asks first.
+    fn delete_button(&self, ids: Vec<u64>) -> Button {
+        let (requests, table) = (self.requests.clone(), self.table.clone());
+        Button::new("bulk-delete")
+            .small()
+            .ghost()
+            .label(format!("Delete {}", rules_count(ids.len())))
+            .tooltip("Delete (the Delete key)")
+            .on_click(move |_, window, cx| {
+                delete_dialog(ids.clone(), requests.clone(), table.clone(), window, cx);
+            })
+    }
+
+    /// The table, with its keys: Ctrl+A, Delete and Escape.
+    fn table_area(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .key_context(KEYS)
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .on_action(cx.listener(|page, _: &SelectAllRules, _, cx| {
+                page.table.update(cx, |table, cx| {
+                    let shown = table.delegate().shown(cx);
+                    table.delegate_mut().selection.select_all(&shown);
+                    cx.notify();
+                });
+            }))
+            .on_action(cx.listener(|page, _: &DeleteSelectedRules, window, cx| {
+                let ids = page.table.read(cx).delegate().selection.ids();
+                delete_dialog(ids, page.requests.clone(), page.table.clone(), window, cx);
+            }))
+            .on_action(cx.listener(|page, _: &ClearRuleSelection, _, cx| {
+                page.table.update(cx, |table, cx| {
+                    table.delegate_mut().selection.clear();
+                    cx.notify();
+                });
+            }))
+            .child(DataTable::new(&self.table))
+    }
+
     /// Import from OpenSnitch, with a preview.
     fn import_button(&self) -> Button {
         let (requests, model) = (self.requests.clone(), self.model.clone());
@@ -1391,7 +1597,7 @@ impl Render for RulesPage {
                             .child(error)
                     }))
                     .children(bulk)
-                    .child(DataTable::new(&self.table)),
+                    .child(self.table_area(cx)),
             )
     }
 }
@@ -1399,6 +1605,36 @@ impl Render for RulesPage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rows_select_as_on_a_desktop() {
+        let order = [10, 20, 30, 40, 50];
+        let mut s = Selection::default();
+        // A click selects that rule alone.
+        s.click_row(20, &order, false, false);
+        s.click_row(30, &order, false, false);
+        assert_eq!(s.ids(), vec![30]);
+        // Shift: from the last clicked to this one, instead of what was selected.
+        s.click_row(50, &order, false, true);
+        assert_eq!(s.ids(), vec![30, 40, 50]);
+        s.click_row(10, &order, false, true);
+        assert_eq!(s.ids(), vec![10, 20, 30]);
+        // Ctrl: one rule in or out, and the next range starts there.
+        s.click_row(20, &order, true, false);
+        assert_eq!(s.ids(), vec![10, 30]);
+        s.click_row(50, &order, true, false);
+        assert_eq!(s.ids(), vec![10, 30, 50]);
+        // Ctrl and Shift: a range added.
+        s.click_row(40, &order, false, false);
+        s.click_row(10, &order, true, false);
+        s.click_row(20, &order, true, true);
+        assert_eq!(s.ids(), vec![10, 20, 40]);
+        // A locked rule (not selectable) clears it; Ctrl+A takes every rule shown.
+        s.click_row(99, &order, false, false);
+        assert!(s.is_empty());
+        s.select_all(&order);
+        assert_eq!(s.ids(), order.to_vec());
+    }
 
     #[test]
     fn temporary_rules_say_when_they_end() {

@@ -119,7 +119,7 @@ A rule applies only while it and every folder above it are enabled. Switching a 
 
 The desktop app's Rules page shows the folder tree beside the rules of the folder chosen (and the folders below it). The search box takes the [query language](/reference/query-language/#keys-for-rules) and filters as you type: `curl`, `host:example.com action:deny`, `enabled:no`, `folder:Apps/*`.
 
-Rules are picked with their check boxes (Shift picks a range) and changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted. One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. From the command line: `snitchhiker rules edit 12,13,14 disable`.
+Rules are selected as in a file manager: a click on a row selects that rule, Ctrl+click adds or removes one, Shift+click selects the range from the last rule clicked, Ctrl+A selects every rule shown (with the search and the folder chosen), and Escape clears the selection. The check boxes add or remove one rule too (Shift for a range). Double-click a rule to edit it. The rules selected are changed together: enabled or disabled, moved to a folder, given another action, set to expire, or deleted (Delete, or the Delete key, asks first). One change to many rules is one batch in the [history](#history-and-undo), so one undo reverts all of it. From the command line: `snitchhiker rules edit 12,13,14 disable`.
 
 ## Editing a rule
 

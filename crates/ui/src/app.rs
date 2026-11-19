@@ -103,7 +103,9 @@ impl App {
             )
         });
         let rules = cx.new(|cx| {
+            // Rows are selected by the rules' own selection (several at once, as on a desktop), not the table's.
             TableState::new(RulesTable::new(model.clone(), requests.clone()), window, cx)
+                .row_selectable(false)
         });
         let status = cx.new(|cx| Status::new(model.clone(), cx));
         let settings = cx.new(|cx| Settings::new(model.clone(), requests.clone(), cx));

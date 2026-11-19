@@ -53,6 +53,7 @@ fn main() -> ExitCode {
         .with_assets(gpui_kit_assets::AllAssets)
         .run(move |cx| {
             gpui_component::init(cx);
+            views::rules::bind_keys(cx);
             theme::install(cx);
             let bounds = Bounds::centered(None, size(px(1200.), px(780.)), cx);
             let options = WindowOptions {
