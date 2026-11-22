@@ -35,7 +35,7 @@ jobs:
       # The toolchain (with clippy and rustfmt) comes from rust-toolchain.toml.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install: false
       # rustfmt, clippy, the host-safe tests, the protocol's lint and compatibility, and every action pinned to a
@@ -56,7 +56,7 @@ jobs:
         with:
           key: android
       # The JDK, Gradle, the SDK's command-line tools and cargo-ndk.
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: java gradle http:android-cmdline-tools cargo:cargo-ndk
       - run: mise run android:sdk
@@ -77,7 +77,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: perf
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install: false
       - run: mise run perf
@@ -88,7 +88,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: EmbarkStudios/cargo-deny-action@70f81531115945ba6eb6b941ec9d39d063438eb9 # v2.1.2
 
   e2e:
     # Arch on every change; Debian (another kernel, systemd and glibc) on main, to save runner minutes.
@@ -130,7 +130,7 @@ jobs:
         with:
           key: e2e
       # nfpm builds the package the VM installs.
-      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      - uses: jdx/mise-action@90f833d396d0cc3674b631d2d225e306476c303a # v5.2.10
         with:
           install_args: nfpm
       # The VM is kept for the desktop scenarios.
