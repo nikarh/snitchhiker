@@ -59,7 +59,7 @@ jobs:
       # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers; the desktop app links
       # fontconfig and freetype, and its toolkit wants the Wayland and xkbcommon headers.
       - run: >-
-          sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
           libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -99,7 +99,7 @@ jobs:
           TARGET: ${{ matrix.arch }}-unknown-linux-musl
         run: |
           set -euo pipefail
-          sudo apt-get install -y --no-install-recommends musl-tools
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends musl-tools
           rustup target add "$TARGET"
           export "CC_${TARGET//-/_}=musl-gcc"
           cargo build --locked --profile dist --target "$TARGET" -p snitchhiker-relay

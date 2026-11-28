@@ -30,7 +30,7 @@ jobs:
       # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers; the desktop app links
       # fontconfig and freetype, and its toolkit wants the Wayland and xkbcommon headers.
       - run: >-
-          sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
           libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       # The toolchain (with clippy and rustfmt) comes from rust-toolchain.toml.
       - run: rustup toolchain install
@@ -72,7 +72,7 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
@@ -108,7 +108,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-          sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-utils genisoimage
       # The provisioned image as e2e/vm.sh makes it, with the key it lets in: once per version of vm.sh. Saved only when
       # there was none.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -123,7 +123,7 @@ jobs:
       # The eBPF programs are compiled with clang against the libbpf and kernel UAPI headers; the desktop app (built
       # for the desktop scenarios) links fontconfig and freetype, and its toolkit wants the Wayland and xkbcommon headers.
       - run: >-
-          sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+          sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
           libfontconfig-dev libfreetype-dev libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3

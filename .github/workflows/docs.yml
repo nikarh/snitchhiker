@@ -43,7 +43,7 @@ jobs:
         with:
           install_args: node
       # The crates' API docs, published under api/: the eBPF crate compiles its programs with clang.
-      - run: sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
+      - run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends clang libbpf-dev linux-libc-dev
       - run: rustup toolchain install
       - name: API docs
         run: |
