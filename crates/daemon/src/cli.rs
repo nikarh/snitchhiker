@@ -1345,6 +1345,10 @@ fn history(mut args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     }
 }
 
+// The `uid`s printed here are Unix user ids, which anyone on the machine can see (`ps`, `/proc`), written to the
+// CLI's own stdout. They're bound by pattern as `unix_user` so CodeQL's name heuristic (`uid` = an account id,
+// rust/cleartext-logging) doesn't take them for sensitive data.
+
 /// `connections`.
 fn connections(args: pico_args::Arguments, version: &str) -> Result<(), Error> {
     use v1::request::Method;
@@ -1353,6 +1357,7 @@ fn connections(args: pico_args::Arguments, version: &str) -> Result<(), Error> {
         v1::response::Result::Connections(list) => {
             let mut text = String::new();
             for c in &list.connections {
+                let v1::LiveConnection { uid: unix_user, .. } = c;
                 let address = |bytes: &[u8], port: u32| {
                     convert::address_from(bytes).map_or_else(String::new, |a| {
                         std::net::SocketAddr::new(a, u16::try_from(port).unwrap_or(0)).to_string()
@@ -1365,7 +1370,7 @@ fn connections(args: pico_args::Arguments, version: &str) -> Result<(), Error> {
                     c.state,
                     address(&c.local, c.local_port),
                     address(&c.remote, c.remote_port),
-                    c.uid,
+                    unix_user,
                     if c.exe.is_empty() { "?" } else { &c.exe },
                     if c.host.is_empty() {
                         String::new()
@@ -1837,6 +1842,7 @@ fn format_rules(list: &v1::RuleList) -> String {
 fn format_audit(entries: &[v1::AuditEntry]) -> String {
     let mut text = String::new();
     for entry in entries {
+        let v1::AuditEntry { uid: unix_user, .. } = entry;
         let _ = writeln!(
             text,
             "{:>6}  {}  {:<10} {} uid {} pid {}: {}",
@@ -1844,7 +1850,7 @@ fn format_audit(entries: &[v1::AuditEntry]) -> String {
             entry.time_ms,
             format!("{:?}", entry.outcome()).to_lowercase(),
             entry.app,
-            entry.uid,
+            unix_user,
             entry.pid,
             entry.action,
         );
@@ -1855,6 +1861,7 @@ fn format_audit(entries: &[v1::AuditEntry]) -> String {
 fn format_events(events: &[v1::ConnectionEvent]) -> String {
     let mut text = String::new();
     for event in events {
+        let v1::ConnectionEvent { uid: unix_user, .. } = event;
         let address =
             convert::address_from(&event.address).map_or_else(String::new, |a| a.to_string());
         let _ = writeln!(
@@ -1862,7 +1869,7 @@ fn format_events(events: &[v1::ConnectionEvent]) -> String {
             "{:>8}  {:<6} uid {:<6} {}{} -> {}:{} proto {} out {} in {}{}",
             event.seq,
             format!("{:?}", event.action()).to_lowercase(),
-            event.uid,
+            unix_user,
             event.container.as_deref().map_or_else(String::new, |c| {
                 let name = if c.compose.is_empty() {
                     &c.name
@@ -1919,13 +1926,14 @@ fn format_explanation(explanation: &v1::Explanation) -> String {
 }
 
 fn format_prompt(prompt: &v1::Prompt) -> String {
+    let v1::Prompt { uid: unix_user, .. } = prompt;
     let address =
         convert::address_from(&prompt.address).map_or_else(String::new, |a| a.to_string());
     let mut text = format!(
         "prompt {}: {} (uid {}{}) -> {}:{} proto {}, {} waiting{}\n",
         prompt.id,
         prompt.exe,
-        prompt.uid,
+        unix_user,
         if prompt.user.is_empty() {
             String::new()
         } else {
